@@ -37,6 +37,7 @@ class DataManager {
                     roomNumber: room.roomNumber,
                     unitNumber: room.roomNumber, // For compatibility
                     floor: floor,
+                    apartmentAddress: room.apartmentAddress || '', // ADDED: Include apartment address for filtering
                     status: room.isAvailable === false ? 'occupied' : 'vacant', // Map isAvailable to status
                     tenantName: room.occupiedBy ? 'Occupied' : 'Vacant',
                     occupiedBy: room.occupiedBy,
@@ -57,7 +58,7 @@ class DataManager {
             
             // Log each unit for debugging
             units.forEach(unit => {
-                console.log(`   - ${unit.roomNumber}: ${unit.status} (isAvailable: ${unit.isAvailable})`);
+                console.log(`   - ${unit.roomNumber} (${unit.apartmentAddress}): ${unit.status} (isAvailable: ${unit.isAvailable})`);
             });
             
             return units;
@@ -1091,11 +1092,12 @@ class DataManager {
         }
     }
 
-    static calculateLandlordStats(tenants, leases, bills, maintenance) {
+    static calculateLandlordStats(tenants, leases, bills, maintenance, totalUnits = 22) {
         console.log('🧮 Calculating landlord statistics...');
         
         // PROPERTY OVERVIEW
-        const totalUnits = 22; // Fixed total units as per your structure
+        // Use passed totalUnits (either filtered apartment units or all 22)
+        const actualTotalUnits = totalUnits || 22;
         
         // Active leases (both isActive and status check)
         const activeLeases = leases.filter(lease => 
@@ -1104,8 +1106,8 @@ class DataManager {
         );
         
         const occupiedUnits = activeLeases.length;
-        const vacantUnits = Math.max(0, totalUnits - occupiedUnits);
-        const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
+        const vacantUnits = Math.max(0, actualTotalUnits - occupiedUnits);
+        const occupancyRate = actualTotalUnits > 0 ? Math.round((occupiedUnits / actualTotalUnits) * 100) : 0;
         
         // Total tenants (active and verified)
         const activeTenants = tenants.filter(tenant => 
@@ -1171,7 +1173,7 @@ class DataManager {
         const stats = {
             // Property Overview
             totalTenants: activeTenants,
-            totalUnits: totalUnits,
+            totalUnits: actualTotalUnits,
             occupiedUnits: occupiedUnits,
             vacantUnits: vacantUnits,
             occupancyRate: occupancyRate,
@@ -1194,28 +1196,60 @@ class DataManager {
     }
 
     // ===== DASHBOARD STATISTICS METHODS =====
-    static async getDashboardStats(userId, userRole) {
-        console.log(`📊 Getting dashboard stats for ${userRole}: ${userId}`);
+    static async getDashboardStats(userId, userRole, apartmentAddress = null) {
+        console.log(`📊 Getting dashboard stats for ${userRole}: ${userId}${apartmentAddress ? ` (Apartment: ${apartmentAddress})` : ' (All apartments)'}`);
         
         try {
             if (userRole === 'landlord') {
                 // Fetch all necessary data in parallel
-                const [tenants, leases, bills, maintenanceRequests] = await Promise.all([
+                let [tenants, leases, bills, maintenanceRequests, units] = await Promise.all([
                     this.getTenants(userId),
                     this.getLandlordLeases(userId),
                     this.getBills(userId),
-                    this.getMaintenanceRequests(userId)
+                    this.getMaintenanceRequests(userId),
+                    this.getLandlordUnits(userId)
                 ]);
 
-                console.log('📦 Fetched data counts:', {
-                    tenants: tenants.length,
-                    leases: leases.length,
-                    bills: bills.length,
-                    maintenance: maintenanceRequests.length
-                });
+                // FILTER by apartment address if provided
+                if (apartmentAddress) {
+                    console.log(`🏢 Filtering stats for apartment: ${apartmentAddress}`);
+                    
+                    // Filter units by apartment address
+                    units = units.filter(u => u.apartmentAddress === apartmentAddress);
+                    const filteredUnitNumbers = units.map(u => u.roomNumber);
+                    
+                    // Filter leases to only those in the selected apartment
+                    leases = leases.filter(l => filteredUnitNumbers.includes(l.roomNumber));
+                    
+                    // Filter bills to only those for units in the selected apartment
+                    bills = bills.filter(b => filteredUnitNumbers.includes(b.roomNumber));
+                    
+                    // Filter maintenance to only those for units in the selected apartment
+                    maintenanceRequests = maintenanceRequests.filter(m => filteredUnitNumbers.includes(m.roomNumber));
+                    
+                    // Filter tenants to only those in selected apartment's leases
+                    const tenantIds = leases.map(l => l.tenantId).filter(Boolean);
+                    tenants = tenants.filter(t => tenantIds.includes(t.id));
+                    
+                    console.log(`📦 Filtered data counts for ${apartmentAddress}:`, {
+                        units: units.length,
+                        leases: leases.length,
+                        bills: bills.length,
+                        maintenance: maintenanceRequests.length,
+                        tenants: tenants.length
+                    });
+                } else {
+                    console.log('📦 Fetched data counts (all apartments):', {
+                        units: units.length,
+                        tenants: tenants.length,
+                        leases: leases.length,
+                        bills: bills.length,
+                        maintenance: maintenanceRequests.length
+                    });
+                }
 
-                // Calculate statistics
-                const stats = this.calculateLandlordStats(tenants, leases, bills, maintenanceRequests);
+                // Calculate statistics (passing filtered units count now)
+                const stats = this.calculateLandlordStats(tenants, leases, bills, maintenanceRequests, units.length);
                 console.log('✅ Calculated dashboard stats:', stats);
                 return stats;
                 

@@ -575,15 +575,10 @@ class CasaLink {
 
             // SPECIAL CASE: DASHBOARD (MERGED FROM BOTH VERSIONS)
             if (page === 'dashboard') {
-                console.log('📊 Force refreshing dashboard stats and setting up listeners...');
-                setTimeout(() => {
-                    // Load dashboard stats (cards, etc) - but not unit layout since setupDashboardEvents handles it
-                    const stats = DataManager.getDashboardStats(this.currentUser.uid, this.currentRole)
-                        .then(s => this.updateDashboardWithRealData(s))
-                        .catch(e => this.showDashboardErrorState());
-                    this.setupRealTimeStats();
-                    // Unit layout and recent activities handled in setupDashboardEvents
-                }, 100);
+                console.log('📊 Dashboard page loaded - stats will be loaded by setupDashboardEvents after apartment setup');
+                // Note: setupPageEvents calls setupDashboardEvents which handles apartment selection
+                // and conditionally loads stats based on apartment selection state
+                // Don't load stats here - let setupDashboardEvents handle it
             }
 
         } catch (error) {
@@ -1232,10 +1227,8 @@ class CasaLink {
 
             // CHECK: Ensure an apartment is selected before showing details
             if (!this.currentApartmentAddress && !this.currentApartmentId) {
-                console.log('⚠️ No apartment selected - showing selection message');
-                if (window.notificationManager && typeof window.notificationManager.error === 'function') {
-                    window.notificationManager.error('Please select an apartment from the "Viewing" dropdown to view details');
-                }
+                console.log('⚠️ No apartment selected - showing selection modal');
+                this.showApartmentSelectionRequiredModal();
                 return false;
             }
 
@@ -2140,10 +2133,12 @@ class CasaLink {
             this.initializeDashboardStatsToZero();
             this.shouldAutoLoadUnitLayout = false;
         } else if (apartmentCount === 1) {
-            // One apartment: Auto-display it
-            console.log('✅ Only one apartment found - auto-displaying');
+            // One apartment: Auto-display it and load its stats
+            console.log('✅ Only one apartment found - auto-displaying and loading stats');
             this.shouldAutoLoadUnitLayout = true;
             await this.loadAndDisplayUnitLayoutInDashboard();
+            // Load stats for the single apartment
+            await this.loadDashboardData();
         } else {
             // Multiple apartments: Show selection message and init stats to 0
             console.log(`⚠️ Multiple apartments (${apartmentCount}) found - showing selection message`);
@@ -2159,6 +2154,9 @@ class CasaLink {
         
         // Setup real-time stats when dashboard is shown
         this.updateActiveNavState('dashboard');
+        
+        // Setup real-time listeners
+        this.setupRealTimeStats();
         
         console.log('✅ All dashboard events setup complete');
     }
@@ -2867,7 +2865,7 @@ class CasaLink {
                             <div class="card-icon occupied"><i class="fas fa-home"></i></div>
                         </div>
                         <div class="card-value" id="occupancyRate">0%</div>
-                        <div class="card-subtitle" id="occupancyDetails">0/22 units</div>
+                        <div class="card-subtitle" id="occupancyDetails">0/0 units</div>
                     </div>
 
                     <div class="card" data-clickable="vacant" style="cursor: pointer;" title="Click to view vacant units">
@@ -2876,7 +2874,7 @@ class CasaLink {
                             <div class="card-icon vacant"><i class="fas fa-door-open"></i></div>
                         </div>
                         <div class="card-value" id="vacantUnits">0</div>
-                        <div class="card-subtitle">22 total capacity</div>
+                        <div class="card-subtitle" id="vacantUnitsCapacity">0 total capacity</div>
                     </div>
 
                     <div class="card" data-clickable="tenants" style="cursor: pointer;" title="Click to view occupant details">
@@ -8887,6 +8885,50 @@ class CasaLink {
         }
     }
 
+    showApartmentSelectionRequiredModal() {
+        const modalContent = `
+            <div style="text-align: center; padding: 40px 30px;">
+                <div style="margin-bottom: 30px;">
+                    <i class="fas fa-exclamation-circle" style="font-size: 4rem; color: #FF6B35; opacity: 0.8;"></i>
+                </div>
+                
+                <h3 style="color: var(--royal-blue); margin-bottom: 15px; font-weight: 600;">
+                    Apartment Selection Required
+                </h3>
+                
+                <p style="color: var(--gray-700); font-size: 1rem; margin-bottom: 30px; line-height: 1.6;">
+                    You need to select an apartment from the <strong>"Viewing"</strong> dropdown menu 
+                    in order to view detailed information and statistics for your properties.
+                </p>
+                
+                <div style="background: #f8f9fa; border-left: 4px solid var(--royal-blue); padding: 20px; border-radius: 6px; margin-bottom: 30px; text-align: left;">
+                    <p style="margin: 0; color: var(--dark-gray); font-size: 0.95rem;">
+                        <strong>📌 How to proceed:</strong><br><br>
+                        1. Look for the <strong>"Viewing"</strong> dropdown menu at the top of the dashboard<br>
+                        2. Click on it to see your available apartments<br>
+                        3. Select an apartment to view<br>
+                        4. Once selected, you can view all statistics and details
+                    </p>
+                </div>
+                
+                <div style="display: flex; gap: 12px; justify-content: center;">
+                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay')); document.getElementById('apartmentSelector')?.focus();" style="min-width: 180px;">
+                        <i class="fas fa-chevron-up" style="margin-right: 8px;"></i> Go to Viewing Dropdown
+                    </button>
+                    <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                        Close
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        ModalManager.openModal(modalContent, {
+            title: '⚠️ Select an Apartment First',
+            showFooter: false,
+            width: '550px'
+        });
+    }
+
     async showUnitOccupancyModal() {
         if (!this.debounceModalOpen(() => this.showUnitOccupancyModal())) return;
         
@@ -8922,14 +8964,22 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
+            // FILTER rooms by selected apartment
+            let filteredRooms = rooms;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering rooms by apartment: ${this.currentApartmentAddress}`);
+                filteredRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+            }
+
             console.log('📊 Occupancy data loaded:', {
                 tenants: tenants.length,
                 leases: leases.length,
-                rooms: rooms.length
+                rooms: filteredRooms.length,
+                filteredBy: this.currentApartmentAddress ? `Apartment: ${this.currentApartmentAddress}` : 'All apartments'
             });
 
-            // Generate the occupancy table
-            const occupancyTable = this.generateOccupancyTable(tenants, leases, rooms);
+            // Generate the occupancy table (using filtered rooms)
+            const occupancyTable = this.generateOccupancyTable(tenants, leases, filteredRooms);
             
             // Update modal content with the table
             const modalBody = modal.querySelector('.modal-body');
@@ -9860,8 +9910,15 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
-            // Generate the vacant units table
-            const vacantUnitsTable = this.generateVacantUnitsTable(tenants, leases, rooms);
+            // FILTER rooms by selected apartment
+            let filteredRooms = rooms;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering vacant units by apartment: ${this.currentApartmentAddress}`);
+                filteredRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+            }
+
+            // Generate the vacant units table (using filtered rooms)
+            const vacantUnitsTable = this.generateVacantUnitsTable(tenants, leases, filteredRooms);
             
             // Update modal content with the table
             const modalBody = modal.querySelector('.modal-body');
@@ -10071,14 +10128,22 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
+            // FILTER rooms by selected apartment
+            let filteredRooms = rooms;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering tenant details by apartment: ${this.currentApartmentAddress}`);
+                filteredRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+            }
+
             console.log('📊 Tenant details data loaded:', {
                 tenants: tenants.length,
                 leases: leases.length,
-                rooms: rooms.length
+                rooms: filteredRooms.length,
+                filteredBy: this.currentApartmentAddress ? `Apartment: ${this.currentApartmentAddress}` : 'All apartments'
             });
 
-            // Generate the tenant details table
-            const tenantDetailsTable = this.generateTenantDetailsTable(tenants, leases, rooms);
+            // Generate the tenant details table (using filtered rooms)
+            const tenantDetailsTable = this.generateTenantDetailsTable(tenants, leases, filteredRooms);
             
             // Update modal content with the table
             const modalBody = modal.querySelector('.modal-body');
@@ -10547,8 +10612,21 @@ class CasaLink {
                 maxWidth: '1200px'
             });
 
-            const bills = await DataManager.getBills(this.currentUser.uid);
-            const unpaidBills = this.getUnpaidBills(bills);
+            const [bills, rooms] = await Promise.all([
+                DataManager.getBills(this.currentUser.uid),
+                this.getAllRooms()
+            ]);
+
+            // FILTER by selected apartment
+            let filteredBills = bills;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering unpaid bills by apartment: ${this.currentApartmentAddress}`);
+                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
+                filteredBills = bills.filter(b => roomNumbers.includes(b.roomNumber));
+            }
+
+            const unpaidBills = this.getUnpaidBills(filteredBills);
             const unpaidBillsTable = this.generateUnpaidBillsTable(unpaidBills);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -10584,8 +10662,21 @@ class CasaLink {
                 maxWidth: '1200px'
             });
 
-            const bills = await DataManager.getBills(this.currentUser.uid);
-            const latePayments = this.getLatePayments(bills);
+            const [bills, rooms] = await Promise.all([
+                DataManager.getBills(this.currentUser.uid),
+                this.getAllRooms()
+            ]);
+
+            // FILTER by selected apartment
+            let filteredBills = bills;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering late payments by apartment: ${this.currentApartmentAddress}`);
+                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
+                filteredBills = bills.filter(b => roomNumbers.includes(b.roomNumber));
+            }
+
+            const latePayments = this.getLatePayments(filteredBills);
             const latePaymentsTable = this.generateLatePaymentsTable(latePayments);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -10623,12 +10714,24 @@ class CasaLink {
                 maxWidth: '1200px'
             });
 
-            const [bills, leases] = await Promise.all([
+            const [bills, leases, rooms] = await Promise.all([
                 DataManager.getBills(this.currentUser.uid),
-                DataManager.getLandlordLeases(this.currentUser.uid)
+                DataManager.getLandlordLeases(this.currentUser.uid),
+                this.getAllRooms()
             ]);
 
-            const revenueData = this.calculateRevenueBreakdown(bills, leases);
+            // FILTER by selected apartment
+            let filteredBills = bills;
+            let filteredLeases = leases;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering revenue by apartment: ${this.currentApartmentAddress}`);
+                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
+                filteredBills = bills.filter(b => roomNumbers.includes(b.roomNumber));
+                filteredLeases = leases.filter(l => roomNumbers.includes(l.roomNumber));
+            }
+
+            const revenueData = this.calculateRevenueBreakdown(filteredBills, filteredLeases);
             const revenueTable = this.generateRevenueTable(revenueData);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -10666,15 +10769,27 @@ class CasaLink {
             });
 
             // Fetch data
-            const [tenants, leases, bills] = await Promise.all([
+            const [tenants, leases, bills, rooms] = await Promise.all([
                 DataManager.getTenants(this.currentUser.uid),
                 DataManager.getLandlordLeases(this.currentUser.uid),
-                DataManager.getBills(this.currentUser.uid)
+                DataManager.getBills(this.currentUser.uid),
+                this.getAllRooms()
             ]);
 
-            // Calculate collection statistics
-            const stats = this.calculateRentCollectionStats(tenants, leases, bills);
-            const collectionTable = this.generateRentCollectionTable(stats, bills);
+            // FILTER by selected apartment
+            let filteredLeases = leases;
+            let filteredBills = bills;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering rent collection by apartment: ${this.currentApartmentAddress}`);
+                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
+                filteredLeases = leases.filter(l => roomNumbers.includes(l.roomNumber));
+                filteredBills = bills.filter(b => roomNumbers.includes(b.roomNumber));
+            }
+
+            // Calculate collection statistics (using filtered data)
+            const stats = this.calculateRentCollectionStats(tenants, filteredLeases, filteredBills);
+            const collectionTable = this.generateRentCollectionTable(stats, filteredBills);
             
             // Update modal content
             const modalBody = modal.querySelector('.modal-body');
@@ -10988,8 +11103,21 @@ class CasaLink {
                 maxWidth: '1200px'
             });
 
-            const maintenanceRequests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
-            const backlogData = this.getMaintenanceBacklog(maintenanceRequests);
+            const [maintenanceRequests, rooms] = await Promise.all([
+                DataManager.getMaintenanceRequests(this.currentUser.uid),
+                this.getAllRooms()
+            ]);
+
+            // FILTER by selected apartment
+            let filteredMaintenance = maintenanceRequests;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering maintenance backlog by apartment: ${this.currentApartmentAddress}`);
+                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
+                filteredMaintenance = maintenanceRequests.filter(m => roomNumbers.includes(m.roomNumber));
+            }
+
+            const backlogData = this.getMaintenanceBacklog(filteredMaintenance);
             const backlogTable = this.generateMaintenanceBacklogTable(backlogData);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -11025,8 +11153,21 @@ class CasaLink {
                 maxWidth: '1200px'
             });
 
-            const maintenanceRequests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
-            const openRequests = this.getOpenMaintenanceRequests(maintenanceRequests);
+            const [maintenanceRequests, rooms] = await Promise.all([
+                DataManager.getMaintenanceRequests(this.currentUser.uid),
+                this.getAllRooms()
+            ]);
+
+            // FILTER by selected apartment
+            let filteredMaintenance = maintenanceRequests;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering open maintenance by apartment: ${this.currentApartmentAddress}`);
+                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
+                filteredMaintenance = maintenanceRequests.filter(m => roomNumbers.includes(m.roomNumber));
+            }
+
+            const openRequests = this.getOpenMaintenanceRequests(filteredMaintenance);
             const openRequestsTable = this.generateOpenMaintenanceTable(openRequests);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -11062,8 +11203,21 @@ class CasaLink {
                 maxWidth: '1200px'
             });
 
-            const leases = await DataManager.getLandlordLeases(this.currentUser.uid);
-            const renewalsData = this.getUpcomingRenewals(leases);
+            const [leases, rooms] = await Promise.all([
+                DataManager.getLandlordLeases(this.currentUser.uid),
+                this.getAllRooms()
+            ]);
+
+            // FILTER by selected apartment
+            let filteredLeases = leases;
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Filtering lease renewals by apartment: ${this.currentApartmentAddress}`);
+                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
+                filteredLeases = leases.filter(l => roomNumbers.includes(l.roomNumber));
+            }
+
+            const renewalsData = this.getUpcomingRenewals(filteredLeases);
             const renewalsTable = this.generateLeaseRenewalsTable(renewalsData);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -11528,7 +11682,7 @@ class CasaLink {
                 }
             }
             
-            const stats = await DataManager.getDashboardStats(this.currentUser.uid, this.currentRole);
+            const stats = await DataManager.getDashboardStats(this.currentUser.uid, this.currentRole, this.currentApartmentAddress);
             console.log('📊 Fresh dashboard stats:', stats);
             this.updateDashboardWithRealData(stats);
             
@@ -11557,8 +11711,8 @@ class CasaLink {
         try {
             console.log('🔄 Loading dashboard data for selected apartment...');
             
-            // Get stats for the current apartment
-            const stats = await DataManager.getDashboardStats(this.currentUser.uid, this.currentRole);
+            // Get stats for the current apartment (pass apartment address for filtering)
+            const stats = await DataManager.getDashboardStats(this.currentUser.uid, this.currentRole, this.currentApartmentAddress);
             console.log('📊 Dashboard stats for apartment:', stats);
             this.updateDashboardWithRealData(stats);
         } catch (error) {
@@ -12797,6 +12951,7 @@ class CasaLink {
             this.updateCard('occupancyRate', `${stats.occupancyRate}%`);
             this.updateCard('vacantUnits', stats.vacantUnits);
             this.updateCard('occupancyDetails', `${stats.occupiedUnits}/${stats.totalUnits} units`);
+            this.updateCard('vacantUnitsCapacity', `${stats.totalUnits} total capacity`);
             this.updateCard('totalTenants', stats.totalOccupants || stats.totalTenants); // UPDATED LINE
             this.updateCard('averageRent', `₱${stats.averageRent.toLocaleString()}`);
             
@@ -12879,7 +13034,8 @@ class CasaLink {
                 .where('role', '==', 'tenant')
                 .onSnapshot((snapshot) => {
                     console.log('👥 Tenants data changed, refreshing dashboard...');
-                    if (this.currentPage === 'dashboard') {
+                    // Only refresh if on dashboard AND an apartment is selected (or single apartment)
+                    if (this.currentPage === 'dashboard' && (this.currentApartmentAddress || this.currentApartmentId)) {
                         this.loadDashboardData();
                     }
                 }, (error) => {
@@ -12891,7 +13047,8 @@ class CasaLink {
                 .where('landlordId', '==', this.currentUser.uid)
                 .onSnapshot((snapshot) => {
                     console.log('📄 Leases data changed, refreshing dashboard...');
-                    if (this.currentPage === 'dashboard') {
+                    // Only refresh if on dashboard AND an apartment is selected (or single apartment)
+                    if (this.currentPage === 'dashboard' && (this.currentApartmentAddress || this.currentApartmentId)) {
                         this.loadDashboardData();
                     }
                 }, (error) => {
@@ -12903,7 +13060,8 @@ class CasaLink {
                 .where('landlordId', '==', this.currentUser.uid)
                 .onSnapshot((snapshot) => {
                     console.log('💰 Bills data changed, refreshing dashboard...');
-                    if (this.currentPage === 'dashboard') {
+                    // Only refresh if on dashboard AND an apartment is selected (or single apartment)
+                    if (this.currentPage === 'dashboard' && (this.currentApartmentAddress || this.currentApartmentId)) {
                         this.loadDashboardData();
                     }
                 }, (error) => {
@@ -12915,7 +13073,8 @@ class CasaLink {
                 .where('landlordId', '==', this.currentUser.uid)
                 .onSnapshot((snapshot) => {
                     console.log('🔧 Maintenance data changed, refreshing dashboard...');
-                    if (this.currentPage === 'dashboard') {
+                    // Only refresh if on dashboard AND an apartment is selected (or single apartment)
+                    if (this.currentPage === 'dashboard' && (this.currentApartmentAddress || this.currentApartmentId)) {
                         this.loadDashboardData();
                     }
                 }, (error) => {
@@ -12923,6 +13082,7 @@ class CasaLink {
                 });
                 
             console.log('✅ All Firestore listeners set up successfully');
+            
             
         } catch (error) {
             console.error('❌ Error setting up Firestore listeners:', error);
