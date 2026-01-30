@@ -2114,6 +2114,9 @@ class CasaLink {
             this.showAddPropertyForm();
         });
         
+        // Setup apartment selector dropdown
+        this.setupApartmentSelector();
+        
         // Load recent activities when dashboard is shown 
         setTimeout(() => {
             this.loadRecentActivities();
@@ -2123,6 +2126,103 @@ class CasaLink {
         this.updateActiveNavState('dashboard');
         
         console.log('✅ All dashboard events setup complete');
+    }
+
+    async setupApartmentSelector() {
+        console.log('🏢 Setting up apartment selector...');
+        
+        try {
+            const selector = document.getElementById('apartmentSelector');
+            if (!selector) {
+                console.warn('⚠️ Apartment selector not found');
+                return;
+            }
+            
+            // Fetch landlord's apartments
+            const apartments = await DataManager.getLandlordApartments(this.currentUser.uid);
+            
+            console.log('📍 Found apartments:', apartments.length);
+            
+            if (apartments.length === 0) {
+                selector.innerHTML = '<option value="">No apartments found - Add one first</option>';
+                selector.disabled = true;
+                return;
+            }
+            
+            // Populate dropdown with apartments
+            if (apartments.length > 0) {
+                const options = apartments.map((apt, index) => `
+                    <option value="${apt.id}" data-address="${apt.apartmentAddress || ''}" data-rooms="${apt.numberOfRooms || 0}">
+                        ${apt.apartmentAddress || 'Apartment'} (${apt.numberOfRooms || 0} units)
+                    </option>
+                `).join('');
+
+                selector.innerHTML = options;
+
+                // Set first apartment as selected and store its address for filtering
+                selector.value = apartments[0].id;
+                this.currentApartmentId = apartments[0].id;
+                this.currentApartmentAddress = apartments[0].apartmentAddress || null;
+                this.apartmentsList = apartments;
+                console.log('✅ Default apartment selected:', apartments[0].apartmentAddress);
+
+                // Setup change event
+                selector.addEventListener('change', (e) => {
+                    const selectedApartment = this.apartmentsList.find(apt => apt.id === e.target.value);
+                    if (selectedApartment) {
+                        this.currentApartmentId = selectedApartment.id;
+                        this.currentApartmentAddress = selectedApartment.apartmentAddress || null;
+                        console.log('🔄 Switched to apartment:', selectedApartment.apartmentAddress);
+
+                        // Reload unit layout for selected apartment
+                        this.loadAndDisplayUnitLayoutInDashboard();
+                    }
+                });
+            } else {
+                // Fallback: derive apartments from rooms if no apartments collection exists yet
+                console.log('ℹ️ No apartments found for landlord, deriving from rooms...');
+                const units = await DataManager.getLandlordUnits(this.currentUser.uid);
+                const addresses = Array.from(new Set(units.map(u => u.apartmentAddress).filter(Boolean)));
+
+                if (addresses.length === 0) {
+                    selector.innerHTML = '<option value="">No apartments found - Add one first</option>';
+                    selector.disabled = true;
+                    this.apartmentsList = [];
+                    this.currentApartmentId = null;
+                    this.currentApartmentAddress = null;
+                    return;
+                }
+
+                // Build options from addresses
+                const options = addresses.map(addr => `
+                    <option value="${addr}">${addr}</option>
+                `).join('');
+
+                selector.innerHTML = options;
+                selector.disabled = false;
+
+                // Select first address by default
+                selector.value = addresses[0];
+                this.currentApartmentId = null;
+                this.currentApartmentAddress = addresses[0];
+                this.apartmentsList = addresses;
+
+                selector.addEventListener('change', (e) => {
+                    this.currentApartmentId = null;
+                    this.currentApartmentAddress = e.target.value || null;
+                    console.log('🔄 Switched to apartment (derived):', this.currentApartmentAddress);
+                    this.loadAndDisplayUnitLayoutInDashboard();
+                });
+            }
+            
+            console.log('✅ Apartment selector setup complete');
+        } catch (error) {
+            console.error('❌ Error setting up apartment selector:', error);
+            const selector = document.getElementById('apartmentSelector');
+            if (selector) {
+                selector.innerHTML = '<option value="">Error loading apartments</option>';
+            }
+        }
     }
 
     
@@ -2293,6 +2393,7 @@ class CasaLink {
         'showUnitLayoutDashboard',
         'showUnitDetails',
         'showAddUnitForm',
+        'startAddTenantForUnit',
         'refreshUnitLayout',
         'setupUnitClickHandlers',
         'generateDynamicUnitLayout'
@@ -2341,9 +2442,11 @@ class CasaLink {
                         </div>
                     </div>
                     <div class="legend-stats-horizontal">
-                        <div class="stat-item">
-                            <span class="stat-label">View:</span>
-                            <span class="stat-value">Database Units</span>
+                        <div class="stat-item" style="display: flex; align-items: center; gap: 10px;">
+                            <span class="stat-label">Viewing:</span>
+                            <select id="apartmentSelector" class="apartment-dropdown" style="padding: 6px 12px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer; font-size: 0.9rem;">
+                                <option value="">Loading apartments...</option>
+                            </select>
                         </div>
                     </div>
                 </div>
@@ -2597,8 +2700,19 @@ class CasaLink {
             
             // Enrich units with tenant names
             const enrichedUnits = this.enrichUnitsWithTenantData(units, tenants, leases);
-            
-            if (!enrichedUnits || enrichedUnits.length === 0) {
+
+            // Filter by selected apartment if present (supports apartmentAddress fallback)
+            let displayUnits = enrichedUnits;
+            if (this.currentApartmentAddress) {
+                displayUnits = enrichedUnits.filter(u => u.apartmentAddress === this.currentApartmentAddress);
+            } else if (this.currentApartmentId && this.apartmentsList && Array.isArray(this.apartmentsList)) {
+                const apt = this.apartmentsList.find(a => a.id === this.currentApartmentId);
+                if (apt && apt.apartmentAddress) {
+                    displayUnits = enrichedUnits.filter(u => u.apartmentAddress === apt.apartmentAddress);
+                }
+            }
+
+            if (!displayUnits || displayUnits.length === 0) {
                 console.log('ℹ️ No units found');
                 container.innerHTML = `
                     <div style="padding: 40px; text-align: center;">
@@ -2615,10 +2729,10 @@ class CasaLink {
                 return;
             }
             
-            console.log(`✅ Loaded ${enrichedUnits.length} units for inline display with tenant data`);
-            
+            console.log(`✅ Loaded ${displayUnits.length} units for inline display with tenant data`);
+
             // Generate the layout content HTML
-            const layoutHTML = this.generateInlineUnitLayoutHTML(enrichedUnits);
+            const layoutHTML = this.generateInlineUnitLayoutHTML(displayUnits);
             
             // Insert the layout into the container
             container.innerHTML = layoutHTML;
@@ -2627,7 +2741,7 @@ class CasaLink {
             this.setupUnitClickHandlers(container);
             
             // Setup real-time updates for the inline display
-            this.setupRealtimeUpdatesForInlineLayout(container, enrichedUnits);
+            this.setupRealtimeUpdatesForInlineLayout(container, displayUnits);
             
             console.log('✅ Unit layout loaded and displayed in dashboard');
             
@@ -4449,6 +4563,9 @@ class CasaLink {
             
             // Get tenant details if occupied - fetch from active lease and tenant data
             let tenantInfo = '';
+            let occupancyDisplay = `${room.numberOfMembers || 0}/${room.maxMembers || 0}<span style="font-size: 0.8em; color: #666; margin-left: 5px;">persons</span>`;
+            let occupantsList = '';
+            
             if (room.isAvailable === false) {
                 try {
                     console.log('📡 Fetching tenant details from lease data...');
@@ -4476,10 +4593,39 @@ class CasaLink {
                                     day: 'numeric' 
                                 }) : 'Not set';
                             
+                            // Get occupants from lease data
+                            const leaseOccupants = activeLease.occupants || [tenant.name];
+                            const totalOccupants = activeLease.totalOccupants || leaseOccupants.length;
+                            
+                            // Update occupancy display with lease data
+                            occupancyDisplay = `${totalOccupants}/${room.maxMembers || 0}<span style="font-size: 0.8em; color: #666; margin-left: 5px;">persons</span>`;
+                            
+                            // Build occupants list HTML
+                            if (leaseOccupants && leaseOccupants.length > 0) {
+                                const occupantsListItems = leaseOccupants.map((occupantName, index) => `
+                                    <div style="padding: 8px 0; border-bottom: ${index < leaseOccupants.length - 1 ? '1px solid #e9ecef' : 'none'};">
+                                        <div style="display: flex; align-items: center; gap: 8px;">
+                                            <i class="fas fa-user" style="color: var(--royal-blue); font-size: 0.9em;"></i>
+                                            <span style="font-weight: 600;">${occupantName}</span>
+                                            ${index === 0 ? '<span style="font-size: 0.75em; background: var(--royal-blue); color: white; padding: 2px 8px; border-radius: 12px; margin-left: auto;">Main</span>' : ''}
+                                        </div>
+                                    </div>
+                                `).join('');
+                                
+                                occupantsList = `
+                                    <div style="margin-top: 20px; padding: 15px; background: rgba(52, 168, 83, 0.05); border-radius: 8px; border-left: 4px solid var(--success);">
+                                        <h6 style="margin: 0 0 12px 0; color: var(--success);">
+                                            <i class="fas fa-users me-2"></i>All Occupants (${leaseOccupants.length})
+                                        </h6>
+                                        <div>${occupantsListItems}</div>
+                                    </div>
+                                `;
+                            }
+                            
                             tenantInfo = `
                                 <div style="margin-top: 20px; padding: 15px; background: rgba(52, 168, 83, 0.05); border-radius: 8px; border-left: 4px solid var(--success);">
                                     <h6 style="margin: 0 0 10px 0; color: var(--success);">
-                                        <i class="fas fa-user me-2"></i>Current Tenant
+                                        <i class="fas fa-user me-2"></i>Primary Tenant
                                     </h6>
                                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
                                         <div>
@@ -4539,8 +4685,7 @@ class CasaLink {
                         <div class="detail-card">
                             <div style="font-size: 0.85em; color: #666; margin-bottom: 5px;">Current Occupants</div>
                             <div style="font-size: 1.2em; font-weight: 600;">
-                                ${room.numberOfMembers || 0}/${room.maxMembers || 0}
-                                <span style="font-size: 0.8em; color: #666; margin-left: 5px;">persons</span>
+                                ${occupancyDisplay}
                             </div>
                         </div>
                         
@@ -4552,6 +4697,9 @@ class CasaLink {
                     
                     <!-- Tenant Information -->
                     ${tenantInfo}
+                    
+                    <!-- All Occupants List -->
+                    ${occupantsList}
                     
                     <!-- Additional Information -->
                     <div style="margin-top: 25px; padding: 15px; background: #f8f9fa; border-radius: 8px;">
@@ -4575,6 +4723,11 @@ class CasaLink {
                         <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
                             <i class="fas fa-times"></i> Close
                         </button>
+                        ${room.isAvailable === true ? `
+                        <button class="btn btn-success" onclick="window.app.startAddTenantForUnit('${room.roomNumber}'); ModalManager.closeModal(this.closest('.modal-overlay'))">
+                            <i class="fas fa-user-plus"></i> Add Tenant
+                        </button>
+                        ` : ''}
                         <button class="btn btn-primary" onclick="window.app.editUnit('${roomDoc.id}')">
                             <i class="fas fa-edit"></i> Edit Unit
                         </button>
@@ -4970,7 +5123,7 @@ class CasaLink {
                     
                     <p><strong>This agreement is made by and between:</strong></p>
                     <p style="margin-left: 20px;">
-                        <strong>Landlady/Lessor:</strong> Nelly Virtucio<br>
+                        <strong>Landlady/Lessor:</strong> Nelly Dontogan<br>
                         <strong>Tenant/Lessee:</strong> ${primaryTenant}
                     </p>
 
@@ -5009,7 +5162,7 @@ class CasaLink {
                     </p>
 
                     <div style="display: flex; justify-content: space-between; margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
-                        <div><strong>Nelly D. Virtucio</strong><br>Landlady/Lessor</div>
+                        <div><strong>Nelly Dontogan</strong><br>Landlady/Lessor</div>
                         <div><strong>${primaryTenant}</strong><br>Tenant/Lessee</div>
                     </div>
                 </div>
@@ -15197,6 +15350,42 @@ class CasaLink {
         this.addTenantModal = modal;
     }
 
+    // Start adding tenant for a specific unit (pre-filled from unit click)
+    async startAddTenantForUnit(roomNumber) {
+        console.log('🏠 Starting tenant addition for unit:', roomNumber);
+        
+        // First, show the regular add tenant form
+        await this.showAddTenantForm();
+        
+        // Then pre-fill the room number
+        setTimeout(() => {
+            const roomSelect = document.getElementById('roomNumber');
+            if (roomSelect) {
+                // Find and select the room
+                const options = Array.from(roomSelect.options);
+                const roomOption = options.find(opt => opt.value === roomNumber);
+                
+                if (roomOption) {
+                    roomSelect.value = roomNumber;
+                    
+                    // Trigger change event to populate other fields
+                    const event = new Event('change', { bubbles: true });
+                    roomSelect.dispatchEvent(event);
+                    
+                    // Focus on tenant name field for better UX
+                    const tenantNameInput = document.getElementById('tenantName');
+                    if (tenantNameInput) {
+                        tenantNameInput.focus();
+                    }
+                    
+                    console.log('✅ Room pre-filled:', roomNumber);
+                } else {
+                    console.warn('⚠️ Room not found in options:', roomNumber);
+                }
+            }
+        }, 100);
+    }
+
     setupRoomSelectionWithMemberInfo() {
         const roomSelect = document.getElementById('roomNumber');
         const rentalAmountInput = document.getElementById('rentalAmount');
@@ -15662,7 +15851,7 @@ class CasaLink {
         // Format tenant section (this will show primary tenant only since members haven't been added yet)
         const tenantLesseeSection = `
             <p style="margin-left: 20px;">
-                <strong>Landlady/Lessor:</strong> Nelly Virtucio<br>
+                <strong>Landlady/Lessor:</strong> Nelly Dontogan<br>
                 <strong>Tenant/Lessee:</strong> ${data.name}<br>
                 <em>Additional occupants can be added by the tenant during account setup</em>
             </p>
@@ -15724,7 +15913,7 @@ class CasaLink {
                     
                     <div style="display: flex; justify-content: space-between; margin-top: 30px;">
                         <div>
-                            <p><strong>Nelly D. Virtucio</strong><br>Landlady/Lessor</p>
+                            <p><strong>Nelly Dontogan</strong><br>Landlady/Lessor</p>
                         </div>
                         <div>
                             <p><strong>${data.name}</strong><br>Tenant/Lessee</p>
@@ -16238,7 +16427,7 @@ class CasaLink {
                 tenantAge: tenantData.age,
 
                 landlordId: this.currentUser.uid,
-                landlordName: 'Nelly D. Virtucio',
+                landlordName: 'Nelly Dontogan',
 
                 roomNumber: tenantData.roomNumber,
                 rentalAddress: tenantData.rentalAddress,
@@ -17551,7 +17740,7 @@ class CasaLink {
             if (additionalMembers.length > 0) {
                 tenantLesseeSection = `
                     <p style="margin-left: 20px;">
-                        <strong>Landlady/Lessor:</strong> Nelly Virtucio<br>
+                        <strong>Landlady/Lessor:</strong> Nelly Dontogan<br>
                         <strong>Tenant/Lessee:</strong> ${primaryTenant}<br>
                         ${additionalMembers.map((member, index) =>
                     `<strong>Additional Occupant ${index + 1}:</strong> ${member}<br>`
@@ -17561,7 +17750,7 @@ class CasaLink {
             } else {
                 tenantLesseeSection = `
                     <p style="margin-left: 20px;">
-                        <strong>Landlady/Lessor:</strong> Nelly Virtucio<br>
+                        <strong>Landlady/Lessor:</strong> Nelly Dontogan<br>
                         <strong>Tenant/Lessee:</strong> ${primaryTenant}
                     </p>
                 `;
@@ -17649,7 +17838,7 @@ class CasaLink {
 
                         <div style="display: flex; justify-content: space-between; margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
                             <div>
-                                <p><strong>Nelly D. Virtucio</strong><br>Landlady/Lessor</p>
+                                <p><strong>Nelly Dontogan</strong><br>Landlady/Lessor</p>
                             </div>
                             <div>
                                 <p><strong>${primaryTenant}</strong><br>Tenant/Lessee</p>

@@ -276,6 +276,35 @@ class DataManager {
         }
     }
 
+    static async getLandlordApartments(landlordId) {
+        // If no landlordId provided, check window.currentUser
+        if (!landlordId && typeof window !== 'undefined' && window.currentUser) {
+            landlordId = window.currentUser.uid;
+        }
+        if (!landlordId) throw new Error('User not authenticated');
+        
+        try {
+            console.log('🏢 Fetching apartments for landlord:', landlordId);
+            
+            const snapshot = await firebaseDb.collection('apartments')
+                .where('landlordId', '==', landlordId)
+                .where('isActive', '==', true)
+                .orderBy('createdAt', 'desc')
+                .get();
+            
+            const apartments = snapshot.docs.map(doc => {
+                const data = doc.data();
+                return { ...data, id: doc.id };
+            });
+            
+            console.log('✅ Apartments loaded:', apartments.length);
+            return apartments;
+        } catch (error) {
+            console.error('❌ Error getting apartments:', error);
+            return [];
+        }
+    }
+
     static async getLease(leaseId) {
         if (!leaseId) throw new Error('Missing leaseId');
         try {
