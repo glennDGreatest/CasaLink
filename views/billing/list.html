@@ -27,16 +27,17 @@
 
         .btn-primary {
             padding: 10px 20px;
-            background: #1a73e8;
+            background: var(--royal-blue, #1a73e8);
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
             font-size: 14px;
+            box-shadow: 0 2px 6px rgba(26,115,232,0.12);
         }
 
         .btn-primary:hover {
-            background: #1565c0;
+            background: #0f5fb3;
         }
 
         .summary-cards {
@@ -48,9 +49,9 @@
 
         .summary-card {
             background: white;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 18px;
+            border-radius: 10px;
+            box-shadow: 0 4px 12px rgba(16,24,40,0.04);
             text-align: center;
         }
 
@@ -61,9 +62,9 @@
         }
 
         .summary-card-value {
-            font-size: 24px;
-            font-weight: bold;
-            color: #1a73e8;
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--royal-blue, #1a73e8);
         }
 
         .summary-card.warning .summary-card-value {
@@ -89,9 +90,11 @@
         .search-box input,
         .filter-select {
             padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            border: 1px solid #e6e9ee;
+            border-radius: 8px;
             font-size: 14px;
+            background: #fff;
+            box-shadow: inset 0 1px 2px rgba(16,24,40,0.02);
         }
 
         .search-box input {
@@ -111,22 +114,27 @@
         }
 
         thead {
-            background: #f5f5f5;
-            border-bottom: 2px solid #ddd;
+            background: #fbfdff;
+            border-bottom: 1px solid #eef2f6;
+            position: sticky;
+            top: 0;
+            z-index: 2;
         }
 
         th {
-            padding: 15px;
+            padding: 14px 16px;
             text-align: left;
             font-weight: 600;
-            color: #333;
-            font-size: 14px;
+            color: #273043;
+            font-size: 13px;
+            letter-spacing: 0.2px;
         }
 
         td {
-            padding: 15px;
-            border-bottom: 1px solid #eee;
+            padding: 14px 16px;
+            border-bottom: 1px solid #f1f5f9;
             font-size: 14px;
+            vertical-align: middle;
         }
 
         tr:hover {
@@ -144,8 +152,8 @@
         }
 
         .amount {
-            font-weight: 600;
-            color: #333;
+            font-weight: 700;
+            color: var(--royal-blue, #1a73e8);
         }
 
         .badge {
@@ -177,23 +185,30 @@
         }
 
         .btn-action {
-            padding: 6px 12px;
-            background: #1a73e8;
-            color: white;
-            border: none;
-            border-radius: 3px;
+            padding: 6px 10px;
+            background: transparent;
+            color: var(--royal-blue, #1a73e8);
+            border: 1px solid rgba(26,115,232,0.12);
+            border-radius: 6px;
             cursor: pointer;
-            font-size: 12px;
+            font-size: 13px;
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
         }
 
-        .btn-action:hover {
-            background: #1565c0;
+        .btn-action.primary {
+            background: var(--royal-blue, #1a73e8);
+            color: white;
+            border-color: transparent;
         }
+
+        .btn-action:hover { opacity: 0.95; }
 
         .empty-state {
             text-align: center;
             padding: 60px 20px;
-            color: #999;
+            color: #9aa4b2;
         }
 
         .loading {
@@ -328,6 +343,22 @@
             }
         });
 
+        // Helpers: formatting
+        function formatCurrencyPhp(amount) {
+            try {
+                return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', maximumFractionDigits: 0 }).format(amount);
+            } catch (e) {
+                return '₱' + (amount || 0).toLocaleString();
+            }
+        }
+
+        function formatDateLocal(dateStr) {
+            if (!dateStr) return 'N/A';
+            const d = new Date(dateStr);
+            if (isNaN(d)) return dateStr;
+            return d.toLocaleDateString();
+        }
+
         // Helper: Display bills table
         window.displayBills = function(bills) {
             const tbody = document.getElementById('billsList');
@@ -348,25 +379,25 @@
             bills.forEach(bill => {
                 const statusClass = bill.status === 'paid' ? 'paid' : 
                                     bill.status === 'overdue' ? 'overdue' : 'pending';
-                const statusText = bill.status.charAt(0).toUpperCase() + bill.status.slice(1);
+                const statusText = bill.status ? (bill.status.charAt(0).toUpperCase() + bill.status.slice(1)) : 'Pending';
 
                 html += `
                     <tr data-bill-id="${bill.id}">
-                        <td class="bill-info">${bill.billNumber}</td>
+                        <td class="bill-info">${bill.billNumber || bill.id}</td>
                         <td>
-                            <div class="bill-info">${bill.tenantName}</div>
-                            <div class="bill-desc">${bill.tenantEmail}</div>
+                            <div class="bill-info">${bill.tenantName || '-'}</div>
+                            <div class="bill-desc">${bill.tenantEmail || ''}</div>
                         </td>
-                        <td>${bill.propertyName}</td>
-                        <td class="amount">$${bill.amount.toFixed(2)}</td>
-                        <td>${bill.dueDate}</td>
+                        <td>${bill.propertyName || bill.propertyAddress || '-'}</td>
+                        <td class="amount">${formatCurrencyPhp(bill.amount || bill.totalAmount || 0)}</td>
+                        <td>${formatDateLocal(bill.dueDate || bill.due)}</td>
                         <td>
                             <span class="badge ${statusClass}">${statusText}</span>
                         </td>
                         <td>
                             <div class="actions">
-                                <button class="btn-action view-btn">View</button>
-                                ${bill.status !== 'paid' ? '<button class="btn-action pay-btn">Mark Paid</button>' : ''}
+                                <button class="btn-action" title="View" aria-label="View bill">View</button>
+                                ${bill.status !== 'paid' ? '<button class="btn-action primary" title="Mark Paid">Mark Paid</button>' : ''}
                             </div>
                         </td>
                     </tr>

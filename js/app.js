@@ -2324,7 +2324,7 @@ class CasaLink {
                 this.apartmentsList = apartments;
 
                 // Setup change event
-                selector.addEventListener('change', (e) => {
+                selector.addEventListener('change', async (e) => {
                     if (!e.target.value) {
                         // User cleared selection
                         this.currentApartmentId = null;
@@ -2342,8 +2342,9 @@ class CasaLink {
                         console.log('🔄 Switched to apartment:', selectedApartment.apartmentAddress);
 
                         // Reload unit layout and stats for selected apartment
-                        this.loadAndDisplayUnitLayoutInDashboard();
-                        this.loadDashboardDataForSelectedApartment();
+                        // IMPORTANT: Await both to ensure they complete and prevent race conditions with Firestore listeners
+                        await this.loadAndDisplayUnitLayoutInDashboard();
+                        await this.loadDashboardDataForSelectedApartment();
                     }
                 });
                 
@@ -2394,7 +2395,7 @@ class CasaLink {
                 
                 this.apartmentsList = addresses;
 
-                selector.addEventListener('change', (e) => {
+                selector.addEventListener('change', async (e) => {
                     if (!e.target.value) {
                         // User cleared selection
                         this.currentApartmentId = null;
@@ -2408,8 +2409,8 @@ class CasaLink {
                     this.currentApartmentAddress = e.target.value || null;
                     this.shouldAutoLoadUnitLayout = true; // User manually selected, load it
                     console.log('🔄 Switched to apartment (derived):', this.currentApartmentAddress);
-                    this.loadAndDisplayUnitLayoutInDashboard();
-                        this.loadDashboardDataForSelectedApartment();
+                    await this.loadAndDisplayUnitLayoutInDashboard();
+                    await this.loadDashboardDataForSelectedApartment();
                 });
                 
                 return { count: addresses.length };
@@ -2481,6 +2482,11 @@ class CasaLink {
                     <h5 style="margin-bottom: 25px; color: var(--royal-blue);">Step 1: Basic Apartment Information</h5>
                     
                     <div class="form-group">
+                        <label class="form-label">Apartment Name *</label>
+                        <input type="text" id="apartmentName" class="form-input" placeholder="Enter Apartment Name" required>
+                    </div>
+
+                    <div class="form-group">
                         <label class="form-label">Apartment Address *</label>
                         <input type="text" id="apartmentAddress" class="form-input" placeholder="Enter Apartment Address" required>
                     </div>
@@ -2489,10 +2495,11 @@ class CasaLink {
                         <div class="form-group">
                             <label class="form-label">Number of Floors *</label>
                             <div style="display: flex; align-items: center; gap: 10px;">
-                                <button type="button" class="btn btn-sm" onclick="this.nextElementSibling.value = Math.max(1, parseInt(this.nextElementSibling.value) - 1)">−</button>
-                                <input type="number" id="numberOfFloors" class="form-input" min="1" value="1" style="text-align: center; flex: 1;" readonly>
-                                <button type="button" class="btn btn-sm" onclick="this.previousElementSibling.value = parseInt(this.previousElementSibling.value) + 1">+</button>
+                                <button type="button" class="btn btn-sm" id="decreaseFloorsBtn">−</button>
+                                <input type="number" id="numberOfFloors" class="form-input" min="1" max="20" value="1" style="text-align: center; flex: 1;" readonly>
+                                <button type="button" class="btn btn-sm" id="increaseFloorsBtn">+</button>
                             </div>
+                            <div id="floorsWarning" style="color: #dc3545; font-size: 0.85rem; margin-top: 5px; display: none;">⚠️ Maximum 20 floors allowed</div>
                         </div>
 
                         <div class="form-group">
@@ -2523,14 +2530,59 @@ class CasaLink {
                 width: '600px'
             });
 
+            // Setup floor increment/decrement with max limit of 20
+            const floorsInput = modal.querySelector('#numberOfFloors');
+            const floorsWarning = modal.querySelector('#floorsWarning');
+            const increaseFloorsBtn = modal.querySelector('#increaseFloorsBtn');
+            const decreaseFloorsBtn = modal.querySelector('#decreaseFloorsBtn');
+
+            const updateFloorsWarning = () => {
+                const currentFloors = parseInt(floorsInput.value, 10);
+                if (currentFloors >= 20) {
+                    floorsInput.style.borderColor = '#dc3545';
+                    floorsInput.style.backgroundColor = '#ffe6e6';
+                    floorsWarning.style.display = 'block';
+                    increaseFloorsBtn.disabled = true;
+                } else {
+                    floorsInput.style.borderColor = '';
+                    floorsInput.style.backgroundColor = '';
+                    floorsWarning.style.display = 'none';
+                    increaseFloorsBtn.disabled = false;
+                }
+            };
+
+            increaseFloorsBtn.addEventListener('click', () => {
+                const currentFloors = parseInt(floorsInput.value, 10);
+                if (currentFloors < 20) {
+                    floorsInput.value = currentFloors + 1;
+                    updateFloorsWarning();
+                }
+            });
+
+            decreaseFloorsBtn.addEventListener('click', () => {
+                const currentFloors = parseInt(floorsInput.value, 10);
+                if (currentFloors > 1) {
+                    floorsInput.value = currentFloors - 1;
+                    updateFloorsWarning();
+                }
+            });
+
             // Step 1 → Step 2
             const nextBtn = modal.querySelector('#nextToStep2Btn');
             nextBtn.addEventListener('click', async () => {
+                const name = modal.querySelector('#apartmentName').value.trim();
                 const addr = modal.querySelector('#apartmentAddress').value.trim();
                 const floors = parseInt(modal.querySelector('#numberOfFloors').value, 10) || 1;
                 const rooms = parseInt(modal.querySelector('#numberOfRooms').value, 10) || 1;
                 const desc = modal.querySelector('#apartmentDescription').value.trim();
 
+                // Validate all required fields
+                if (!name) {
+                    if (window.notificationManager && typeof window.notificationManager.error === 'function') {
+                        window.notificationManager.error('Please enter an apartment name');
+                    }
+                    return;
+                }
                 if (!addr) {
                     if (window.notificationManager && typeof window.notificationManager.error === 'function') {
                         window.notificationManager.error('Please enter an apartment address');
@@ -2545,7 +2597,7 @@ class CasaLink {
                 }
 
                 // Store for later use
-                window.apartmentFormData = { address: addr, floors, rooms, description: desc };
+                window.apartmentFormData = { name, address: addr, floors, rooms, description: desc };
 
                 // Show Step 2
                 this.showAddPropertyStep2(modal, floors, rooms);
@@ -2679,6 +2731,7 @@ class CasaLink {
 
                 const result = await DataManager.createApartmentWithRooms(
                     {
+                        apartmentName: data.name,
                         apartmentAddress: data.address,
                         numberOfFloors: data.floors,
                         numberOfRooms: data.rooms,
@@ -2700,10 +2753,10 @@ class CasaLink {
                     selector.value = result.apartmentId;
                     this.currentApartmentId = result.apartmentId;
                     this.currentApartmentAddress = data.address;
-                    this.loadAndDisplayUnitLayoutInDashboard();
+                    await this.loadAndDisplayUnitLayoutInDashboard();
                     // Refresh dashboard overview cards and related stats for the newly created apartment
                     if (typeof this.loadDashboardDataForSelectedApartment === 'function') {
-                        this.loadDashboardDataForSelectedApartment();
+                        await this.loadDashboardDataForSelectedApartment();
                     }
                     // Log activity: new apartment created
                     try {
@@ -3219,15 +3272,12 @@ class CasaLink {
 
             // Filter by selected apartment (REQUIRED - only show rooms from the selected apartment)
             let displayUnits = [];
-            if (this.currentApartmentAddress) {
+            if (this.currentApartmentId) {
+                console.log(`🏢 Filtering units by apartment ID: ${this.currentApartmentId}`);
+                displayUnits = enrichedUnits.filter(u => u.apartmentId === this.currentApartmentId);
+            } else if (this.currentApartmentAddress) {
                 console.log(`🏢 Filtering units by apartment address: ${this.currentApartmentAddress}`);
                 displayUnits = enrichedUnits.filter(u => u.apartmentAddress === this.currentApartmentAddress);
-            } else if (this.currentApartmentId && this.apartmentsList && Array.isArray(this.apartmentsList)) {
-                const apt = this.apartmentsList.find(a => a.id === this.currentApartmentId);
-                if (apt && apt.apartmentAddress) {
-                    console.log(`🏢 Filtering units by apartment ID: ${apt.apartmentAddress}`);
-                    displayUnits = enrichedUnits.filter(u => u.apartmentAddress === apt.apartmentAddress);
-                }
             }
 
             if (!displayUnits || displayUnits.length === 0) {
@@ -3286,7 +3336,7 @@ class CasaLink {
     enrichUnitsWithTenantData(units, tenants, leases) {
         console.log('🔄 Enriching units with tenant data...');
         
-        // Create a map for quick lookup: apartmentAddress+roomNumber -> lease info
+        // Create a map for quick lookup: apartment-scoped key (apartmentId or apartmentAddress) + roomNumber -> lease info
         // This prevents cross-apartment collisions when rooms have same roomNumber in different apartments
         const roomLeaseMap = new Map();
         
@@ -3295,11 +3345,15 @@ class CasaLink {
             if (lease.isActive && lease.roomNumber) {
                 // Find tenant info for this lease
                 const tenant = tenants.find(t => t.id === lease.tenantId);
-                
+
                 // Create apartment-scoped key to prevent collisions
-                // Use apartmentAddress if available, otherwise use roomNumber alone (legacy leases)
-                const mapKey = lease.apartmentAddress ? `${lease.apartmentAddress}|${lease.roomNumber}` : lease.roomNumber;
-                
+                // Prefer apartmentId when available, fallback to apartmentAddress, else legacy roomNumber-only
+                let scopeKey = null;
+                if (lease.apartmentId) scopeKey = lease.apartmentId;
+                else if (lease.apartmentAddress) scopeKey = lease.apartmentAddress;
+
+                const mapKey = scopeKey ? `${scopeKey}|${lease.roomNumber}` : lease.roomNumber;
+
                 roomLeaseMap.set(mapKey, {
                     tenantId: lease.tenantId,
                     tenantName: tenant?.name || lease.tenantName || 'Unknown Tenant',
@@ -3316,12 +3370,16 @@ class CasaLink {
             // Try to find lease info using apartment-scoped key first
             let leaseInfo = null;
             
-            if (unit.apartmentAddress) {
-                // Apartment-scoped lookup for new units with apartmentAddress
+            // Try apartment-scoped lookup using apartmentId, then apartmentAddress, then legacy roomNumber-only
+            if (unit.apartmentId) {
+                leaseInfo = roomLeaseMap.get(`${unit.apartmentId}|${unit.roomNumber}`);
+            }
+
+            if (!leaseInfo && unit.apartmentAddress) {
                 leaseInfo = roomLeaseMap.get(`${unit.apartmentAddress}|${unit.roomNumber}`);
             }
-            
-            // Fallback to roomNumber-only lookup for units without apartmentAddress (legacy)
+
+            // Fallback to roomNumber-only lookup for legacy leases
             if (!leaseInfo) {
                 leaseInfo = roomLeaseMap.get(unit.roomNumber);
             }
@@ -3725,15 +3783,32 @@ class CasaLink {
                 
                 try {
                     // Check if unit already exists
-                    const existingQuery = await firebaseDb.collection('rooms')
-                        .where('roomNumber', '==', unitData.roomNumber)
-                        .get();
-                    
+                    // Scope existence check to the currently selected apartment (prefer apartmentId)
+                    let existingQueryRef = firebaseDb.collection('rooms').where('roomNumber', '==', unitData.roomNumber);
+                    if (this.currentApartmentId) {
+                        existingQueryRef = existingQueryRef.where('apartmentId', '==', this.currentApartmentId);
+                        unitData.apartmentId = this.currentApartmentId;
+                    } else if (this.currentApartmentAddress) {
+                        existingQueryRef = existingQueryRef.where('apartmentAddress', '==', this.currentApartmentAddress);
+                        unitData.apartmentAddress = this.currentApartmentAddress;
+                    }
+
+                    const existingQuery = await existingQueryRef.get();
+
                     if (!existingQuery.empty) {
-                        ToastManager.showToast(`Unit ${unitData.roomNumber} already exists`, 'error');
+                        ToastManager.showToast(`Unit ${unitData.roomNumber} already exists in this apartment`, 'error');
                         return;
                     }
-                    
+
+                    // Add apartment metadata to unit before saving
+                    if (!unitData.apartmentAddress && this.apartmentsList && this.currentApartmentId) {
+                        const apt = this.apartmentsList.find(a => a.id === this.currentApartmentId);
+                        if (apt) {
+                            unitData.apartmentAddress = apt.apartmentAddress || unitData.apartmentAddress;
+                            unitData.apartmentName = apt.apartmentName || apt.apartmentName || unitData.apartmentName;
+                        }
+                    }
+
                     // Add to Firestore
                     await firebaseDb.collection('rooms').add(unitData);
                     
@@ -5030,18 +5105,46 @@ class CasaLink {
             
             console.log('⏳ Fetching room data for ID:', unitId);
             
-            // Try to fetch from Firestore - check if it's a document ID or room number
-            let roomDoc;
-            
-            if (unitId.length === 20) { // Looks like a Firestore document ID
-                roomDoc = await firebaseDb.collection('rooms').doc(unitId).get();
-            } else {
-                // Try to find by roomNumber
-                const querySnapshot = await firebaseDb.collection('rooms')
-                    .where('roomNumber', '==', unitId)
-                    .limit(1)
-                    .get();
-                
+            // Try to fetch from Firestore - prefer document ID lookup first
+            let roomDoc = null;
+
+            try {
+                const possibleDoc = await firebaseDb.collection('rooms').doc(unitId).get();
+                if (possibleDoc && possibleDoc.exists) {
+                    roomDoc = possibleDoc;
+                }
+            } catch (err) {
+                // doc() with non-id won't throw, but keep safe in case of unexpected errors
+                console.warn('⚠️ Error attempting direct doc fetch for unitId:', err.message);
+            }
+
+            // If direct doc lookup failed, try querying by roomNumber scoped to currently selected apartment
+            if (!roomDoc) {
+                // Build a query that includes apartment scoping when available to avoid cross-apartment collisions
+                let queryRef = firebaseDb.collection('rooms').where('roomNumber', '==', unitId);
+
+                if (this.currentApartmentId) {
+                    // Prefer apartmentId if we have it (more robust)
+                    queryRef = queryRef.where('apartmentId', '==', this.currentApartmentId);
+                } else if (this.currentApartmentAddress) {
+                    queryRef = queryRef.where('apartmentAddress', '==', this.currentApartmentAddress);
+                } else if (this.apartmentsList && Array.isArray(this.apartmentsList) && this.currentApartmentId) {
+                    const apt = this.apartmentsList.find(a => a.id === this.currentApartmentId);
+                    if (apt && apt.apartmentAddress) {
+                        queryRef = queryRef.where('apartmentAddress', '==', apt.apartmentAddress);
+                    }
+                }
+
+                let querySnapshot = await queryRef.limit(1).get();
+
+                // Fallback: if scoped query returned nothing, try global roomNumber lookup (legacy support)
+                if (querySnapshot.empty && !this.currentApartmentAddress) {
+                    querySnapshot = await firebaseDb.collection('rooms')
+                        .where('roomNumber', '==', unitId)
+                        .limit(1)
+                        .get();
+                }
+
                 if (!querySnapshot.empty) {
                     roomDoc = querySnapshot.docs[0];
                 }
@@ -6342,15 +6445,24 @@ class CasaLink {
 
         // Load tenants data with pagination
         this.loadTenantsData();
+
+        // If a tenant reload was pending (created while on another page), process it now
+        if (this.pendingTenantReload) {
+            this.pendingTenantReload = false;
+            setTimeout(() => this.loadTenantsData(), 50);
+        }
     }
 
     async loadTenantsData() {
         try {
             console.log('Loading tenants data...');
             const tenantsList = document.getElementById('tenantsList');
-            
+
             if (!tenantsList) {
-                console.error('Tenants list element not found');
+                // The tenants view may not be active right now (e.g., creating tenant from another page).
+                // Queue a refresh for when the tenants page is visible instead of logging an error.
+                console.warn('Tenants list element not found — deferring tenants reload');
+                this.pendingTenantReload = true;
                 return;
             }
 
@@ -9541,8 +9653,9 @@ class CasaLink {
         return newLeasesCount;
     }
 
-    generateOccupancyTable(tenants, leases, rooms) {
+    generateOccupancyTable(tenants, leases, rooms, apartmentInfo = {}) {
         console.log('📊 Generating occupancy table...');
+        const { address: apartmentAddress = '', name: apartmentName = '' } = apartmentInfo;
         
         // Create a map for quick lookup: roomNumber -> lease info
         const roomLeaseMap = new Map();
@@ -9577,6 +9690,19 @@ class CasaLink {
         const occupancyRate = Math.round((roomLeaseMap.size / sortedRooms.length) * 100);
 
         let tableHTML = `
+            <!-- APARTMENT INFO HEADER -->
+            ${apartmentAddress ? `
+                <div style="padding: 20px; background: linear-gradient(135deg, var(--royal-blue)15, var(--info)15); border-radius: 8px; border-left: 4px solid var(--royal-blue); margin-bottom: 25px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <i class="fas fa-building" style="font-size: 1.3rem; color: var(--royal-blue);"></i>
+                        <div>
+                            <div style="font-weight: 600; font-size: 1.05rem; color: var(--dark-gray);">${apartmentName}</div>
+                            <div style="font-size: 0.9rem; color: var(--gray-600);">${apartmentAddress}</div>
+                        </div>
+                    </div>
+                </div>
+            ` : ''}
+            
             <!-- HEADER STATS SECTION -->
             <div style="margin-bottom: 25px;">
                 <!-- Quick Stats and Export Row -->
@@ -9829,6 +9955,22 @@ class CasaLink {
         try {
             console.log('🏠 Loading unit occupancy data...');
             
+            // Get apartment details for the modal title
+            let apartmentName = 'All Properties';
+            let apartmentAddress = '';
+            if (this.currentApartmentAddress) {
+                apartmentAddress = this.currentApartmentAddress;
+                // Try to get apartment name from apartmentsList
+                const currentApt = this.apartmentsList?.find(apt => 
+                    (apt.id === this.currentApartmentId || apt.apartmentAddress === this.currentApartmentAddress)
+                );
+                if (currentApt) {
+                    apartmentName = currentApt.apartmentName || currentApt.name || apartmentAddress;
+                } else {
+                    apartmentName = apartmentAddress;
+                }
+            }
+            
             // Show loading state
             const modalContent = `
                 <div style="text-align: center; padding: 40px;">
@@ -9837,8 +9979,12 @@ class CasaLink {
                 </div>
             `;
 
+            const modalTitle = apartmentAddress ? 
+                `Unit Occupancy Overview - ${apartmentName}` : 
+                'Unit Occupancy Overview';
+
             const modal = ModalManager.openModal(modalContent, {
-                title: 'Unit Occupancy Overview',
+                title: modalTitle,
                 showFooter: false,
                 width: '95%',
                 maxWidth: '1400px'
@@ -9888,8 +10034,22 @@ class CasaLink {
                 filteredBy: this.currentApartmentAddress ? `Apartment: ${this.currentApartmentAddress}` : 'All apartments'
             });
 
+            // Get apartment details for the table header
+            let apartmentInfo = { address: '', name: '' };
+            if (this.currentApartmentAddress) {
+                apartmentInfo.address = this.currentApartmentAddress;
+                const currentApt = this.apartmentsList?.find(apt => 
+                    (apt.id === this.currentApartmentId || apt.apartmentAddress === this.currentApartmentAddress)
+                );
+                if (currentApt) {
+                    apartmentInfo.name = currentApt.apartmentName || currentApt.name || this.currentApartmentAddress;
+                } else {
+                    apartmentInfo.name = this.currentApartmentAddress;
+                }
+            }
+            
             // Generate the occupancy table (using filtered rooms AND leases)
-            const occupancyTable = this.generateOccupancyTable(tenants, filteredLeases, filteredRooms);
+            const occupancyTable = this.generateOccupancyTable(tenants, filteredLeases, filteredRooms, apartmentInfo);
             
             // Update modal content with the table
             const modalBody = modal.querySelector('.modal-body');
@@ -12679,7 +12839,7 @@ class CasaLink {
                 }
             }
             
-            const stats = await DataManager.getDashboardStats(this.currentUser.id || this.currentUser.uid, this.currentRole, this.currentApartmentAddress);
+            const stats = await DataManager.getDashboardStats(this.currentUser.id || this.currentUser.uid, this.currentRole, { apartmentId: this.currentApartmentId, apartmentAddress: this.currentApartmentAddress });
             console.log('📊 Fresh dashboard stats:', stats);
             this.updateDashboardWithRealData(stats);
             
@@ -12707,10 +12867,86 @@ class CasaLink {
     async loadDashboardDataForSelectedApartment() {
         try {
             console.log('🔄 Loading dashboard data for selected apartment...');
+            console.log(`📍 Current apartment selection: ID=${this.currentApartmentId}, Address=${this.currentApartmentAddress}`);
             
-            // Get stats for the current apartment (pass apartment address for filtering)
-            const stats = await DataManager.getDashboardStats(this.currentUser.id || this.currentUser.uid, this.currentRole, this.currentApartmentAddress);
-            console.log('📊 Dashboard stats for apartment:', stats);
+            // Fetch same data sources used by the inline unit layout so scoping matches exactly
+            const landlordId = this.currentUser?.id || this.currentUser?.uid;
+            const [units, tenants, leases, bills, maintenance] = await Promise.all([
+                this.fetchAllUnitsFromFirestore(),
+                DataManager.getTenants(landlordId),
+                DataManager.getLandlordLeases(landlordId),
+                DataManager.getBills(landlordId),
+                DataManager.getMaintenanceRequests(landlordId)
+            ]);
+
+            console.log(`📦 Raw data fetched: ${units.length} units, ${tenants.length} tenants, ${leases.length} leases, ${bills.length} bills`);
+
+            // Enrich units with tenant data using the same method as the unit layout
+            const enrichedUnits = this.enrichUnitsWithTenantData(units, tenants, leases);
+
+            // Filter by selected apartment (prioritize apartmentId)
+            let displayUnits = [];
+            if (this.currentApartmentId) {
+                displayUnits = enrichedUnits.filter(u => u.apartmentId === this.currentApartmentId);
+                console.log(`🏢 Filtered to ${displayUnits.length} units by apartmentId: ${this.currentApartmentId}`);
+            } else if (this.currentApartmentAddress) {
+                displayUnits = enrichedUnits.filter(u => u.apartmentAddress === this.currentApartmentAddress);
+                console.log(`🏢 Filtered to ${displayUnits.length} units by address: ${this.currentApartmentAddress}`);
+            } else {
+                console.warn('⚠️ No apartment selected for filtering!');
+            }
+
+            // Prepare filtered lists for leases, bills, and maintenance to pass to the stats calculator
+            const filteredRoomNumbers = displayUnits.map(u => u.roomNumber);
+            const filteredRoomIds = displayUnits.map(u => u.id);
+
+            const filteredLeases = leases.filter(l => {
+                if (l.roomId && filteredRoomIds.includes(l.roomId)) return true;
+                if (this.currentApartmentId && l.apartmentId && l.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && l.apartmentAddress && this.currentApartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
+                if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) {
+                    if (l.apartmentId && this.currentApartmentId && l.apartmentId !== this.currentApartmentId) return false;
+                    if (l.apartmentAddress && this.currentApartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
+                    return true;
+                }
+                return false;
+            });
+
+            const filteredBills = bills.filter(b => {
+                if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
+                if (this.currentApartmentId && b.apartmentId && b.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && b.apartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
+                if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
+                    if (b.apartmentId && this.currentApartmentId && b.apartmentId !== this.currentApartmentId) return false;
+                    if (b.apartmentAddress && this.currentApartmentAddress && b.apartmentAddress !== this.currentApartmentAddress) return false;
+                    return true;
+                }
+                return false;
+            });
+
+            const filteredMaintenance = maintenance.filter(m => {
+                if (m.roomId && filteredRoomIds.includes(m.roomId)) return true;
+                if (this.currentApartmentId && m.apartmentId && m.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && m.apartmentAddress && m.apartmentAddress === this.currentApartmentAddress) return true;
+                if (m.roomNumber && filteredRoomNumbers.includes(m.roomNumber)) {
+                    if (m.apartmentId && this.currentApartmentId && m.apartmentId !== this.currentApartmentId) return false;
+                    if (m.apartmentAddress && this.currentApartmentAddress && m.apartmentAddress !== this.currentApartmentAddress) return false;
+                    return true;
+                }
+                return false;
+            });
+
+            // Filter tenants to only those in selected apartment's leases
+            const tenantIds = filteredLeases.map(l => l.tenantId).filter(Boolean);
+            const filteredTenants = tenants.filter(t => tenantIds.includes(t.id));
+
+            console.log(`📦 Filtered data for apartment: ${displayUnits.length} units, ${filteredLeases.length} leases, ${filteredBills.length} bills, ${filteredTenants.length} tenants`);
+
+            // Calculate stats using DataManager.calculateLandlordStats to keep calculations consistent
+            const stats = DataManager.calculateLandlordStats(filteredTenants, filteredLeases, filteredBills, filteredMaintenance, displayUnits.length);
+            console.log('📊 Dashboard stats for apartment (scoped):', stats);
+            console.log(`✅ Updating dashboard with: Occupancy=${stats.occupancyRate}%, Units=${stats.occupiedUnits}/${stats.totalUnits}, Revenue=₱${stats.totalRevenue}`);
+            
             this.updateDashboardWithRealData(stats);
         } catch (error) {
             console.log('❌ Failed to load dashboard data for selected apartment:', error);
@@ -16603,10 +16839,21 @@ class CasaLink {
     async getAvailableRooms() {
         try {
             console.log('🔄 Fetching available rooms...');
-            
-            const roomsSnapshot = await firebaseDb.collection('rooms')
-                .where('isAvailable', '==', true)
-                .get();
+            // Require a selected apartment to fetch available rooms scoped to that apartment
+            if (!this.currentApartmentId && !this.currentApartmentAddress) {
+                console.log('⚠️ No apartment selected - returning no available rooms');
+                return [];
+            }
+
+            // Scope available rooms to currently selected apartment
+            let roomsQuery = firebaseDb.collection('rooms').where('isAvailable', '==', true);
+            if (this.currentApartmentId) {
+                roomsQuery = roomsQuery.where('apartmentId', '==', this.currentApartmentId);
+            } else if (this.currentApartmentAddress) {
+                roomsQuery = roomsQuery.where('apartmentAddress', '==', this.currentApartmentAddress);
+            }
+
+            const roomsSnapshot = await roomsQuery.get();
             
             if (roomsSnapshot.empty) {
                 console.log('📦 No available rooms found, creating default rooms collection...');
@@ -16614,8 +16861,8 @@ class CasaLink {
             }
             
             const rooms = roomsSnapshot.docs.map(doc => ({
-                id: doc.id, // This will now be the room number (e.g., "1A", "2B")
-                roomNumber: doc.id, // Use document ID as room number
+                id: doc.id,
+                roomNumber: doc.data().roomNumber || doc.id,
                 ...doc.data()
             }));
             
@@ -16807,8 +17054,15 @@ class CasaLink {
 
     // Landlord creates tenant accounts
     async showAddTenantForm() {
-        // Fetch available rooms from Firestore
+        // Fetch available rooms from Firestore (scoped to selected apartment)
         const availableRooms = await this.getAvailableRooms();
+
+        // Determine rental address to autofill
+        let rentalAddress = this.currentApartmentAddress || '';
+        if (!rentalAddress && this.currentApartmentId && this.apartmentsList && Array.isArray(this.apartmentsList)) {
+            const apt = this.apartmentsList.find(a => a.id === this.currentApartmentId);
+            if (apt) rentalAddress = apt.apartmentAddress || apt.address || apt.location || '';
+        }
         
         let roomOptions = '';
         let availabilityMessage = '';
@@ -16894,9 +17148,8 @@ class CasaLink {
                 
                 <div class="form-group">
                     <label class="form-label">House Rental Address</label>
-                    <input type="text" id="rentalAddress" class="form-input" 
-                        value="Lot 22 Zarate Compound Purok 4, Bakakent Norte, Baguio City" readonly>
-                    <small style="color: var(--dark-gray);">Fixed address as per agreement</small>
+                    <input type="text" id="rentalAddress" class="form-input" value="${rentalAddress}" readonly>
+                    <small style="color: var(--dark-gray);">Auto-filled from selected apartment</small>
                 </div>
                 
                 <div class="form-group">
@@ -17968,19 +18221,73 @@ class CasaLink {
         try {
             console.log('📝 Creating SINGLE lease document for tenant:', tenantId);
 
-            // 🔹 Get room info
-            const room = await this.getRoomByNumber(tenantData.roomNumber);
+            // 🔹 Resolve room document by roomNumber (rooms may use autogenerated doc IDs)
+            let room = null;
+            let roomDocRef = null;
+
+            try {
+                const roomsQuery = firebaseDb.collection('rooms').where('roomNumber', '==', tenantData.roomNumber);
+                // Prefer scoping by apartmentId when available
+                if (this.currentApartmentId) roomsQuery.where('apartmentId', '==', this.currentApartmentId);
+                else if (tenantData.rentalAddress) roomsQuery.where('apartmentAddress', '==', tenantData.rentalAddress);
+
+                const roomSnapshot = await roomsQuery.limit(1).get();
+                if (!roomSnapshot.empty) {
+                    roomDocRef = roomSnapshot.docs[0].ref;
+                    room = roomSnapshot.docs[0].data();
+                    room.id = roomSnapshot.docs[0].id;
+                }
+            } catch (err) {
+                console.warn('⚠️ Room lookup by query failed, falling back to doc() lookup:', err.message);
+            }
+
+            // Fallback: try doc(roomNumber) if still not found (legacy behavior)
+            if (!room && tenantData.roomNumber) {
+                try {
+                    const roomDoc = await firebaseDb.collection('rooms').doc(tenantData.roomNumber).get();
+                    if (roomDoc.exists) {
+                        roomDocRef = roomDoc.ref;
+                        room = roomDoc.data();
+                        room.id = roomDoc.id;
+                    }
+                } catch (err) {
+                    console.warn('⚠️ Fallback room doc() lookup failed:', err.message);
+                }
+            }
+
+            // If still no room doc found, create one so we have a reference to update
+            if (!room) {
+                console.log('ℹ️ Room document not found for', tenantData.roomNumber, '— creating a new room document');
+                const newRoomPayload = {
+                    roomNumber: tenantData.roomNumber,
+                    floor: tenantData.floor || '1',
+                    monthlyRent: tenantData.rentalAmount || 0,
+                    securityDeposit: tenantData.securityDeposit || 0,
+                    maxMembers: tenantData.maxMembers || 1,
+                    numberOfMembers: 0,
+                    isAvailable: false, // since we're creating lease now
+                    occupiedBy: tenantId,
+                    occupiedAt: new Date().toISOString(),
+                    apartmentId: this.currentApartmentId || null,
+                    apartmentAddress: tenantData.rentalAddress || null,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                };
+
+                const newRoomRef = await firebaseDb.collection('rooms').add(newRoomPayload);
+                roomDocRef = newRoomRef;
+                room = newRoomPayload;
+                room.id = newRoomRef.id;
+                console.log('✅ Created fallback room doc with id:', newRoomRef.id);
+            }
+
             const maxMembers = room?.maxMembers || 1;
 
             // NEW LOGIC: Auto-set occupants for 1-member units
             const autoOccupants = maxMembers === 1 ? [tenantData.name] : [];
             const autoTotal = maxMembers === 1 ? 1 : 0;
 
-            console.log("🏠 Auto occupants check:", {
-                maxMembers,
-                autoOccupants,
-                autoTotal
-            });
+            console.log('🏠 Auto occupants check:', { maxMembers, autoOccupants, autoTotal });
 
             // 🔍 Check if active lease already exists
             const existingLeaseQuery = await firebaseDb.collection('leases')
@@ -17989,15 +18296,19 @@ class CasaLink {
                 .limit(1)
                 .get();
 
-            // Mark room as occupied
-            if (tenantData.roomNumber) {
-                await firebaseDb.collection('rooms').doc(tenantData.roomNumber).update({
-                    isAvailable: false,
-                    occupiedBy: tenantId,
-                    occupiedAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                });
-                console.log('✅ Room marked as occupied:', tenantData.roomNumber);
+            // Mark room as occupied using the resolved room document reference
+            try {
+                if (roomDocRef) {
+                    await roomDocRef.update({
+                        isAvailable: false,
+                        occupiedBy: tenantId,
+                        occupiedAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString()
+                    });
+                    console.log('✅ Room doc updated as occupied:', roomDocRef.id);
+                }
+            } catch (err) {
+                console.warn('⚠️ Failed updating room document occupancy:', err.message);
             }
 
             // 🔄 If lease exists → UPDATE instead of creating
@@ -18049,7 +18360,7 @@ class CasaLink {
                 tenantAge: tenantData.age,
 
                 landlordId: this.currentUser.uid,
-                landlordName: 'Nelly Dontogan',
+                landlordName: this.currentUser?.name || this.currentUser?.displayName || '',
 
                 roomNumber: tenantData.roomNumber,
                 rentalAddress: tenantData.rentalAddress,

@@ -39,6 +39,7 @@ class DataManager {
                     roomNumber: room.roomNumber,
                     unitNumber: room.roomNumber, // For compatibility
                     floor: floor,
+                    apartmentId: room.apartmentId || null,
                     apartmentAddress: room.apartmentAddress || '', // ADDED: Include apartment address for filtering
                     status: room.isAvailable === false ? 'occupied' : 'vacant', // Map isAvailable to status
                     tenantName: room.occupiedBy ? 'Occupied' : 'Vacant',
@@ -350,6 +351,7 @@ class DataManager {
             const apartmentPayload = {
                 landlordId,
                 landlordName: apartmentData.landlordName || '',
+                apartmentName: apartmentData.apartmentName || apartmentData.apartmentName || '',
                 apartmentAddress: apartmentData.apartmentAddress || '',
                 numberOfRooms: apartmentData.numberOfRooms || 0,
                 numberOfFloors: apartmentData.numberOfFloors || 1,
@@ -367,7 +369,9 @@ class DataManager {
             roomsData.forEach((room) => {
                 const roomPayload = {
                     landlordId,
+                    apartmentId: apartmentRef.id,
                     apartmentAddress: apartmentData.apartmentAddress,
+                    apartmentName: apartmentPayload.apartmentName || '',
                     roomNumber: room.roomNumber || '',
                     floor: String(room.floor || '1'),
                     monthlyRent: parseFloat(room.monthlyRent) || 0,
@@ -1202,8 +1206,20 @@ class DataManager {
     }
 
     // ===== DASHBOARD STATISTICS METHODS =====
-    static async getDashboardStats(userId, userRole, apartmentAddress = null) {
-        console.log(`📊 Getting dashboard stats for ${userRole}: ${userId}${apartmentAddress ? ` (Apartment: ${apartmentAddress})` : ' (All apartments)'}`);
+    static async getDashboardStats(userId, userRole, apartmentSelector = null) {
+        // apartmentSelector may be: null | string (apartmentAddress) | { apartmentId, apartmentAddress }
+        let apartmentId = null;
+        let apartmentAddress = null;
+        if (apartmentSelector) {
+            if (typeof apartmentSelector === 'string') {
+                apartmentAddress = apartmentSelector;
+            } else if (typeof apartmentSelector === 'object') {
+                apartmentId = apartmentSelector.apartmentId || null;
+                apartmentAddress = apartmentSelector.apartmentAddress || null;
+            }
+        }
+
+        console.log(`📊 Getting dashboard stats for ${userRole}: ${userId}${apartmentId ? ` (Apartment ID: ${apartmentId})` : apartmentAddress ? ` (Apartment: ${apartmentAddress})` : ' (All apartments)'}`);
         
         try {
             if (userRole === 'landlord') {
@@ -1217,41 +1233,60 @@ class DataManager {
                 ]);
 
                 // FILTER by apartment address if provided
-                if (apartmentAddress) {
-                    console.log(`🏢 Filtering stats for apartment: ${apartmentAddress}`);
-                    
-                    // Filter units by apartment address
-                    units = units.filter(u => u.apartmentAddress === apartmentAddress);
+                if (apartmentId || apartmentAddress) {
+                    console.log(`🏢 Filtering stats for apartmentId: ${apartmentId} address: ${apartmentAddress}`);
+
+                    // Filter units by apartmentId first, fall back to apartmentAddress
+                    if (apartmentId) {
+                        units = units.filter(u => u.apartmentId === apartmentId);
+                    } else {
+                        units = units.filter(u => u.apartmentAddress === apartmentAddress);
+                    }
                     const filteredRoomNumbers = units.map(u => u.roomNumber);
                     const filteredRoomIds = units.map(u => u.id);
 
                     // Robust lease filtering: prefer explicit linkage (roomId, apartmentAddress), then fallback to roomNumber within this apartment
                     leases = leases.filter(l => {
                         if (l.roomId && filteredRoomIds.includes(l.roomId)) return true;
-                        if (l.apartmentAddress && l.apartmentAddress === apartmentAddress) return true;
+                        if (apartmentId && l.apartmentId && l.apartmentId === apartmentId) return true;
+                        if (!apartmentId && l.apartmentAddress && apartmentAddress && l.apartmentAddress === apartmentAddress) return true;
                         // Fallback: match by roomNumber within this apartment's rooms (not globally)
-                        // BUT: do not match if the lease has explicit apartmentAddress linkage to a DIFFERENT apartment
                         if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) {
-                            // If lease has apartmentAddress, it must match selected apartment (prevent cross-apartment collisions)
-                            if (l.apartmentAddress && l.apartmentAddress !== apartmentAddress) return false;
+                            // If lease has apartmentId/apartmentAddress, verify it matches selected apartment
+                            if (l.apartmentId && apartmentId && l.apartmentId !== apartmentId) return false;
+                            if (l.apartmentAddress && apartmentAddress && l.apartmentAddress !== apartmentAddress) return false;
                             return true;
                         }
                         return false;
                     });
 
                     // Bills: match by roomId, apartmentAddress, or roomNumber within this apartment
+                    // IMPORTANT: roomNumber filtering requires apartment context to avoid mixing rooms with same number from different apartments
                     bills = bills.filter(b => {
                         if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
-                        if (b.apartmentAddress && b.apartmentAddress === apartmentAddress) return true;
-                        if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) return true;
+                        if (apartmentId && b.apartmentId && b.apartmentId === apartmentId) return true;
+                        if (!apartmentId && b.apartmentAddress && b.apartmentAddress === apartmentAddress) return true;
+                        if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
+                            // If bill has apartmentId/apartmentAddress, verify it matches selected apartment
+                            if (b.apartmentId && apartmentId && b.apartmentId !== apartmentId) return false;
+                            if (b.apartmentAddress && apartmentAddress && b.apartmentAddress !== apartmentAddress) return false;
+                            return true;
+                        }
                         return false;
                     });
 
                     // Maintenance: match by roomId, apartmentAddress, or roomNumber within this apartment
+                    // IMPORTANT: roomNumber filtering requires apartment context to avoid mixing rooms with same number from different apartments
                     maintenanceRequests = maintenanceRequests.filter(m => {
                         if (m.roomId && filteredRoomIds.includes(m.roomId)) return true;
-                        if (m.apartmentAddress && m.apartmentAddress === apartmentAddress) return true;
-                        if (m.roomNumber && filteredRoomNumbers.includes(m.roomNumber)) return true;
+                        if (apartmentId && m.apartmentId && m.apartmentId === apartmentId) return true;
+                        if (!apartmentId && m.apartmentAddress && m.apartmentAddress === apartmentAddress) return true;
+                        if (m.roomNumber && filteredRoomNumbers.includes(m.roomNumber)) {
+                            // If maintenance has apartmentId/apartmentAddress, verify it matches selected apartment
+                            if (m.apartmentId && apartmentId && m.apartmentId !== apartmentId) return false;
+                            if (m.apartmentAddress && apartmentAddress && m.apartmentAddress !== apartmentAddress) return false;
+                            return true;
+                        }
                         return false;
                     });
 
@@ -1767,19 +1802,21 @@ class DataManager {
         if (!userId) throw new Error('User not authenticated');
         
         try {
-            const snapshot = await firebaseDb.collection('tenants')
+            // Query `users` collection for tenant records (role === 'tenant') to match current Firestore structure
+            const snapshot = await firebaseDb.collection('users')
                 .where('landlordId', '==', userId)
+                .where('role', '==', 'tenant')
                 .get();
-            
+
             const tenants = snapshot.docs.map(doc => {
                 const data = doc.data();
                 return { ...data, id: doc.id };
             });
-            
-            console.log('✅ Tenants loaded:', tenants.length);
+
+            console.log('✅ Tenants loaded from `users` collection:', tenants.length);
             return tenants;
         } catch (error) {
-            console.error('❌ Error getting tenants:', error);
+            console.error('❌ Error getting tenants from users collection:', error);
             return [];
         }
     }
