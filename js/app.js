@@ -2305,6 +2305,9 @@ class CasaLink {
                 
                 optionsHTML += apartmentOptions;
                 selector.innerHTML = optionsHTML;
+                
+                // Ensure selector is enabled after populating
+                selector.disabled = false;
 
                 // Only select first apartment if there's only one (auto-select)
                 // For multiple apartments: leave nothing selected initially
@@ -3452,6 +3455,7 @@ class CasaLink {
                     leaseStart: lease.leaseStart,
                     leaseEnd: lease.leaseEnd,
                     status: tenant?.status || 'unknown',
+                    totalOccupants: lease.totalOccupants || lease.occupants?.length || 1,
                     // preserve identifying fields to allow later verification when matching
                     apartmentId: lease.apartmentId || null,
                     propertyId: lease.propertyId || null,
@@ -3542,6 +3546,7 @@ class CasaLink {
                 ...unit,
                 tenantName: leaseInfo?.tenantName || null,
                 tenantEmail: leaseInfo?.tenantEmail || null,
+                numberOfMembers: leaseInfo?.totalOccupants || unit.numberOfMembers || 0,
                 leaseInfo: leaseInfo || null
             };
         });
@@ -5413,7 +5418,7 @@ class CasaLink {
                         DataManager.getLandlordLeases(this.currentUser.uid)
                     ]);
                     
-                    // Find the active lease for this room using apartment-scoped 3-tier matching
+                    // Find the active lease for this room using apartment-scoped 4-tier matching
                     let activeLease = null;
             
                     // Tier 1: Explicit roomId linkage (if room has id)
@@ -5423,22 +5428,57 @@ class CasaLink {
                         );
                     }
             
-                    // Tier 2: Explicit apartmentAddress linkage
-                    if (!activeLease && room.apartmentAddress) {
+                    // Tier 2: Explicit apartmentId linkage (when available)
+                    if (!activeLease && room.apartmentId) {
                         activeLease = leases.find(lease => 
                             lease.isActive && 
-                            lease.apartmentAddress === room.apartmentAddress &&
+                            (lease.apartmentId === room.apartmentId || 
+                             lease.propertyId === room.apartmentId || 
+                             lease.rentalPropertyId === room.apartmentId) &&
                             lease.roomNumber === room.roomNumber
                         );
                     }
             
-                    // Tier 3: roomNumber matching (but prevent cross-apartment collisions)
+                    // Tier 3: Explicit apartmentAddress linkage
+                    if (!activeLease && room.apartmentAddress) {
+                        activeLease = leases.find(lease => 
+                            lease.isActive && 
+                            (lease.apartmentAddress === room.apartmentAddress ||
+                             lease.rentalAddress === room.apartmentAddress) &&
+                            lease.roomNumber === room.roomNumber
+                        );
+                    }
+            
+                    // Tier 4: roomNumber matching with strict apartment scoping
+                    // Only accept if apartment information matches or lease has no apartment info
                     if (!activeLease) {
                         activeLease = leases.find(lease => {
                             if (!lease.isActive || lease.roomNumber !== room.roomNumber) return false;
-                            // If lease has explicit apartmentAddress, it must match room's apartment
-                            if (lease.apartmentAddress && room.apartmentAddress && 
-                                lease.apartmentAddress !== room.apartmentAddress) return false;
+                            
+                            // If room has apartmentId, lease must match it (or have no apartment set)
+                            if (room.apartmentId) {
+                                if (lease.apartmentId || lease.propertyId || lease.rentalPropertyId) {
+                                    // Lease has apartment info - must match
+                                    return lease.apartmentId === room.apartmentId || 
+                                           lease.propertyId === room.apartmentId || 
+                                           lease.rentalPropertyId === room.apartmentId;
+                                }
+                                // Lease has no apartment ID, allow as fallback
+                                return true;
+                            }
+                            
+                            // If room has apartmentAddress, lease must match it (or have no apartment set)
+                            if (room.apartmentAddress) {
+                                if (lease.apartmentAddress || lease.rentalAddress) {
+                                    // Lease has apartment info - must match
+                                    return lease.apartmentAddress === room.apartmentAddress || 
+                                           lease.rentalAddress === room.apartmentAddress;
+                                }
+                                // Lease has no apartment address, allow as fallback
+                                return true;
+                            }
+                            
+                            // Room has no apartment info, accept the lease
                             return true;
                         });
                     }
@@ -5456,8 +5496,10 @@ class CasaLink {
                                 }) : 'Not set';
                             
                             // Get occupants from lease data
-                            const leaseOccupants = activeLease.occupants || [tenant.name];
-                            const totalOccupants = activeLease.totalOccupants || leaseOccupants.length;
+                            // Ensure we use occupants only if it's a non-empty array
+                            const leaseOccupants = (Array.isArray(activeLease.occupants) && activeLease.occupants.length > 0) ? activeLease.occupants : [tenant.name];
+                            // Ensure at least 1 occupant (the primary tenant) even if totalOccupants is 0
+                            const totalOccupants = Math.max(activeLease.totalOccupants || leaseOccupants.length, 1);
                             
                             // Update occupancy display with lease data
                             occupancyDisplay = `${totalOccupants}/${room.maxMembers || 0}<span style="font-size: 0.8em; color: #666; margin-left: 5px;">persons</span>`;
