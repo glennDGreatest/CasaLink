@@ -2331,6 +2331,13 @@ class CasaLink {
                         this.currentApartmentAddress = null;
                         this.shouldAutoLoadUnitLayout = false;
                         console.log('🔄 Apartment selection cleared');
+
+                        // Refresh dashboard to aggregated (all-apartments) view
+                        try {
+                            await this.loadDashboardData();
+                        } catch (err) {
+                            console.warn('⚠️ Failed to reload dashboard after clearing selection', err);
+                        }
                         return;
                     }
                     
@@ -2402,6 +2409,13 @@ class CasaLink {
                         this.currentApartmentAddress = null;
                         this.shouldAutoLoadUnitLayout = false;
                         console.log('🔄 Apartment selection cleared (derived)');
+
+                        // Refresh dashboard to aggregated (all-apartments) view
+                        try {
+                            await this.loadDashboardData();
+                        } catch (err) {
+                            console.warn('⚠️ Failed to reload dashboard after clearing selection (derived)', err);
+                        }
                         return;
                     }
                     
@@ -3031,36 +3045,7 @@ class CasaLink {
                     </div>
                 </div>
 
-                <!-- PROPERTY OVERVIEW SECTION -->
-                <div class="card-group-title">Property Overview</div>
-                <div class="card-group">
-                    <div class="card" data-clickable="occupancy" style="cursor: pointer;" title="Click to view unit occupancy">
-                        <div class="card-header">
-                            <div class="card-title">Occupancy Rate</div>
-                            <div class="card-icon occupied"><i class="fas fa-home"></i></div>
-                        </div>
-                        <div class="card-value" id="occupancyRate">0%</div>
-                        <div class="card-subtitle" id="occupancyDetails">0/0 units</div>
-                    </div>
 
-                    <div class="card" data-clickable="vacant" style="cursor: pointer;" title="Click to view vacant units">
-                        <div class="card-header">
-                            <div class="card-title">Vacant Units</div>
-                            <div class="card-icon vacant"><i class="fas fa-door-open"></i></div>
-                        </div>
-                        <div class="card-value" id="vacantUnits">0</div>
-                        <div class="card-subtitle" id="vacantUnitsCapacity">0 total capacity</div>
-                    </div>
-
-                    <div class="card" data-clickable="tenants" style="cursor: pointer;" title="Click to view occupant details">
-                        <div class="card-header">
-                            <div class="card-title">Total Occupants</div>
-                            <div class="card-icon tenants"><i class="fas fa-users"></i></div>
-                        </div>
-                        <div class="card-value" id="totalTenants">0</div>
-                        <div class="card-subtitle">All registered occupants</div>
-                    </div>
-                </div>
 
                 <!-- FINANCIAL OVERVIEW SECTION -->
                 <div class="card-group-title">Financial Overview</div>
@@ -3299,6 +3284,22 @@ class CasaLink {
             
             console.log(`✅ Loaded ${displayUnits.length} units for inline display with tenant data`);
 
+            // Update Property Overview cards so the Occupancy card reflects the currently viewed apartment
+            const totalUnits = displayUnits.length;
+            const occupiedUnits = displayUnits.filter(u => u.status === 'occupied').length;
+            const vacantUnits = totalUnits - occupiedUnits;
+            const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
+            const totalTenants = displayUnits.reduce((sum, u) => sum + (u.numberOfMembers || 0), 0);
+
+            // Additionally, fetch apartment-scoped dashboard stats to update Financial and Operations cards
+            try {
+                const stats = await DataManager.getDashboardStats(this.currentUser.id || this.currentUser.uid, this.currentRole, { apartmentId: this.currentApartmentId, apartmentAddress: this.currentApartmentAddress });
+                console.log('📊 Apartment-scoped dashboard stats loaded:', stats);
+                this.updateDashboardWithRealData(stats);
+            } catch (err) {
+                console.warn('⚠️ Failed to load apartment-scoped dashboard stats:', err);
+            }
+
             // Generate the layout content HTML
             const layoutHTML = this.generateInlineUnitLayoutHTML(displayUnits);
             
@@ -3312,7 +3313,7 @@ class CasaLink {
             this.setupRealtimeUpdatesForInlineLayout(container, displayUnits);
             
             console.log('✅ Unit layout loaded and displayed in dashboard');
-            
+
         } catch (error) {
             console.error('❌ Error loading inline unit layout:', error);
             const container = document.querySelector('.unit-grid-container');
@@ -3333,57 +3334,210 @@ class CasaLink {
         }
     }
 
+    async showApartmentUnitsModal() {
+        if (!this.debounceModalOpen(() => this.showApartmentUnitsModal())) return;
+
+        try {
+            console.log('📋 Loading apartment units list...');
+
+            const modalContent = `
+                <div style="text-align: center; padding: 40px;">
+                    <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: var(--royal-blue);"></i>
+                    <p>Loading units...</p>
+                </div>
+            `;
+
+            const modal = ModalManager.openModal(modalContent, {
+                title: 'Apartment Units',
+                showFooter: false,
+                width: '90%',
+                maxWidth: '1200px'
+            });
+
+            const landlordId = this.currentUser?.id || this.currentUser?.uid;
+            const [units, tenants, leases] = await Promise.all([
+                this.fetchAllUnitsFromFirestore(),
+                DataManager.getTenants(landlordId),
+                DataManager.getLandlordLeases(landlordId)
+            ]);
+
+            // Filter by selected apartment (support apartmentId/propertyId/rentalPropertyId and address aliases)
+            let filteredUnits = units;
+            if (this.currentApartmentId) {
+                filteredUnits = units.filter(u => u.apartmentId === this.currentApartmentId || u.propertyId === this.currentApartmentId || u.rentalPropertyId === this.currentApartmentId);
+            } else if (this.currentApartmentAddress) {
+                filteredUnits = units.filter(u => u.apartmentAddress === this.currentApartmentAddress || u.rentalAddress === this.currentApartmentAddress);
+            }
+
+            if (!filteredUnits || filteredUnits.length === 0) {
+                const modalBody = modal.querySelector('.modal-body');
+                if (modalBody) modalBody.innerHTML = `<div style="padding:40px; text-align:center; color:var(--dark-gray);">No units found for selected apartment.</div>`;
+                return;
+            }
+
+            // Enrich units with tenant/lease data (scoped matching)
+            const enriched = this.enrichUnitsWithTenantData(filteredUnits, tenants, leases);
+
+            let tableHTML = `
+                <div style="max-height: 600px; overflow-y: auto;">
+                    <table style="width:100%; border-collapse: collapse; min-width: 900px; font-size: 0.95rem;">
+                        <thead>
+                            <tr style="background:#f8f9fa; position: sticky; top:0;">
+                                <th style="padding:12px; text-align:left;">Unit</th>
+                                <th style="padding:12px; text-align:left;">Status</th>
+                                <th style="padding:12px; text-align:left;">Occupant</th>
+                                <th style="padding:12px; text-align:left;">Monthly Rent</th>
+                                <th style="padding:12px; text-align:left;">Capacity</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            enriched.forEach(u => {
+                tableHTML += `
+                    <tr style="border-bottom:1px solid #eee;">
+                        <td style="padding:12px; font-weight:600;">${u.roomNumber}</td>
+                        <td style="padding:12px;">${u.status}</td>
+                        <td style="padding:12px;">${u.tenantName || '-'}</td>
+                        <td style="padding:12px;">₱${(u.monthlyRent||0).toLocaleString()}</td>
+                        <td style="padding:12px;">${u.numberOfMembers || 0}/${u.maxMembers || 0}</td>
+                    </tr>
+                `;
+            });
+
+            tableHTML += `
+                        </tbody>
+                    </table>
+                </div>
+            `;
+
+            const modalBody = modal.querySelector('.modal-body');
+            if (modalBody) modalBody.innerHTML = tableHTML;
+
+            // Add footer
+            const modalFooter = modal.querySelector('.modal-footer');
+            if (!modalFooter) {
+                const footer = document.createElement('div');
+                footer.className = 'modal-footer';
+                footer.innerHTML = `
+                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                `;
+                modal.querySelector('.modal-content').appendChild(footer);
+            }
+
+        } catch (error) {
+            console.error('❌ Error loading apartment units:', error);
+            this.showNotification('Failed to load units', 'error');
+        }
+    }
+
     enrichUnitsWithTenantData(units, tenants, leases) {
-        console.log('🔄 Enriching units with tenant data...');
+        console.log('🔄 Enriching units with tenant data (apartment-scoped matching)...');
         
-        // Create a map for quick lookup: apartment-scoped key (apartmentId or apartmentAddress) + roomNumber -> lease info
-        // This prevents cross-apartment collisions when rooms have same roomNumber in different apartments
-        const roomLeaseMap = new Map();
-        
-        // Process leases to find occupied rooms
+        // Two lookup maps:
+        // 1. scopedLeaseMap: key => `${scopeKey}|${roomNumber}` where scopeKey is apartmentId/propertyId/rentalPropertyId or apartmentAddress/rentalAddress
+        // 2. unscopedLeaseMap: key => roomNumber -> array of leaseInfos that did not include any apartment scope
+        const scopedLeaseMap = new Map();
+        const unscopedLeaseMap = new Map();
+
+        // Process leases to populate maps
         leases.forEach(lease => {
             if (lease.isActive && lease.roomNumber) {
-                // Find tenant info for this lease
                 const tenant = tenants.find(t => t.id === lease.tenantId);
 
-                // Create apartment-scoped key to prevent collisions
-                // Prefer apartmentId when available, fallback to apartmentAddress, else legacy roomNumber-only
-                let scopeKey = null;
-                if (lease.apartmentId) scopeKey = lease.apartmentId;
-                else if (lease.apartmentAddress) scopeKey = lease.apartmentAddress;
-
-                const mapKey = scopeKey ? `${scopeKey}|${lease.roomNumber}` : lease.roomNumber;
-
-                roomLeaseMap.set(mapKey, {
+                const leaseEntry = {
                     tenantId: lease.tenantId,
                     tenantName: tenant?.name || lease.tenantName || 'Unknown Tenant',
                     tenantEmail: tenant?.email || lease.tenantEmail || 'No email',
                     leaseStart: lease.leaseStart,
                     leaseEnd: lease.leaseEnd,
-                    status: tenant?.status || 'unknown'
-                });
+                    status: tenant?.status || 'unknown',
+                    // preserve identifying fields to allow later verification when matching
+                    apartmentId: lease.apartmentId || null,
+                    propertyId: lease.propertyId || null,
+                    rentalPropertyId: lease.rentalPropertyId || null,
+                    apartmentAddress: lease.apartmentAddress || null,
+                    rentalAddress: lease.rentalAddress || null,
+                    roomId: lease.roomId || null,
+                    roomNumber: lease.roomNumber
+                };
+
+                // Determine scope key if present
+                let scopeKey = null;
+                if (lease.apartmentId) scopeKey = lease.apartmentId;
+                else if (lease.propertyId) scopeKey = lease.propertyId;
+                else if (lease.rentalPropertyId) scopeKey = lease.rentalPropertyId;
+                else if (lease.apartmentAddress) scopeKey = lease.apartmentAddress;
+                else if (lease.rentalAddress) scopeKey = lease.rentalAddress;
+
+                if (scopeKey) {
+                    const mapKey = `${scopeKey}|${lease.roomNumber}`;
+                    scopedLeaseMap.set(mapKey, leaseEntry);
+                } else {
+                    // Unscoped - keep as array (could be multiple legacy leases with same roomNumber across different properties)
+                    const arr = unscopedLeaseMap.get(lease.roomNumber) || [];
+                    arr.push(leaseEntry);
+                    unscopedLeaseMap.set(lease.roomNumber, arr);
+                }
             }
         });
-        
-        // Enrich units with tenant information
+
+        // Enrich units with tenant information using strict apartment-scoped matching
         const enrichedUnits = units.map(unit => {
-            // Try to find lease info using apartment-scoped key first
             let leaseInfo = null;
-            
-            // Try apartment-scoped lookup using apartmentId, then apartmentAddress, then legacy roomNumber-only
-            if (unit.apartmentId) {
-                leaseInfo = roomLeaseMap.get(`${unit.apartmentId}|${unit.roomNumber}`);
+
+            // 1. Try roomId explicit mapping first across scoped map (rare)
+            if (unit.id) {
+                // Some leases may include explicit roomId; try to find a lease with matching roomId in scoped maps
+                for (const v of scopedLeaseMap.values()) {
+                    if (v.roomId && v.roomId === unit.id) {
+                        leaseInfo = v;
+                        break;
+                    }
+                }
             }
 
-            if (!leaseInfo && unit.apartmentAddress) {
-                leaseInfo = roomLeaseMap.get(`${unit.apartmentAddress}|${unit.roomNumber}`);
-            }
-
-            // Fallback to roomNumber-only lookup for legacy leases
+            // 2. Scoped lookups using apartmentId/propertyId/rentalPropertyId and address aliases
             if (!leaseInfo) {
-                leaseInfo = roomLeaseMap.get(unit.roomNumber);
+                const keysToTry = [];
+                if (unit.apartmentId) keysToTry.push(`${unit.apartmentId}|${unit.roomNumber}`);
+                if (unit.propertyId) keysToTry.push(`${unit.propertyId}|${unit.roomNumber}`);
+                if (unit.rentalPropertyId) keysToTry.push(`${unit.rentalPropertyId}|${unit.roomNumber}`);
+                if (unit.apartmentAddress) keysToTry.push(`${unit.apartmentAddress}|${unit.roomNumber}`);
+                if (unit.rentalAddress) keysToTry.push(`${unit.rentalAddress}|${unit.roomNumber}`);
+
+                for (const k of keysToTry) {
+                    const v = scopedLeaseMap.get(k);
+                    if (v) { leaseInfo = v; break; }
+                }
             }
-            
+
+            // 4. Fallback: check unscoped candidates but only accept if candidate's apartment data matches this unit
+            if (!leaseInfo) {
+                const candidates = unscopedLeaseMap.get(unit.roomNumber) || [];
+                if (candidates.length === 1) {
+                    const c = candidates[0];
+                    // Accept only if the candidate does not contain conflicting apartment info
+                    const hasApartmentFields = !!(c.apartmentId || c.propertyId || c.rentalPropertyId || c.apartmentAddress || c.rentalAddress);
+                    if (!hasApartmentFields) {
+                        // legacy lease with no apartment context -> accept cautiously
+                        leaseInfo = c;
+                    }
+                } else if (candidates.length > 1) {
+                    // Try to find a candidate that explicitly matches this unit's apartment fields
+                    const matched = candidates.find(c => {
+                        if (c.apartmentId && unit.apartmentId && c.apartmentId === unit.apartmentId) return true;
+                        if (c.propertyId && unit.apartmentId && c.propertyId === unit.apartmentId) return true;
+                        if (c.rentalPropertyId && unit.apartmentId && c.rentalPropertyId === unit.apartmentId) return true;
+                        if (c.apartmentAddress && unit.apartmentAddress && c.apartmentAddress === unit.apartmentAddress) return true;
+                        if (c.rentalAddress && unit.apartmentAddress && c.rentalAddress === unit.apartmentAddress) return true;
+                        return false;
+                    });
+
+                    if (matched) leaseInfo = matched;
+                }
+            }
+
             return {
                 ...unit,
                 tenantName: leaseInfo?.tenantName || null,
@@ -3391,8 +3545,8 @@ class CasaLink {
                 leaseInfo: leaseInfo || null
             };
         });
-        
-        console.log(`✅ Enriched ${enrichedUnits.length} units with tenant data`);
+
+        console.log(`✅ Enriched ${enrichedUnits.length} units with tenant data (scoped)`);
         return enrichedUnits;
     }
 
@@ -3419,21 +3573,21 @@ class CasaLink {
                             </p>
                         </div>
                         
-                        <!-- Quick Stats -->
+                        <!-- Quick Stats (clickable) -->
                         <div style="display: flex; gap: 15px; flex-wrap: wrap;">
-                            <div style="text-align: center; min-width: 100px;">
+                            <div class="quick-stat clickable" data-stat="totalUnits" title="View all units" role="button" tabindex="0" style="text-align: center; min-width: 110px; cursor: pointer; padding:8px; border-radius:8px;">
                                 <div style="font-size: 1.8rem; font-weight: 700; color: var(--royal-blue);">${totalUnits}</div>
                                 <div style="font-size: 0.85rem; color: var(--dark-gray);">Total Units</div>
                             </div>
-                            <div style="text-align: center; min-width: 100px;">
+                            <div class="quick-stat clickable" data-stat="occupiedUnits" title="View occupied units" role="button" tabindex="0" style="text-align: center; min-width: 110px; cursor: pointer; padding:8px; border-radius:8px;">
                                 <div style="font-size: 1.8rem; font-weight: 700; color: var(--success);">${occupiedUnits}</div>
                                 <div style="font-size: 0.85rem; color: var(--dark-gray);">Occupied Units</div>
                             </div>
-                            <div style="text-align: center; min-width: 100px;">
+                            <div class="quick-stat clickable" data-stat="vacantUnits" title="View vacant units" role="button" tabindex="0" style="text-align: center; min-width: 110px; cursor: pointer; padding:8px; border-radius:8px;">
                                 <div style="font-size: 1.8rem; font-weight: 700; color: #dc3545;">${vacantUnits}</div>
                                 <div style="font-size: 0.85rem; color: var(--dark-gray);">Vacant Units</div>
                             </div>
-                            <div style="text-align: center; min-width: 100px;">
+                            <div class="quick-stat clickable" data-stat="occupancyRate" title="View occupancy details" role="button" tabindex="0" style="text-align: center; min-width: 110px; cursor: pointer; padding:8px; border-radius:8px;">
                                 <div style="font-size: 1.8rem; font-weight: 700; color: var(--warning);">${occupancyRate}%</div>
                                 <div style="font-size: 0.85rem; color: var(--dark-gray);">Occupancy Rate</div>
                             </div>
@@ -3500,6 +3654,21 @@ class CasaLink {
                     .unit-card-dynamic:hover {
                         transform: translateY(-3px);
                         box-shadow: 0 8px 20px rgba(0, 0, 0, 0.12);
+                    }
+
+                    /* Quick stat clickable affordance */
+                    .quick-stat.clickable {
+                        transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+                    }
+                    .quick-stat.clickable:hover,
+                    .quick-stat.clickable:focus {
+                        transform: translateY(-3px);
+                        box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06);
+                        background: rgba(0,0,0,0.02);
+                    }
+                    .quick-stat.clickable:active {
+                        transform: translateY(-1px);
+                        box-shadow: none;
                     }
                     
                     .unit-card-dynamic.occupied {
@@ -4924,6 +5093,44 @@ class CasaLink {
                     this.showUnitDetails(identifier);
                 } else {
                     ToastManager.showToast('Error: Unit information not found', 'error');
+                }
+            });
+        });
+
+        // Quick stats click handlers (Total, Occupied, Vacant, Occupancy)
+        const quickStats = modal.querySelectorAll('.quick-stat.clickable');
+        quickStats.forEach(statEl => {
+            statEl.removeEventListener('click', this.handleQuickStatClick);
+            statEl.removeEventListener('keydown', this.handleQuickStatKeyDown);
+            statEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const stat = statEl.getAttribute('data-stat');
+                console.log('🔎 Quick stat clicked:', stat);
+
+                switch (stat) {
+                    case 'totalUnits':
+                        this.showApartmentUnitsModal();
+                        break;
+                    case 'occupiedUnits':
+                        this.showTenantDetailsModal();
+                        break;
+                    case 'vacantUnits':
+                        this.showVacantUnitsModal();
+                        break;
+                    case 'occupancyRate':
+                        this.showUnitOccupancyModal();
+                        break;
+                    default:
+                        console.warn('⚠️ Unknown quick stat clicked:', stat);
+                }
+            });
+
+            // Keyboard accessibility: activate on Enter or Space
+            statEl.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    statEl.click();
                 }
             });
         });
@@ -9657,22 +9864,50 @@ class CasaLink {
         console.log('📊 Generating occupancy table...');
         const { address: apartmentAddress = '', name: apartmentName = '' } = apartmentInfo;
         
-        // Create a map for quick lookup: roomNumber -> lease info
+        // Create a map for quick lookup using apartment-scoped keys to avoid cross-apartment collisions
         const roomLeaseMap = new Map();
-        
-        // Process leases to find occupied rooms
+        const filteredRoomNumbers = rooms.map(r => r.roomNumber);
+        const filteredRoomIds = rooms.map(r => r.id);
+        const aptId = apartmentInfo.id || '';
+        const aptAddr = apartmentInfo.address || '';
+
+        // Helper to add lease info to map
+        function addLeaseToMap(key, lease, tenants) {
+            const tenant = tenants.find(t => t.id === lease.tenantId);
+            roomLeaseMap.set(key, {
+                tenantName: tenant?.name || lease.tenantName || 'Unknown Tenant',
+                tenantEmail: tenant?.email || lease.tenantEmail || 'No email',
+                leaseStart: lease.leaseStart,
+                leaseEnd: lease.leaseEnd,
+                status: tenant?.status || 'unknown',
+                leaseId: lease.id
+            });
+        }
+
+        // Process leases to find occupied rooms (only include leases that match the current apartment context)
         leases.forEach(lease => {
-            if (lease.isActive && lease.roomNumber) {
-                // Find tenant info for this lease
-                const tenant = tenants.find(t => t.id === lease.tenantId);
-                roomLeaseMap.set(lease.roomNumber, {
-                    tenantName: tenant?.name || lease.tenantName || 'Unknown Tenant',
-                    tenantEmail: tenant?.email || lease.tenantEmail || 'No email',
-                    leaseStart: lease.leaseStart,
-                    leaseEnd: lease.leaseEnd,
-                    status: tenant?.status || 'unknown',
-                    leaseId: lease.id
-                });
+            if (!lease.isActive) return;
+
+            // Tier 1: Prefer explicit roomId linkage (match against filtered room ids)
+            if (lease.roomId && filteredRoomIds.includes(lease.roomId)) {
+                addLeaseToMap(lease.roomId, lease, tenants);
+                return;
+            }
+
+            // Tier 2: Explicit apartment/property linkage (support rentalPropertyId as fallback)
+            if (aptId) {
+                if (lease.apartmentId && lease.apartmentId !== aptId) return;
+                if (lease.propertyId && lease.propertyId !== aptId) return;
+                if (lease.rentalPropertyId && lease.rentalPropertyId !== aptId) return;
+            } else if (aptAddr) {
+                if (lease.apartmentAddress && lease.apartmentAddress !== aptAddr) return;
+                if (lease.rentalAddress && lease.rentalAddress !== aptAddr) return;
+            }
+
+            // Tier 3: roomNumber matching within apartment context
+            if (lease.roomNumber && filteredRoomNumbers.includes(lease.roomNumber)) {
+                const scopedKey = aptId ? `${aptId}|${lease.roomNumber}` : aptAddr ? `${aptAddr}|${lease.roomNumber}` : lease.roomNumber;
+                addLeaseToMap(scopedKey, lease, tenants);
             }
         });
 
@@ -9787,7 +10022,18 @@ class CasaLink {
         `;
 
         sortedRooms.forEach(room => {
-            const leaseInfo = roomLeaseMap.get(room.roomNumber);
+            // Lookup lease using a set of possible keys to ensure proper apartment scoping
+            let leaseInfo = null;
+            const possibleKeys = [
+                room.id,
+                aptId ? `${aptId}|${room.roomNumber}` : null,
+                aptAddr ? `${aptAddr}|${room.roomNumber}` : null,
+                room.roomNumber
+            ].filter(Boolean);
+            for (let k of possibleKeys) {
+                if (roomLeaseMap.has(k)) { leaseInfo = roomLeaseMap.get(k); break; }
+            }
+
             const isOccupied = !!leaseInfo;
             const isAvailable = room.isAvailable !== false;
             
@@ -10005,24 +10251,45 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
-            // FILTER rooms AND leases by selected apartment
+            // FILTER rooms AND leases by selected apartment (use apartmentId when possible)
             let filteredRooms = rooms;
             let filteredLeases = leases;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering by apartment: ${this.currentApartmentAddress}`);
-                filteredRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                
-                // Filter leases using 3-tier matching (same as getDashboardStats)
+            if (this.currentApartmentId || this.currentApartmentAddress) {
+                console.log(`🏢 Filtering by apartment: ${this.currentApartmentAddress || this.currentApartmentId}`);
+                if (this.currentApartmentId) {
+                    // Prefer apartmentId/propertyId linkage if available on the room documents
+                    filteredRooms = rooms.filter(r => r.apartmentId === this.currentApartmentId || r.propertyId === this.currentApartmentId);
+                } else {
+                    // Fallback to apartmentAddress matching
+                    filteredRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                }
+
+                // Filter leases using 3-tier matching (same as getDashboardStats), include rentalAddress/rentalPropertyId fallbacks
                 const filteredRoomNumbers = filteredRooms.map(r => r.roomNumber);
                 const filteredRoomIds = filteredRooms.map(r => r.id);
                 filteredLeases = leases.filter(l => {
                     // Tier 1: Explicit roomId linkage
                     if (l.roomId && filteredRoomIds.includes(l.roomId)) return true;
-                    // Tier 2: Explicit apartmentAddress/propertyId linkage
-                    if (l.apartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
-                    if (l.propertyId && this.currentApartmentId && l.propertyId === this.currentApartmentId) return true;
-                    // Tier 3: roomNumber within this apartment context
-                    if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) return true;
+
+                    // Tier 2: Explicit apartment/property linkage (support multiple field names)
+                    if (this.currentApartmentId) {
+                        if ((l.apartmentId && l.apartmentId === this.currentApartmentId) ||
+                            (l.propertyId && l.propertyId === this.currentApartmentId) ||
+                            (l.rentalPropertyId && l.rentalPropertyId === this.currentApartmentId)) return true;
+                    } else {
+                        if ((l.apartmentAddress && l.apartmentAddress === this.currentApartmentAddress) ||
+                            (l.rentalAddress && l.rentalAddress === this.currentApartmentAddress)) return true;
+                    }
+
+                    // Tier 3: roomNumber within this apartment context (verify lease's apartment linkage if present)
+                    if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) {
+                        if (l.apartmentId && this.currentApartmentId && l.apartmentId !== this.currentApartmentId) return false;
+                        if (l.propertyId && this.currentApartmentId && l.propertyId !== this.currentApartmentId) return false;
+                        if (l.rentalPropertyId && this.currentApartmentId && l.rentalPropertyId !== this.currentApartmentId) return false;
+                        if (l.apartmentAddress && this.currentApartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
+                        if (l.rentalAddress && this.currentApartmentAddress && l.rentalAddress !== this.currentApartmentAddress) return false;
+                        return true;
+                    }
                     return false;
                 });
             }
@@ -10035,7 +10302,10 @@ class CasaLink {
             });
 
             // Get apartment details for the table header
-            let apartmentInfo = { address: '', name: '' };
+            let apartmentInfo = { id: null, address: '', name: '' };
+            if (this.currentApartmentId) {
+                apartmentInfo.id = this.currentApartmentId;
+            }
             if (this.currentApartmentAddress) {
                 apartmentInfo.address = this.currentApartmentAddress;
                 const currentApt = this.apartmentsList?.find(apt => 
@@ -10981,28 +11251,44 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
-            // FILTER rooms AND leases by selected apartment
+            // FILTER rooms AND leases by selected apartment (support apartmentId/property/rental fields)
             let filteredRooms = rooms;
             let filteredLeases = leases;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering vacant units by apartment: ${this.currentApartmentAddress}`);
-                filteredRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                
-                // Filter leases using 3-tier matching (same as getDashboardStats)
+            if (this.currentApartmentId || this.currentApartmentAddress) {
+                console.log(`🏢 Filtering vacant units by apartment: ${this.currentApartmentAddress || this.currentApartmentId}`);
+                if (this.currentApartmentId) {
+                    filteredRooms = rooms.filter(r => r.apartmentId === this.currentApartmentId || r.propertyId === this.currentApartmentId);
+                } else {
+                    filteredRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                }
+
                 const filteredRoomNumbers = filteredRooms.map(r => r.roomNumber);
                 const filteredRoomIds = filteredRooms.map(r => r.id);
+
                 filteredLeases = leases.filter(l => {
-                    // Tier 1: Explicit roomId linkage
+                    // Tier 1: explicit roomId
                     if (l.roomId && filteredRoomIds.includes(l.roomId)) return true;
-                    // Tier 2: Explicit apartmentAddress/propertyId linkage
-                    if (l.apartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
-                    if (l.propertyId && this.currentApartmentId && l.propertyId === this.currentApartmentId) return true;
-                    // Tier 3: roomNumber within this apartment context (but prevent cross-apartment collisions)
+
+                    // Tier 2: explicit apartment/property linkage
+                    if (this.currentApartmentId) {
+                        if ((l.apartmentId && l.apartmentId === this.currentApartmentId) ||
+                            (l.propertyId && l.propertyId === this.currentApartmentId) ||
+                            (l.rentalPropertyId && l.rentalPropertyId === this.currentApartmentId)) return true;
+                    } else {
+                        if ((l.apartmentAddress && l.apartmentAddress === this.currentApartmentAddress) ||
+                            (l.rentalAddress && l.rentalAddress === this.currentApartmentAddress)) return true;
+                    }
+
+                    // Tier 3: roomNumber within this apartment context (verify other fields if present)
                     if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) {
-                        // If lease has apartmentAddress, it must match selected apartment
-                        if (l.apartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
+                        if (l.apartmentId && this.currentApartmentId && l.apartmentId !== this.currentApartmentId) return false;
+                        if (l.propertyId && this.currentApartmentId && l.propertyId !== this.currentApartmentId) return false;
+                        if (l.rentalPropertyId && this.currentApartmentId && l.rentalPropertyId !== this.currentApartmentId) return false;
+                        if (l.apartmentAddress && this.currentApartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
+                        if (l.rentalAddress && this.currentApartmentAddress && l.rentalAddress !== this.currentApartmentAddress) return false;
                         return true;
                     }
+
                     return false;
                 });
             }
@@ -11229,28 +11515,44 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
-            // FILTER rooms AND leases by selected apartment
+            // FILTER rooms AND leases by selected apartment (support apartmentId/property/rental fields)
             let filteredRooms = rooms;
             let filteredLeases = leases;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering tenant details by apartment: ${this.currentApartmentAddress}`);
-                filteredRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                
-                // Filter leases using 3-tier matching (same as getDashboardStats)
+            if (this.currentApartmentId || this.currentApartmentAddress) {
+                console.log(`🏢 Filtering tenant details by apartment: ${this.currentApartmentAddress || this.currentApartmentId}`);
+                if (this.currentApartmentId) {
+                    filteredRooms = rooms.filter(r => r.apartmentId === this.currentApartmentId || r.propertyId === this.currentApartmentId);
+                } else {
+                    filteredRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+                }
+
                 const filteredRoomNumbers = filteredRooms.map(r => r.roomNumber);
                 const filteredRoomIds = filteredRooms.map(r => r.id);
+
                 filteredLeases = leases.filter(l => {
-                    // Tier 1: Explicit roomId linkage
+                    // Tier 1: explicit roomId
                     if (l.roomId && filteredRoomIds.includes(l.roomId)) return true;
-                    // Tier 2: Explicit apartmentAddress/propertyId linkage
-                    if (l.apartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
-                    if (l.propertyId && this.currentApartmentId && l.propertyId === this.currentApartmentId) return true;
-                    // Tier 3: roomNumber within this apartment context (but prevent cross-apartment collisions)
+
+                    // Tier 2: explicit apartment/property linkage
+                    if (this.currentApartmentId) {
+                        if ((l.apartmentId && l.apartmentId === this.currentApartmentId) ||
+                            (l.propertyId && l.propertyId === this.currentApartmentId) ||
+                            (l.rentalPropertyId && l.rentalPropertyId === this.currentApartmentId)) return true;
+                    } else {
+                        if ((l.apartmentAddress && l.apartmentAddress === this.currentApartmentAddress) ||
+                            (l.rentalAddress && l.rentalAddress === this.currentApartmentAddress)) return true;
+                    }
+
+                    // Tier 3: roomNumber within this apartment context (verify other fields if present)
                     if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) {
-                        // If lease has apartmentAddress, it must match selected apartment
-                        if (l.apartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
+                        if (l.apartmentId && this.currentApartmentId && l.apartmentId !== this.currentApartmentId) return false;
+                        if (l.propertyId && this.currentApartmentId && l.propertyId !== this.currentApartmentId) return false;
+                        if (l.rentalPropertyId && this.currentApartmentId && l.rentalPropertyId !== this.currentApartmentId) return false;
+                        if (l.apartmentAddress && this.currentApartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
+                        if (l.rentalAddress && this.currentApartmentAddress && l.rentalAddress !== this.currentApartmentAddress) return false;
                         return true;
                     }
+
                     return false;
                 });
             }
@@ -14180,12 +14482,7 @@ class CasaLink {
         console.log('🔄 Updating landlord dashboard with stats:', stats);
         
         try {
-            // PROPERTY OVERVIEW
-            this.updateCard('occupancyRate', `${stats.occupancyRate}%`);
-            this.updateCard('vacantUnits', stats.vacantUnits);
-            this.updateCard('occupancyDetails', `${stats.occupiedUnits}/${stats.totalUnits} units`);
-            this.updateCard('vacantUnitsCapacity', `${stats.totalUnits} total capacity`);
-            this.updateCard('totalTenants', stats.totalOccupants || stats.totalTenants); // UPDATED LINE
+            // FINANCIAL OVERVIEW (keep financial cards updated here)
             this.updateCard('averageRent', `₱${stats.averageRent.toLocaleString()}`);
             
             // FINANCIAL OVERVIEW

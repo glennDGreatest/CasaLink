@@ -1099,12 +1099,12 @@ class DataManager {
         }
     }
 
-    static calculateLandlordStats(tenants, leases, bills, maintenance, totalUnits = 22) {
+    static calculateLandlordStats(tenants, leases, bills, maintenance, totalUnits = 0) {
         console.log('🧮 Calculating landlord statistics...');
         
         // PROPERTY OVERVIEW
-        // Use passed totalUnits (either filtered apartment units or all 22)
-        const actualTotalUnits = totalUnits || 22;
+        // Use passed totalUnits (may be 0 when landlord has no units)
+        const actualTotalUnits = (typeof totalUnits === 'number' && !isNaN(totalUnits)) ? totalUnits : 0;
         
         // Active leases (both isActive and status check)
         const activeLeases = leases.filter(lease => 
@@ -1245,46 +1245,81 @@ class DataManager {
                     const filteredRoomNumbers = units.map(u => u.roomNumber);
                     const filteredRoomIds = units.map(u => u.id);
 
-                    // Robust lease filtering: prefer explicit linkage (roomId, apartmentAddress), then fallback to roomNumber within this apartment
+                    // Robust lease filtering: prefer explicit linkage (roomId, apartmentId/propertyId/rentalPropertyId or apartmentAddress/rentalAddress), then fallback to roomNumber within this apartment
                     leases = leases.filter(l => {
+                        // Tier 1: explicit roomId
                         if (l.roomId && filteredRoomIds.includes(l.roomId)) return true;
-                        if (apartmentId && l.apartmentId && l.apartmentId === apartmentId) return true;
-                        if (!apartmentId && l.apartmentAddress && apartmentAddress && l.apartmentAddress === apartmentAddress) return true;
-                        // Fallback: match by roomNumber within this apartment's rooms (not globally)
+
+                        // Tier 2: explicit apartment/property linkage (support rentalPropertyId)
+                        if (apartmentId) {
+                            if ((l.apartmentId && l.apartmentId === apartmentId) ||
+                                (l.propertyId && l.propertyId === apartmentId) ||
+                                (l.rentalPropertyId && l.rentalPropertyId === apartmentId)) return true;
+                        } else {
+                            if ((l.apartmentAddress && l.apartmentAddress === apartmentAddress) ||
+                                (l.rentalAddress && l.rentalAddress === apartmentAddress)) return true;
+                        }
+
+                        // Tier 3: roomNumber within this apartment context (only accept if lease's apartment/rental fields match or are absent)
                         if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) {
-                            // If lease has apartmentId/apartmentAddress, verify it matches selected apartment
                             if (l.apartmentId && apartmentId && l.apartmentId !== apartmentId) return false;
+                            if (l.propertyId && apartmentId && l.propertyId !== apartmentId) return false;
+                            if (l.rentalPropertyId && apartmentId && l.rentalPropertyId !== apartmentId) return false;
                             if (l.apartmentAddress && apartmentAddress && l.apartmentAddress !== apartmentAddress) return false;
+                            if (l.rentalAddress && apartmentAddress && l.rentalAddress !== apartmentAddress) return false;
                             return true;
                         }
+
                         return false;
                     });
 
-                    // Bills: match by roomId, apartmentAddress, or roomNumber within this apartment
+                    // Bills: match by roomId, apartmentId/propertyId/rentalPropertyId, apartmentAddress/rentalAddress, or roomNumber within this apartment
                     // IMPORTANT: roomNumber filtering requires apartment context to avoid mixing rooms with same number from different apartments
                     bills = bills.filter(b => {
                         if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
-                        if (apartmentId && b.apartmentId && b.apartmentId === apartmentId) return true;
-                        if (!apartmentId && b.apartmentAddress && b.apartmentAddress === apartmentAddress) return true;
+
+                        if (apartmentId) {
+                            if ((b.apartmentId && b.apartmentId === apartmentId) ||
+                                (b.propertyId && b.propertyId === apartmentId) ||
+                                (b.rentalPropertyId && b.rentalPropertyId === apartmentId)) return true;
+                        } else {
+                            if ((b.apartmentAddress && b.apartmentAddress === apartmentAddress) ||
+                                (b.rentalAddress && b.rentalAddress === apartmentAddress)) return true;
+                        }
+
                         if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
-                            // If bill has apartmentId/apartmentAddress, verify it matches selected apartment
+                            // If bill has apartmentId/apartmentAddress/rental fields, verify it matches selected apartment
                             if (b.apartmentId && apartmentId && b.apartmentId !== apartmentId) return false;
+                            if (b.propertyId && apartmentId && b.propertyId !== apartmentId) return false;
+                            if (b.rentalPropertyId && apartmentId && b.rentalPropertyId !== apartmentId) return false;
                             if (b.apartmentAddress && apartmentAddress && b.apartmentAddress !== apartmentAddress) return false;
+                            if (b.rentalAddress && apartmentAddress && b.rentalAddress !== apartmentAddress) return false;
                             return true;
                         }
                         return false;
                     });
 
-                    // Maintenance: match by roomId, apartmentAddress, or roomNumber within this apartment
+                    // Maintenance: match by roomId, apartmentId/propertyId/rentalPropertyId, apartmentAddress/rentalAddress, or roomNumber within this apartment
                     // IMPORTANT: roomNumber filtering requires apartment context to avoid mixing rooms with same number from different apartments
                     maintenanceRequests = maintenanceRequests.filter(m => {
                         if (m.roomId && filteredRoomIds.includes(m.roomId)) return true;
-                        if (apartmentId && m.apartmentId && m.apartmentId === apartmentId) return true;
-                        if (!apartmentId && m.apartmentAddress && m.apartmentAddress === apartmentAddress) return true;
+
+                        if (apartmentId) {
+                            if ((m.apartmentId && m.apartmentId === apartmentId) ||
+                                (m.propertyId && m.propertyId === apartmentId) ||
+                                (m.rentalPropertyId && m.rentalPropertyId === apartmentId)) return true;
+                        } else {
+                            if ((m.apartmentAddress && m.apartmentAddress === apartmentAddress) ||
+                                (m.rentalAddress && m.rentalAddress === apartmentAddress)) return true;
+                        }
+
                         if (m.roomNumber && filteredRoomNumbers.includes(m.roomNumber)) {
-                            // If maintenance has apartmentId/apartmentAddress, verify it matches selected apartment
+                            // If maintenance has apartmentId/apartmentAddress/rental fields, verify it matches selected apartment
                             if (m.apartmentId && apartmentId && m.apartmentId !== apartmentId) return false;
+                            if (m.propertyId && apartmentId && m.propertyId !== apartmentId) return false;
+                            if (m.rentalPropertyId && apartmentId && m.rentalPropertyId !== apartmentId) return false;
                             if (m.apartmentAddress && apartmentAddress && m.apartmentAddress !== apartmentAddress) return false;
+                            if (m.rentalAddress && apartmentAddress && m.rentalAddress !== apartmentAddress) return false;
                             return true;
                         }
                         return false;
@@ -1412,11 +1447,11 @@ class DataManager {
                 recentUpdates: 0
             };
         } else {
-            return {
+                return {
                 totalTenants: 0,
-                totalUnits: 22,
+                totalUnits: 0,
                 occupiedUnits: 0,
-                vacantUnits: 22,
+                vacantUnits: 0,
                 occupancyRate: 0,
                 averageRent: 0,
                 collectionRate: 0,
@@ -1481,9 +1516,9 @@ class DataManager {
         console.log('🔄 Using fallback dashboard stats');
         return {
             totalTenants: 0,
-            totalUnits: 22,
+            totalUnits: 0,
             occupiedUnits: 0,
-            vacantUnits: 22,
+            vacantUnits: 0,
             occupancyRate: 0,
             averageRent: 0,
             collectionRate: 0,
