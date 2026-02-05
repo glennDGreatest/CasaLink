@@ -85,21 +85,20 @@ class SectionManager {
 
     handleLogout(e) {
         e.preventDefault();
-        if (confirm('Are you sure you want to logout?')) {
-            // Show loading spinner
-            document.getElementById('loadingSpinner').style.display = 'flex';
-            document.getElementById('mainApp').style.display = 'none';
-            
-            // Simulate logout process
-            setTimeout(() => {
-                alert('Logged out successfully!');
-                // In real app, this would redirect to login page
-                // For demo, just show login screen again
-                document.getElementById('loadingSpinner').style.display = 'none';
-                document.getElementById('mainApp').style.display = 'block';
-                window.sectionManager.showSection('dashboardSection');
-            }, 1000);
-        }
+        // Show loading spinner
+        document.getElementById('loadingSpinner').style.display = 'flex';
+        document.getElementById('mainApp').style.display = 'none';
+        
+        // Simulate logout process
+        setTimeout(() => {
+            alert('Logged out successfully!');
+            // In real app, this would redirect to login page
+            // For demo, just show login screen again
+            document.getElementById('loadingSpinner').style.display = 'none';
+            document.getElementById('mainApp').style.display = 'block';
+            window.sectionManager.showSection('dashboardSection');
+        }, 1000);
+    }
     }
 
     showPayModal() {

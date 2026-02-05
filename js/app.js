@@ -17646,8 +17646,38 @@ class CasaLink {
                 return null;
             }
             
-            const roomDoc = await firebaseDb.collection('rooms').doc(roomNumber).get();
-            if (roomDoc.exists) {
+            // First try direct doc lookup (in case rooms are stored with roomNumber as ID)
+            let roomDoc = await firebaseDb.collection('rooms').doc(roomNumber).get();
+            
+            // If not found, query by roomNumber field with apartment scoping
+            if (!roomDoc.exists) {
+                let queryRef = firebaseDb.collection('rooms').where('roomNumber', '==', roomNumber);
+                
+                // Add apartment scoping if available
+                if (this.currentApartmentId) {
+                    queryRef = queryRef.where('apartmentId', '==', this.currentApartmentId);
+                } else if (this.currentApartmentAddress) {
+                    queryRef = queryRef.where('apartmentAddress', '==', this.currentApartmentAddress);
+                }
+                
+                const querySnapshot = await queryRef.limit(1).get();
+                
+                // Fallback: try without apartment scoping
+                if (querySnapshot.empty) {
+                    const globalQuery = await firebaseDb.collection('rooms')
+                        .where('roomNumber', '==', roomNumber)
+                        .limit(1)
+                        .get();
+                    
+                    if (!globalQuery.empty) {
+                        roomDoc = globalQuery.docs[0];
+                    }
+                } else {
+                    roomDoc = querySnapshot.docs[0];
+                }
+            }
+            
+            if (roomDoc && roomDoc.exists) {
                 const roomData = roomDoc.data();
                 
                 // Ensure maxMembers is set based on room number if missing
@@ -17666,7 +17696,7 @@ class CasaLink {
                     }
                     
                     // Update the room document with the calculated maxMembers
-                    await firebaseDb.collection('rooms').doc(roomNumber).update({
+                    await firebaseDb.collection('rooms').doc(roomDoc.id).update({
                         maxMembers: maxMembers,
                         updatedAt: new Date().toISOString()
                     });
@@ -17950,7 +17980,7 @@ class CasaLink {
             `;
 
             const modal = ModalManager.openModal(modalContent, {
-                title: 'Member Information - Step 3 of 5',
+                title: 'Member Information - Step 1 of 3',
                 submitText: 'Next: Review Lease Agreement',
                 onSubmit: () => this.saveMemberInformation(lease, maxMembers),
                 onCancel: () => {

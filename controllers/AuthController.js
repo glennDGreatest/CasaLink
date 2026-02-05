@@ -126,23 +126,21 @@ class AuthController {
    * Handle logout
    */
   async handleLogout() {
-    if (confirm('Are you sure you want to logout?')) {
-      this.setLoading(true);
+    this.setLoading(true);
 
-      try {
-        await this.authService.logout();
-        console.log('✅ Logged out');
-        
-        // Clear session
-        localStorage.removeItem('currentUser');
-        
-        // Navigate to login
-        this.navigateToLogin();
-      } catch (error) {
-        this.showError('Logout failed: ' + error.message);
-      } finally {
-        this.setLoading(false);
-      }
+    try {
+      await this.authService.logout();
+      console.log('✅ Logged out');
+      
+      // Clear session
+      localStorage.removeItem('currentUser');
+      
+      // Navigate to login
+      this.navigateToLogin();
+    } catch (error) {
+      this.showError('Logout failed: ' + error.message);
+    } finally {
+      this.setLoading(false);
     }
   }
 
