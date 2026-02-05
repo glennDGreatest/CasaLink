@@ -99,7 +99,6 @@ class SectionManager {
             window.sectionManager.showSection('dashboardSection');
         }, 1000);
     }
-    }
 
     showPayModal() {
         alert('Payment modal would open here. This is a demo feature.');

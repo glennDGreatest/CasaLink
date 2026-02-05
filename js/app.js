@@ -17980,7 +17980,7 @@ class CasaLink {
             `;
 
             const modal = ModalManager.openModal(modalContent, {
-                title: 'Member Information - Step 1 of 3',
+                title: 'Member Information - Step 1 of 2',
                 submitText: 'Next: Review Lease Agreement',
                 onSubmit: () => this.saveMemberInformation(lease, maxMembers),
                 onCancel: () => {
@@ -20173,7 +20173,7 @@ class CasaLink {
 
             // Open modal
             const modal = ModalManager.openModal(modalContent, {
-                title: 'Lease Agreement & Verification - Final Step',
+                title: 'Lease Agreement & Verification - Step 2 of 2',
                 submitText: 'Agree & Submit Verification',
                 onSubmit: () => this.submitLeaseVerification(lease.id)
             });
