@@ -4197,3 +4197,320 @@ textarea:focus-visible {
     transform: translateY(-4px);
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
 }
+
+/* ===== ENHANCED BILLING & PAYMENTS STYLES ===== */
+.billing-page {
+    background: #f8fafc;
+}
+
+/* Bill cards with icons and better structure */
+.billing-summary-card {
+    position: relative;
+    overflow: hidden;
+}
+
+.billing-summary-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #1a73e8, #1557b0);
+}
+
+.billing-summary-card.pending::before {
+    background: linear-gradient(90deg, #f59e0b, #d97706);
+}
+
+.billing-summary-card.overdue::before {
+    background: linear-gradient(90deg, #ef4444, #dc2626);
+}
+
+.billing-summary-card.collected::before {
+    background: linear-gradient(90deg, #22c55e, #16a34a);
+}
+
+/* Responsive improvements */
+@media (max-width: 768px) {
+    .billing-page {
+        padding: 12px;
+    }
+    
+    .billing-controls {
+        gap: 8px !important;
+    }
+}
+
+/* Bill table enhancements */
+.bill-row-highlight {
+    transition: background-color 0.2s ease;
+}
+
+.bill-row-highlight:hover {
+    background-color: rgba(26, 115, 232, 0.03) !important;
+}
+
+/* Status indicators */
+.bill-status-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+}
+
+.bill-status-paid {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.bill-status-pending {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.bill-status-overdue {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+/* Amount display */
+.bill-amount-large {
+    font-size: 18px;
+    font-weight: 700;
+    color: #1a73e8;
+}
+
+.bill-amount-danger {
+    color: #ef4444;
+}
+
+.bill-amount-success {
+    color: #22c55e;
+}
+
+/* Action buttons styling */
+.bill-action-group {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.bill-action-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+}
+
+.bill-action-btn.primary {
+    background: linear-gradient(135deg, #1a73e8 0%, #1557b0 100%);
+    color: white;
+    box-shadow: 0 2px 6px rgba(26, 115, 232, 0.15);
+}
+
+.bill-action-btn.primary:hover {
+    background: linear-gradient(135deg, #0f5fb3 0%, #0a3d7a 100%);
+    box-shadow: 0 4px 10px rgba(26, 115, 232, 0.25);
+    transform: translateY(-1px);
+}
+
+.bill-action-btn.secondary {
+    background: white;
+    color: #1a73e8;
+    border: 1px solid rgba(26, 115, 232, 0.2);
+}
+
+.bill-action-btn.secondary:hover {
+    background: rgba(26, 115, 232, 0.05);
+    border-color: #1a73e8;
+}
+
+.bill-action-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+/* Loading and empty states */
+.bills-loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 80px 40px;
+}
+
+.bills-empty-state {
+    text-align: center;
+    padding: 80px 40px;
+}
+
+.bills-empty-icon {
+    font-size: 64px;
+    color: #cbd5e1;
+    margin-bottom: 20px;
+    opacity: 0.6;
+}
+
+.bills-empty-text {
+    color: #475569;
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.bills-empty-hint {
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+/* Bill detail card */
+.bill-detail-card {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 16px;
+}
+
+.bill-detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.bill-detail-row:last-child {
+    border-bottom: none;
+}
+
+.bill-detail-label {
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.bill-detail-value {
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* Payment methods showcase */
+.billing-payment-methods {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.payment-method-card {
+    background: white;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.payment-method-card:hover {
+    border-color: #1a73e8;
+    box-shadow: 0 4px 12px rgba(26, 115, 232, 0.1);
+    transform: translateY(-2px);
+}
+
+.payment-method-card.selected {
+    border-color: #1a73e8;
+    background: rgba(26, 115, 232, 0.05);
+}
+
+.payment-method-icon {
+    font-size: 28px;
+    color: #1a73e8;
+    margin-bottom: 8px;
+}
+
+.payment-method-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: #0f172a;
+}
+
+/* Billing metrics */
+.billing-metrics-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.metric-card {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 20px;
+    transition: all 0.3s ease;
+}
+
+.metric-card:hover {
+    border-color: #1a73e8;
+    box-shadow: 0 4px 12px rgba(26, 115, 232, 0.08);
+    transform: translateY(-2px);
+}
+
+.metric-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    margin-bottom: 12px;
+}
+
+.metric-label {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.metric-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.metric-trend {
+    font-size: 12px;
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.metric-trend.positive {
+    color: #22c55e;
+}
+
+.metric-trend.negative {
+    color: #ef4444;
+}

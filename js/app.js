@@ -2805,132 +2805,6 @@ class CasaLink {
         });
     }
 
-    async addNewUnit() {
-        try {
-            const modalContent = `
-                <div class="new-unit-form">
-                    <form id="addUnitForm">
-                        <div class="row g-3">
-                            <div class="col-md-6">
-                                <label class="form-label">Unit Number *</label>
-                                <input type="text" class="form-control" name="unitNumber" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Floor *</label>
-                                <input type="text" class="form-control" name="floor" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Unit Type *</label>
-                                <select class="form-select" name="type" required>
-                                    <option value="">Select Type</option>
-                                    <option value="Studio">Studio</option>
-                                    <option value="1 Bedroom">1 Bedroom</option>
-                                    <option value="2 Bedroom">2 Bedroom</option>
-                                    <option value="3 Bedroom">3 Bedroom</option>
-                                    <option value="Penthouse">Penthouse</option>
-                                </select>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Monthly Rent ($) *</label>
-                                <input type="number" class="form-control" name="monthlyRent" min="0" step="0.01" required>
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Bedrooms</label>
-                                <input type="number" class="form-control" name="bedrooms" min="0">
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Bathrooms</label>
-                                <input type="number" class="form-control" name="bathrooms" min="0" step="0.5">
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Size (sqft)</label>
-                                <input type="number" class="form-control" name="size" min="0">
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Initial Status</label>
-                                <select class="form-select" name="status">
-                                    <option value="vacant" selected>Vacant</option>
-                                    <option value="occupied">Occupied</option>
-                                    <option value="maintenance">Under Maintenance</option>
-                                    <option value="reserved">Reserved</option>
-                                </select>
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label">Amenities (comma separated)</label>
-                                <input type="text" class="form-control" name="amenities" 
-                                    placeholder="e.g., Parking, Gym, Pool, Laundry">
-                            </div>
-                            <div class="col-12">
-                                <label class="form-label">Notes</label>
-                                <textarea class="form-control" name="notes" rows="3"></textarea>
-                            </div>
-                        </div>
-                    </form>
-                </div>
-            `;
-            
-            ModalManager.openModal(modalContent, {
-                title: 'Add New Apartment Unit',
-                showFooter: true,
-                footerButtons: [
-                    {
-                        text: 'Cancel',
-                        class: 'btn btn-secondary',
-                        onClick: () => ModalManager.closeModal()
-                    },
-                    {
-                        text: 'Add Unit',
-                        class: 'btn btn-primary',
-                        onClick: async () => {
-                            const form = document.getElementById('addUnitForm');
-                            if (!form.checkValidity()) {
-                                form.reportValidity();
-                                return;
-                            }
-                            
-                            const formData = new FormData(form);
-                            const unitData = {
-                                unitNumber: formData.get('unitNumber'),
-                                floor: formData.get('floor'),
-                                type: formData.get('type'),
-                                monthlyRent: parseFloat(formData.get('monthlyRent')),
-                                bedrooms: parseInt(formData.get('bedrooms')) || 0,
-                                bathrooms: parseFloat(formData.get('bathrooms')) || 0,
-                                size: parseInt(formData.get('size')) || 0,
-                                status: formData.get('status'),
-                                amenities: formData.get('amenities') ? 
-                                    formData.get('amenities').split(',').map(a => a.trim()).filter(a => a) : [],
-                                notes: formData.get('notes'),
-                                landlordId: this.currentUser.uid,
-                                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-                            };
-                            
-                            try {
-                                await firebaseDb.collection('rooms').add(unitData);
-                                ToastManager.showToast('Unit added successfully!', 'success');
-                                ModalManager.closeModal();
-                                
-                                // Refresh the unit layout if it's open
-                                const unitModal = document.querySelector('.modal[data-modal-id^="modal-"]');
-                                if (unitModal && unitModal.querySelector('.unit-layout-dashboard')) {
-                                    await this.refreshUnitLayout();
-                                }
-                            } catch (error) {
-                                console.error('Error adding unit:', error);
-                                ToastManager.showToast('Error adding unit: ' + error.message, 'error');
-                            }
-                        }
-                    }
-                ]
-            });
-            
-        } catch (error) {
-            console.error('Error in addNewUnit:', error);
-            ToastManager.showToast('Error opening unit form', 'error');
-        }
-    }
-
     
     refreshUnitLayout() {
         console.log('🔃 Refreshing unit layout...');
@@ -2971,7 +2845,6 @@ class CasaLink {
     const methodsToBind = [
         'showUnitLayoutDashboard',
         'showUnitDetails',
-        'showAddUnitForm',
         'startAddTenantForUnit',
         'refreshUnitLayout',
         'setupUnitClickHandlers',
@@ -3273,13 +3146,10 @@ class CasaLink {
                 container.innerHTML = `
                     <div style="padding: 40px; text-align: center;">
                         <i class="fas fa-inbox" style="font-size: 2rem; color: var(--gray-400); margin-bottom: 20px;"></i>
-                        <h5 style="color: var(--gray-600); margin-bottom: 15px;">No Units Found</h5>
+                        <h5 style="color: var(--gray-600); margin-bottom: 15px;">No Units Found</H5>
                         <p style="color: var(--gray-500); margin-bottom: 25px;">
                             You haven't added any apartment units yet.
                         </p>
-                        <button class="btn btn-primary" onclick="window.app.showAddUnitForm()">
-                            <i class="fas fa-plus"></i> Add Your First Unit
-                        </button>
                     </div>
                 `;
                 return;
@@ -3605,12 +3475,7 @@ class CasaLink {
                     ${this.generateFloorLayouts(unitsByFloorData)}
                 </div>
                 
-                <!-- Actions -->
-                <div style="margin-top: 40px; padding-top: 25px; border-top: 1px solid #e9ecef; text-align: center;">
-                    <button class="btn btn-primary" onclick="window.app.showAddUnitForm()">
-                        <i class="fas fa-plus-circle"></i> Add New Unit
-                    </button>
-                </div>
+
                 
                 <style>
                     .dynamic-unit-layout {
@@ -3856,154 +3721,7 @@ class CasaLink {
         });
     }
 
-    showAddUnitForm() {
-        const formHTML = `
-            <div style="max-width: 600px; margin: 0 auto;">
-                <h4 style="margin-bottom: 25px; color: var(--royal-blue);">
-                    <i class="fas fa-plus-circle"></i> Add New Unit
-                </h4>
-                
-                <div class="form-group">
-                    <label class="form-label">Room Number</label>
-                    <input type="text" class="form-input" id="newUnitNumber" 
-                        placeholder="e.g., 1A, 2B, 5A" required>
-                    <small style="color: #666; font-size: 0.85rem;">
-                        Format: FloorNumber + Letter (1A, 2B, 5A for rooftop)
-                    </small>
-                </div>
-                
-                <div class="row" style="margin-bottom: 20px;">
-                    <div class="col-md-6">
-                        <div class="form-group">
-                            <label class="form-label">Floor</label>
-                            <select class="form-input" id="newUnitFloor">
-                                <option value="1">Floor 1</option>
-                                <option value="2">Floor 2</option>
-                                <option value="3">Floor 3</option>
-                                <option value="4">Floor 4</option>
-                                <option value="5">Rooftop</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="form-group">
-                            <label class="form-label">Status</label>
-                            <select class="form-input" id="newUnitStatus">
-                                <option value="vacant">Vacant</option>
-                                <option value="occupied">Occupied</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label class="form-label">Monthly Rent (₱)</label>
-                    <input type="number" class="form-input" id="newUnitRent" 
-                        min="0" step="100" value="5000" required>
-                </div>
-                
-                <div class="row" style="margin-bottom: 20px;">
-                    <div class="col-md-6">
-                        <div class="form-group">
-                            <label class="form-label">Bedrooms</label>
-                            <input type="number" class="form-input" id="newUnitBedrooms" 
-                                min="0" max="5" value="1">
-                        </div>
-                    </div>
-                    <div class="col-md-6">
-                        <div class="form-group">
-                            <label class="form-label">Bathrooms</label>
-                            <input type="number" class="form-input" id="newUnitBathrooms" 
-                                min="0" max="5" step="0.5" value="1">
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label class="form-label">Maximum Occupants</label>
-                    <input type="number" class="form-input" id="newUnitMaxOccupants" 
-                        min="1" max="10" value="2">
-                </div>
-                
-                <div class="form-group">
-                    <label class="form-label">Security Deposit (₱)</label>
-                    <input type="number" class="form-input" id="newUnitDeposit" 
-                        min="0" step="100" value="5000">
-                </div>
-            </div>
-        `;
-        
-        ModalManager.openModal(formHTML, {
-            title: 'Add New Unit',
-            onSubmit: async () => {
-                const unitData = {
-                    roomNumber: document.getElementById('newUnitNumber').value.trim(),
-                    floor: document.getElementById('newUnitFloor').value,
-                    isAvailable: document.getElementById('newUnitStatus').value === 'vacant',
-                    monthlyRent: parseFloat(document.getElementById('newUnitRent').value) || 0,
-                    numberOfBedrooms: parseInt(document.getElementById('newUnitBedrooms').value) || 0,
-                    numberOfBathrooms: parseFloat(document.getElementById('newUnitBathrooms').value) || 0,
-                    maxMembers: parseInt(document.getElementById('newUnitMaxOccupants').value) || 0,
-                    securityDeposit: parseFloat(document.getElementById('newUnitDeposit').value) || 0,
-                    numberOfMembers: 0,
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                };
-                
-                if (!unitData.roomNumber) {
-                    ToastManager.showToast('Please enter a room number', 'error');
-                    return;
-                }
-                
-                try {
-                    // Check if unit already exists
-                    // Scope existence check to the currently selected apartment (prefer apartmentId)
-                    let existingQueryRef = firebaseDb.collection('rooms').where('roomNumber', '==', unitData.roomNumber);
-                    if (this.currentApartmentId) {
-                        existingQueryRef = existingQueryRef.where('apartmentId', '==', this.currentApartmentId);
-                        unitData.apartmentId = this.currentApartmentId;
-                    } else if (this.currentApartmentAddress) {
-                        existingQueryRef = existingQueryRef.where('apartmentAddress', '==', this.currentApartmentAddress);
-                        unitData.apartmentAddress = this.currentApartmentAddress;
-                    }
 
-                    const existingQuery = await existingQueryRef.get();
-
-                    if (!existingQuery.empty) {
-                        ToastManager.showToast(`Unit ${unitData.roomNumber} already exists in this apartment`, 'error');
-                        return;
-                    }
-
-                    // Add apartment metadata to unit before saving
-                    if (!unitData.apartmentAddress && this.apartmentsList && this.currentApartmentId) {
-                        const apt = this.apartmentsList.find(a => a.id === this.currentApartmentId);
-                        if (apt) {
-                            unitData.apartmentAddress = apt.apartmentAddress || unitData.apartmentAddress;
-                            unitData.apartmentName = apt.apartmentName || apt.apartmentName || unitData.apartmentName;
-                        }
-                    }
-
-                    // Add to Firestore
-                    await firebaseDb.collection('rooms').add(unitData);
-                    
-                    ToastManager.showToast(`Unit ${unitData.roomNumber} added successfully!`, 'success');
-                    ModalManager.closeModal();
-                    
-                    // Refresh the unit layout if it's open
-                    const unitLayoutModal = document.querySelector('.modal.show');
-                    if (unitLayoutModal) {
-                        const units = await this.fetchAllUnitsFromFirestore();
-                        this.generateDynamicUnitLayout(unitLayoutModal, units);
-                        this.setupUnitClickHandlers(unitLayoutModal);
-                    }
-                    
-                } catch (error) {
-                    console.error('❌ Error adding unit:', error);
-                    ToastManager.showToast('Error adding unit: ' + error.message, 'error');
-                }
-            }
-        });
-    }
 
     showNoUnitsFoundView(modal) {
         modal.querySelector('.modal-body').innerHTML = `
@@ -4015,11 +3733,7 @@ class CasaLink {
                 <p style="color: var(--dark-gray); margin-bottom: 25px; max-width: 500px; margin-left: auto; margin-right: auto;">
                     No apartment units found in the database. Add your first unit to get started.
                 </p>
-                <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
-                    <button class="btn btn-primary" onclick="window.app.showAddUnitForm()">
-                        <i class="fas fa-plus"></i> Add First Unit
-                    </button>
-                </div>
+
             </div>
         `;
     }
@@ -4273,9 +3987,7 @@ class CasaLink {
                     
                     <!-- Actions -->
                     <div style="margin-top: 40px; padding-top: 25px; border-top: 1px solid #e9ecef; text-align: center;">
-                        <button class="btn btn-primary" onclick="window.app.showAddUnitForm()">
-                            <i class="fas fa-plus-circle"></i> Add New Unit
-                        </button>
+
                     </div>
                 </div>
                 
@@ -4554,9 +4266,6 @@ class CasaLink {
                         <div class="d-flex gap-2 flex-wrap">
                             <button class="btn btn-outline-primary" id="refreshUnitLayout">
                                 <i class="fas fa-sync-alt"></i> Refresh Layout
-                            </button>
-                            <button class="btn btn-outline-success" id="addNewUnitBtn">
-                                <i class="fas fa-plus"></i> Add New Unit
                             </button>
                             <button class="btn btn-outline-info" id="exportUnitData">
                                 <i class="fas fa-download"></i> Export Report
@@ -5207,6 +4916,7 @@ class CasaLink {
                         floor: parseInt(document.getElementById('floor').value),
                         status: document.getElementById('status').value,
                         monthlyRent: parseFloat(document.getElementById('monthlyRent').value) || 0,
+                        isPaymentVerified: false,
                         bedrooms: parseInt(document.getElementById('bedrooms').value) || 0,
                         bathrooms: parseFloat(document.getElementById('bathrooms').value) || 0,
                         size: parseInt(document.getElementById('size').value) || 0,
@@ -5632,9 +5342,6 @@ class CasaLink {
                             <i class="fas fa-user-plus"></i> Add Tenant
                         </button>
                         ` : ''}
-                        <button class="btn btn-primary" onclick="window.app.editUnit('${roomDoc.id}')">
-                            <i class="fas fa-edit"></i> Edit Unit
-                        </button>
                     </div>
                 </div>
                 
@@ -15713,7 +15420,8 @@ class CasaLink {
                             <th>Description</th>
                             <th>Amount</th>
                             <th>Due Date</th>
-                            <th>Status</th>
+                            <th>Bill Status</th>
+                            <th>Payment Verification</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -15760,6 +15468,11 @@ class CasaLink {
                                     </td>
                                     <td>
                                         ${statusBadge}
+                                    </td>
+                                    <td>
+                                        <span class="status-badge ${bill.isPaymentVerified ? 'active' : 'inactive'}">
+                                            ${bill.isPaymentVerified ? 'Payment Verified' : 'Payment Waiting Verification'}
+                                        </span>
                                     </td>
                                     <td>
                                         <div class="action-buttons">
@@ -15984,18 +15697,20 @@ class CasaLink {
                     status: 'payment_pending',
                     lastUpdated: new Date().toISOString(),
                     pendingPaymentAmount: paymentAmount,
-                    pendingPaymentDate: paymentDate
+                    pendingPaymentDate: paymentDate,
+                    isPaymentVerified: false
                 });
                 
                 // Send notification to landlord
                 await this.notifyLandlordOfPayment(paymentData);
             } else {
-                // For landlord payments, mark as paid immediately
+                // For landlord payments, mark as paid immediately and mark verification true
                 await firebaseDb.collection('bills').doc(billId).update({
                     status: 'paid',
                     lastUpdated: new Date().toISOString(),
                     paidAmount: paymentAmount,
-                    paidDate: paymentDate
+                    paidDate: paymentDate,
+                    isPaymentVerified: true
                 });
             }
             

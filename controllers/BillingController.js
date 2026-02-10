@@ -171,7 +171,35 @@ class BillingController {
             window.setBillingLoading(true);
             window.hideBillingError();
 
-            await this.service.updateBill(billId, { status: 'paid', paidDate: new Date() });
+            // Try to find bill details for creating a payment record
+            const bill = this.allBills.find(b => b.id === billId) || {};
+
+            // Create a payment record (landlord action - treated as verified/completed)
+            try {
+                if (typeof DataManager !== 'undefined' && DataManager.recordPayment) {
+                    const paymentData = {
+                        billId: billId,
+                        tenantId: bill.tenantId,
+                        landlordId: bill.landlordId,
+                        tenantName: bill.tenantName,
+                        roomNumber: bill.roomNumber,
+                        amount: bill.amount || bill.totalAmount || 0,
+                        paymentMethod: 'manual',
+                        referenceNumber: '',
+                        paymentDate: new Date().toISOString(),
+                        notes: 'Marked paid by landlord',
+                        status: 'completed',
+                        createdAt: new Date().toISOString()
+                    };
+
+                    await DataManager.recordPayment(paymentData);
+                }
+            } catch (e) {
+                console.warn('Failed to create payment record while marking bill paid:', e);
+            }
+
+            // Update bill to paid and mark verification
+            await this.service.updateBill(billId, { status: 'paid', paidDate: new Date(), isPaymentVerified: true, paidAmount: bill.amount || bill.paidAmount || 0 });
             await this.loadBills();
             await this.updateStats();
 

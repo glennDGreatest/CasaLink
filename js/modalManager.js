@@ -257,15 +257,60 @@ getBillById(billId) {
             submitBtn.disabled = true;
             submitBtn.textContent = 'Processing...';
             
-            // Save payment to database
-            await saveTenantPayment(paymentData);
+            // Save payment to database (use DataManager.recordPayment)
+            if (typeof DataManager !== 'undefined' && DataManager.recordPayment) {
+                await DataManager.recordPayment(paymentData);
+            } else {
+                // Fallback: try global firebaseDb if available
+                if (typeof firebaseDb !== 'undefined') {
+                    await firebaseDb.collection('payments').add({ ...paymentData, processedAt: new Date().toISOString() });
+                } else {
+                    throw new Error('No DataManager or firebaseDb available to save payment');
+                }
+            }
             
+            // Update related bill to indicate pending verification
+            try {
+                if (typeof firebaseDb !== 'undefined') {
+                    await firebaseDb.collection('bills').doc(billId).update({
+                        status: 'payment_pending',
+                        lastUpdated: new Date().toISOString(),
+                        pendingPaymentAmount: paymentData.amountPaid,
+                        pendingPaymentDate: paymentData.paymentDate,
+                        isPaymentVerified: false
+                    });
+                }
+            } catch (e) {
+                console.warn('Could not update bill status after payment submission:', e);
+            }
+
+            // Optionally notify landlord (create a notification record)
+            try {
+                if (typeof firebaseDb !== 'undefined') {
+                    const notification = {
+                        type: 'payment_submitted',
+                        title: 'New Payment Submitted',
+                        message: `Tenant submitted a payment of ₱${paymentData.amountPaid}`,
+                        paymentId: null,
+                        billId: billId,
+                        tenantId: paymentData.tenantId,
+                        landlordId: paymentData.landlordId,
+                        read: false,
+                        createdAt: new Date().toISOString(),
+                        actionRequired: true
+                    };
+                    await firebaseDb.collection('notifications').add(notification);
+                }
+            } catch (e) {
+                console.warn('Could not create notification for landlord:', e);
+            }
+
             // Show success message
             showNotification('Payment submitted successfully! Your landlord will verify it shortly.', 'success');
-            
+
             // Close modal
             closeModal();
-            
+
             // Refresh the bills section
             refreshTenantBills();
             

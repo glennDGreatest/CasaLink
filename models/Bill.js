@@ -19,6 +19,7 @@ class Bill {
     this.updatedAt = data.updatedAt || new Date();
     this.lateFeeAmount = data.lateFeeAmount || 0;
     this.paidAmount = data.paidAmount || 0;
+    this.isPaymentVerified = data.isPaymentVerified || false;
   }
 
   /**
@@ -101,6 +102,7 @@ class Bill {
       updatedAt: this.updatedAt,
       lateFeeAmount: this.lateFeeAmount,
       paidAmount: this.paidAmount
+      ,isPaymentVerified: this.isPaymentVerified
     };
   }
 
