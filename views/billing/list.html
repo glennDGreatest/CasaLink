@@ -309,6 +309,16 @@
             color: #166534;
         }
 
+        .badge.verified {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .badge.waiting {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
         .badge.pending {
             background: #fef3c7;
             color: #92400e;
@@ -645,6 +655,7 @@
         function getStatusBadgeIcon(status) {
             switch(status?.toLowerCase()) {
                 case 'paid': return '<i class="fas fa-check-circle"></i>';
+                case 'payment_pending': return '<i class="fas fa-hourglass-half"></i>';
                 case 'pending': return '<i class="fas fa-hourglass-half"></i>';
                 case 'overdue': return '<i class="fas fa-exclamation-circle"></i>';
                 default: return '';
@@ -673,10 +684,23 @@
 
             let html = '';
             bills.forEach(bill => {
-                const statusClass = bill.status === 'paid' ? 'paid' : 
-                                    bill.status === 'overdue' ? 'overdue' : 'pending';
-                const statusText = bill.status ? (bill.status.charAt(0).toUpperCase() + bill.status.slice(1)) : 'Pending';
-                const statusIcon = getStatusBadgeIcon(bill.status);
+                const rawStatus = (bill.status || '').toLowerCase();
+                let statusClass = 'pending';
+                let statusText = 'Pending';
+                if (rawStatus === 'paid') {
+                    statusClass = 'paid';
+                    statusText = 'PAID';
+                } else if (rawStatus === 'overdue') {
+                    statusClass = 'overdue';
+                    statusText = 'Overdue';
+                } else if (rawStatus === 'payment_pending') {
+                    statusClass = 'pending';
+                    statusText = 'Pending Payment';
+                } else if (rawStatus === 'pending') {
+                    statusClass = 'pending';
+                    statusText = 'Pending';
+                }
+                const statusIcon = getStatusBadgeIcon(rawStatus);
 
                 html += `
                     <tr data-bill-id="${bill.id}">
@@ -692,8 +716,8 @@
                                     <span class="badge ${statusClass}">${statusIcon} ${statusText}</span>
                                 </td>
                                 <td>
-                                    <span class="badge ${bill.isPaymentVerified ? 'paid' : 'pending'}">
-                                        ${bill.isPaymentVerified ? 'Payment Verified' : 'Payment Waiting Verification'}
+                                    <span class="badge ${bill.isPaymentVerified ? 'verified' : 'waiting'}">
+                                        ${bill.isPaymentVerified ? 'Payment Verified' : 'Awaiting Payment Verification'}
                                     </span>
                                 </td>
                         <td class="actions">

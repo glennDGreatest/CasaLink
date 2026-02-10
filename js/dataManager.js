@@ -58,16 +58,9 @@ class DataManager {
             });
             
             console.log('✅ Total units fetched:', units.length);
-            
-            // Log each unit for debugging
-            units.forEach(unit => {
-                console.log(`   - ${unit.roomNumber} (${unit.apartmentAddress}): ${unit.status} (isAvailable: ${unit.isAvailable})`);
-            });
-            
             return units;
-            
         } catch (error) {
-            console.error('❌ Error fetching units:', error);
+            console.error('❌ Error fetching landlord units:', error);
             return [];
         }
     }
@@ -121,20 +114,6 @@ class DataManager {
                                 ...room
                             });
                         });
-                        
-                        console.log('📡 Processed', units.length, 'units from snapshot');
-                        
-                        // Log sample unit
-                        if (units.length > 0) {
-                            console.log('   - Sample unit:', {
-                                id: units[0].id,
-                                roomNumber: units[0].roomNumber,
-                                floor: units[0].floor,
-                                status: units[0].status,
-                                isAvailable: units[0].isAvailable,
-                                occupiedBy: units[0].occupiedBy || 'N/A'
-                            });
-                        }
                         
                         // Validate units have required fields
                         const validUnits = units.filter(u => u.floor && u.roomNumber && u.status !== undefined);
@@ -759,19 +738,14 @@ class DataManager {
         id: '', // Firestore document ID
         title: '',
         description: '',
-            // Respect the provided payment status (e.g., 'pending_verification' for tenant submissions)
-            const toSave = {
-                ...paymentData,
-                processedAt: new Date().toISOString(),
-                status: paymentData.status || 'completed'
-            };
-
-            const paymentRef = await firebaseDb.collection('payments').add(toSave);
-
-            console.log('✅ Payment recorded successfully (id:', paymentRef.id, ')');
-            // NOTE: Do NOT automatically update the bill here. The caller (tenant flow vs landlord flow)
-            // is responsible for updating the related bill status and the `isPaymentVerified` flag.
-            return paymentRef.id;
+        unitId: '',
+        propertyId: '',
+        tenantId: '',
+        landlordId: '',
+        status: 'open', // open, assigned, in-progress, completed
+        priority: 'medium', // low, medium, high, emergency
+        createdAt: '',
+        updatedAt: ''
     };
 
     static maintenanceStaffSchema = {
@@ -881,14 +855,21 @@ class DataManager {
             const currentMonth = today.getMonth();
             const currentYear = today.getFullYear();
 
-            // Filter only completed payments
-            const completedPayments = payments.filter(p => p.status === 'completed');
+            // Filter completed and verified payments (both are confirmed)
+            const confirmedPayments = payments.filter(p => 
+                p.status === 'completed' || p.status === 'verified'
+            );
+            
+            // Payments still waiting verification
+            const pendingVerificationPayments = payments.filter(p => 
+                p.status === 'waiting_verification' || p.status === 'pending_verification'
+            );
 
-            // Total collected
-            const totalCollected = completedPayments.reduce((sum, payment) => sum + payment.amount, 0);
+            // Total collected (only confirmed payments count)
+            const totalCollected = confirmedPayments.reduce((sum, payment) => sum + payment.amount, 0);
 
             // This month's collection
-            const monthlyPayments = completedPayments.filter(payment => {
+            const monthlyPayments = confirmedPayments.filter(payment => {
                 const paymentDate = new Date(payment.paymentDate);
                 return paymentDate.getMonth() === currentMonth && 
                     paymentDate.getFullYear() === currentYear;
@@ -896,18 +877,20 @@ class DataManager {
             const monthlyCollected = monthlyPayments.reduce((sum, payment) => sum + payment.amount, 0);
 
             // Payment methods count
-            const methodCount = new Set(completedPayments.map(p => p.paymentMethod)).size;
+            const methodCount = new Set(confirmedPayments.map(p => p.paymentMethod)).size;
 
             // Average payment
-            const averagePayment = completedPayments.length > 0 ? totalCollected / completedPayments.length : 0;
+            const averagePayment = confirmedPayments.length > 0 ? totalCollected / confirmedPayments.length : 0;
 
             return {
                 totalCollected,
                 monthlyCollected,
                 methodCount,
                 averagePayment,
-                totalTransactions: completedPayments.length,
-                monthlyTransactions: monthlyPayments.length
+                totalTransactions: confirmedPayments.length,
+                monthlyTransactions: monthlyPayments.length,
+                pendingVerificationAmount: pendingVerificationPayments.reduce((sum, p) => sum + p.amount, 0),
+                pendingVerificationCount: pendingVerificationPayments.length
             };
         } catch (error) {
             console.error('Error getting payment stats:', error);
@@ -949,34 +932,7 @@ class DataManager {
         }
     }
 
-    static async recordPayment(paymentData) {
-        try {
-            console.log('💳 Recording payment:', paymentData);
-            
-            const paymentRef = await firebaseDb.collection('payments').add({
-                ...paymentData,
-                processedAt: new Date().toISOString(),
-                status: 'completed'
-            });
-
-            // Update bill status
-            if (paymentData.billId) {
-                await firebaseDb.collection('bills').doc(paymentData.billId).update({
-                    status: 'paid',
-                    paidDate: new Date().toISOString(),
-                    paymentMethod: paymentData.paymentMethod,
-                    paymentReference: paymentData.referenceNumber
-                });
-            }
-
-            console.log('✅ Payment recorded successfully');
-            return paymentRef.id;
-            
-        } catch (error) {
-            console.error('❌ Error recording payment:', error);
-            throw error;
-        }
-    }
+    // ===== REMOVED DUPLICATE - See single definition below =====
 
     static async getTenantPayments(tenantId) {
         try {
@@ -2004,6 +1960,22 @@ class DataManager {
             status: 'pending',
             isPaymentVerified: false
         });
+        // Create activity for bill generation
+        try {
+            await firebaseDb.collection('activities').add({
+                type: 'bill_created',
+                billId: docRef.id,
+                tenantId: billData.tenantId || null,
+                landlordId: billData.landlordId || billData.createdBy || null,
+                amount: billData.totalAmount || billData.amount || null,
+                title: billData.isAutoGenerated ? 'Auto-generated Bill' : 'Bill Created',
+                message: billData.description || 'New bill created',
+                createdAt: new Date().toISOString()
+            });
+        } catch (actErr) {
+            console.warn('Could not create activity for bill creation:', actErr);
+        }
+
         return docRef.id;
     }
 
@@ -2017,21 +1989,61 @@ class DataManager {
         return docRef.id;
     }
 
+    /**
+     * Record a payment to the database
+     * @param {object} paymentData - Payment details including status
+     * @returns {Promise<string>} - Payment document ID
+     * 
+     * IMPORTANT: This function respects the status passed in paymentData.
+     * The caller is responsible for updating the bill status based on payment status:
+     * - If status is 'waiting_verification': Bill should be 'payment_pending', isPaymentVerified = false
+     * - If status is 'verified' or 'completed': Bill should be 'paid', isPaymentVerified = true
+     */
     static async recordPayment(paymentData) {
-        const docRef = await firebaseDb.collection('payments').add({
-            ...paymentData,
-            processedAt: new Date().toISOString(),
-            status: 'completed'
-        });
+        try {
+            console.log('💳 Recording payment:', paymentData);
+            
+            // Ensure we have the status from the payment data
+            const toSave = {
+                ...paymentData,
+                processedAt: new Date().toISOString(),
+                status: paymentData.status || 'waiting_verification'  // Default to waiting verification for safety
+            };
 
-        if (paymentData.billId) {
-            await firebaseDb.doc(`bills/${paymentData.billId}`).update({
-                status: 'paid',
-                paidDate: new Date().toISOString()
-            });
+            const paymentRef = await firebaseDb.collection('payments').add(toSave);
+
+            console.log('✅ Payment recorded successfully (id:', paymentRef.id, ') with status:', toSave.status);
+            
+            // NOTE: Do NOT automatically update the bill here!
+            // The caller (tenant flow vs landlord flow in app.js) is responsible for:
+            // 1. Updating the bill status (payment_pending vs paid)
+            // 2. Setting isPaymentVerified flag appropriately
+            // 3. Recording paidAmount and paidDate
+            
+            // Create an activity entry for this payment
+            try {
+                await firebaseDb.collection('activities').add({
+                    type: 'payment_recorded',
+                    paymentId: paymentRef.id,
+                    billId: toSave.billId || null,
+                    tenantId: toSave.tenantId || null,
+                    landlordId: toSave.landlordId || null,
+                    amount: toSave.amount || toSave.paymentAmount || null,
+                    status: toSave.status,
+                    title: 'Payment Recorded',
+                    message: `Payment recorded (status: ${toSave.status})`,
+                    createdAt: new Date().toISOString()
+                });
+            } catch (actErr) {
+                console.warn('Could not create activity for payment:', actErr);
+            }
+
+            return paymentRef.id;
+            
+        } catch (error) {
+            console.error('❌ Error recording payment:', error);
+            throw error;
         }
-
-        return docRef.id;
     }
 
     // ===== OFFLINE SUPPORT =====

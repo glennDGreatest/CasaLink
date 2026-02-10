@@ -247,7 +247,7 @@ getBillById(billId) {
             paymentDate: formData.get('paymentDate'),
             amountPaid: parseFloat(formData.get('amountPaid')),
             notes: formData.get('paymentNotes') || '',
-            status: 'pending', // Payment needs landlord verification
+            status: 'waiting_verification', // Payment needs landlord verification (NOT 'pending')
             submittedAt: new Date().toISOString()
         };
         
