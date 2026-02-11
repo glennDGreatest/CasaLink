@@ -10928,6 +10928,9 @@ class CasaLink {
                         <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
                             Close
                         </button>
+                        <button class="btn btn-info" onclick="casaLink.showPaymentDetailsForVerification('${payment.id}')">
+                            <i class="fas fa-eye"></i> Review Details
+                        </button>
                         <button class="btn btn-success" onclick="casaLink.verifyPaymentAction('${payment.id}', this)">
                             <i class="fas fa-check-circle"></i> Verify Payment
                         </button>
@@ -11134,14 +11137,17 @@ class CasaLink {
      */
     async verifyPaymentAction(paymentId, buttonElement) {
         try {
-            if (!confirm('Are you sure you want to verify this payment?')) {
+            if (!confirm('Are you sure you want to verify and approve this payment?')) {
                 return;
             }
 
-            // Show loading state
-            const originalHTML = buttonElement.innerHTML;
-            buttonElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying...';
-            buttonElement.disabled = true;
+            // Show loading state if button exists
+            let originalHTML = null;
+            if (buttonElement) {
+                originalHTML = buttonElement.innerHTML;
+                buttonElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Verifying...';
+                buttonElement.disabled = true;
+            }
 
             // Get payment document
             const paymentDoc = await firebaseDb.collection('payments').doc(paymentId).get();
@@ -11180,28 +11186,163 @@ class CasaLink {
             // Show success message
             this.showNotification('Payment verified successfully! Bill has been marked as paid.', 'success');
 
-            // Close modal
-            const modal = buttonElement.closest('.modal-overlay');
-            if (modal) {
-                ModalManager.closeModal(modal);
-            }
+            // Close modals
+            const modals = document.querySelectorAll('.modal-overlay');
+            modals.forEach(modal => ModalManager.closeModal(modal));
 
             // Refresh data
             setTimeout(() => {
-                this.loadPaymentsData();
-                this.loadBillsData();
-                this.loadBillingStats();
+                if (this.loadPaymentsData) this.loadPaymentsData();
+                if (this.loadBillsData) this.loadBillsData();
+                if (this.loadBillingStats) this.loadBillingStats();
             }, 500);
 
         } catch (error) {
             console.error('Error verifying payment:', error);
             this.showNotification('Failed to verify payment: ' + error.message, 'error');
             
-            // Restore button state
+            // Restore button state if button exists
             if (buttonElement) {
                 buttonElement.innerHTML = '<i class="fas fa-check-circle"></i> Verify Payment';
                 buttonElement.disabled = false;
             }
+        }
+    }
+
+    /**
+     * Show payment details in read-only modal for verification (Landlord)
+     */
+    async showPaymentDetailsForVerification(paymentId) {
+        try {
+            const paymentDoc = await firebaseDb.collection('payments').doc(paymentId).get();
+            if (!paymentDoc.exists) {
+                this.showNotification('Payment record not found', 'error');
+                return;
+            }
+
+            const payment = paymentDoc.data();
+
+            // Build payment details content
+            let detailsHTML = `
+                <div style="max-width: 600px;">
+                    <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #162660;">
+                        <h4 style="margin: 0 0 12px 0; color: #162660; display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-receipt"></i> Tenant Payment Submission
+                        </h4>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+                            <div><strong>Tenant Name:</strong><br>${payment.tenantName || 'N/A'}</div>
+                            <div><strong>Room Number:</strong><br>${payment.roomNumber || 'N/A'}</div>
+                            <div><strong>Payment Method:</strong><br><span style="text-transform: capitalize;">${payment.paymentMethod || 'N/A'}</span></div>
+                            <div><strong>Submitted At:</strong><br>${new Date(payment.submittedAt).toLocaleDateString('en-PH', {year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'})}</div>
+                        </div>
+                    </div>
+
+                    <div style="background: white; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0; margin-bottom: 20px;">
+                        <h4 style="margin: 0 0 16px 0; color: #0f172a;">Payment Details (Submitted by Tenant)</h4>
+
+                        <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 12px;">
+                            <label style="font-size: 12px; color: #5f6368; font-weight: 600; display: block; margin-bottom: 4px;">Payment Date</label>
+                            <div style="font-size: 14px; color: #202124; font-weight: 500;">${new Date(payment.paymentDate).toLocaleDateString('en-PH', {year: 'numeric', month: 'long', day: 'numeric'})}</div>
+                        </div>
+
+                        <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 12px;">
+                            <label style="font-size: 12px; color: #5f6368; font-weight: 600; display: block; margin-bottom: 4px;">Amount Paid</label>
+                            <div style="font-size: 16px; color: #162660; font-weight: 700;">₱${(payment.amount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</div>
+                        </div>
+
+                        <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 12px;">
+                            <label style="font-size: 12px; color: #5f6368; font-weight: 600; display: block; margin-bottom: 4px;">Photo Evidence</label>
+                            ${payment.photoEvidenceURL 
+                                ? `<img src="${payment.photoEvidenceURL}" alt="Payment Evidence" style="max-width: 100%; max-height: 300px; border-radius: 6px; display: block; margin-top: 8px;">` 
+                                : '<div style="color: #5f6368;">No photo evidence attached</div>'
+                            }
+                        </div>
+
+                        ${payment.notes 
+                            ? `<div style="padding-bottom: 12px;">
+                                <label style="font-size: 12px; color: #5f6368; font-weight: 600; display: block; margin-bottom: 4px;">Notes from Tenant</label>
+                                <div style="font-size: 14px; color: #202124; background: #f8f9fa; padding: 10px; border-left: 3px solid #34a853; border-radius: 4px;">${payment.notes}</div>
+                            </div>`
+                            : ''
+                        }
+                    </div>
+            `;
+
+            // Add method-specific details
+            if (payment.paymentMethod === 'gcash' || payment.paymentMethod === 'maya') {
+                detailsHTML += `
+                    <div style="background: #e7f5f0; padding: 12px; border-radius: 8px; border-left: 4px solid #34a853; margin-bottom: 20px;">
+                        <p style="margin: 0; font-size: 13px; color: #202124;">
+                            <i class="fas fa-info-circle" style="color: #34a853; margin-right: 8px;"></i>
+                            Tenant submitted a screenshot of the ${payment.paymentMethod === 'gcash' ? 'GCash' : 'Maya'} transaction. Please verify the image shows a complete and valid transaction.
+                        </p>
+                    </div>
+                `;
+            } else if (payment.paymentMethod === 'bank_transfer') {
+                detailsHTML += `
+                    <div style="background: #e7f5f0; padding: 12px; border-radius: 8px; border-left: 4px solid #34a853; margin-bottom: 20px;">
+                        <p style="margin: 0; font-size: 13px; color: #202124;">
+                            <i class="fas fa-info-circle" style="color: #34a853; margin-right: 8px;"></i>
+                            Tenant submitted a screenshot of their online banking transfer. Verify the transaction details match the bill amount and your account information.
+                        </p>
+                    </div>
+                `;
+            } else if (payment.paymentMethod === 'cash') {
+                detailsHTML += `
+                    <div style="background: #e7f5f0; padding: 12px; border-radius: 8px; border-left: 4px solid #34a853; margin-bottom: 20px;">
+                        <p style="margin: 0; font-size: 13px; color: #202124;">
+                            <i class="fas fa-info-circle" style="color: #34a853; margin-right: 8px;"></i>
+                            Tenant submitted a photo of cash payment as proof. Verify the amount and any other relevant details match what you received.
+                        </p>
+                    </div>
+                `;
+            }
+
+            detailsHTML += `
+                    </div>
+            `;
+
+            // Show modal with read-only payment details
+            ModalManager.openModal(detailsHTML, {
+                title: 'Review Payment for Verification',
+                width: '600px',
+                maxWidth: '100%',
+                submitText: 'Verify & Approve Payment',
+                cancelText: 'Back',
+                onSubmit: () => this.verifyPaymentAction(paymentId, null)
+            });
+
+        } catch (error) {
+            console.error('Error loading payment details:', error);
+            this.showNotification('Failed to load payment details: ' + error.message, 'error');
+        }
+    }
+
+    /**
+     * Find payment for a bill and show payment details for verification (Landlord)
+     * Used when landlord clicks "Verify" button on a bill in Bills Management
+     */
+    async verifyPaymentForBill(billId) {
+        try {
+            // Find the payment associated with this bill
+            const paymentQuery = await firebaseDb.collection('payments')
+                .where('billId', '==', billId)
+                .where('status', 'in', ['waiting_verification', 'pending_verification'])
+                .limit(1)
+                .get();
+
+            if (paymentQuery.empty) {
+                this.showNotification('No pending payment found for this bill. The tenant may not have submitted a payment yet.', 'info');
+                return;
+            }
+
+            const payment = paymentQuery.docs[0];
+            // Show the payment details review modal
+            await this.showPaymentDetailsForVerification(payment.id);
+
+        } catch (error) {
+            console.error('Error verifying payment for bill:', error);
+            this.showNotification('Failed to load payment for verification: ' + error.message, 'error');
         }
     }
 
@@ -15260,11 +15401,6 @@ class CasaLink {
                     <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
                         Close
                     </button>
-                    ${bill.status !== 'paid' ? `
-                        <button class="btn btn-success" ${bill.status === 'pending' ? 'disabled title="Pending bill - cannot record payment"' : ''} onclick="casaLink.recordPaymentModal('${bill.id}')">
-                            <i class="fas fa-credit-card"></i> Record Payment
-                        </button>
-                    ` : ''}
                 `;
                 modal.querySelector('.modal-content').appendChild(footer);
             }
@@ -15540,8 +15676,8 @@ class CasaLink {
                                     <td>
                                         <div class="action-buttons">
                                             ${bill.status !== 'paid' ? `
-                                                <button class="btn btn-sm btn-success" ${bill.status === 'pending' ? 'disabled title="Pending bill - cannot record payment"' : ''} onclick="event.stopPropagation(); casaLink.recordPaymentModal('${bill.id}')">
-                                                    <i class="fas fa-credit-card"></i> Pay
+                                                <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); casaLink.verifyPaymentForBill('${bill.id}')">
+                                                    <i class="fas fa-check-circle"></i> Verify
                                                 </button>
                                             ` : ''}
                                             ${bill.status !== 'paid' ? `
@@ -15983,80 +16119,213 @@ class CasaLink {
             }
             
             const bill = { id: billDoc.id, ...billDoc.data() };
-            const paymentMethods = await DataManager.getPaymentMethods();
-            
-            const paymentMethodsHTML = paymentMethods.map(method => `
-                <div class="payment-method-option" data-method="${method.id}">
-                    <i class="${method.icon}"></i>
-                    <span>${method.name}</span>
+
+            // Build bill details section
+            const billDetailsHTML = `
+                <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #162660;">
+                    <h4 style="margin: 0 0 12px 0; color: #162660; display: flex; align-items: center; gap: 8px;">
+                        <i class="fas fa-receipt"></i> Bill Details
+                    </h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+                        <div><strong>Amount Due:</strong><br><span style="color: #162660; font-weight: 700; font-size: 14px;">₱${(bill.totalAmount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</span></div>
+                        <div><strong>Due Date:</strong><br>${new Date(bill.dueDate).toLocaleDateString('en-PH', {year: 'numeric', month: 'short', day: 'numeric'})}</div>
+                        <div><strong>Room:</strong><br>${bill.roomNumber || 'N/A'}</div>
+                        <div><strong>Description:</strong><br>${bill.description || 'Monthly Rent'}</div>
+                    </div>
                 </div>
-            `).join('');
-            
-            const modalContent = `
-                <div class="payment-modal">
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        <i class="fas fa-credit-card" style="font-size: 3rem; color: var(--success); margin-bottom: 15px;"></i>
-                        <h3 style="margin-bottom: 10px;">Record Payment</h3>
-                        <p>Record payment for <strong>${bill.tenantName}</strong></p>
-                    </div>
+            `;
+
+            // Create modal content with payment method selector
+            let modalContent = `
+                <div class="payment-form-container">
+                    ${billDetailsHTML}
                     
-                    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                        <h4 style="margin: 0 0 10px 0; color: var(--royal-blue);">Bill Details</h4>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.9rem;">
-                            <div><strong>Amount Due:</strong> ₱${(bill.totalAmount || 0).toLocaleString()}</div>
-                            <div><strong>Due Date:</strong> ${new Date(bill.dueDate).toLocaleDateString()}</div>
-                            <div><strong>Room:</strong> ${bill.roomNumber || 'N/A'}</div>
-                            <div><strong>Description:</strong> ${bill.description || 'Monthly Rent'}</div>
+                    <div class="payment-form-section">
+                        <div class="payment-form-section-title">
+                            <i class="fas fa-credit-card"></i>
+                            Payment Method Selection
                         </div>
+                        ${PaymentFormManager.generatePaymentMethodSelector()}
                     </div>
                     
-                    <div class="form-group">
-                        <label class="form-label">Payment Method *</label>
-                        <div class="payment-methods-grid">
-                            ${paymentMethodsHTML}
-                        </div>
-                        <input type="hidden" id="selectedPaymentMethod" required>
+                    <div id="dynamicFormFields" style="display: none;">
+                        <!-- Dynamic form fields will be inserted here -->
                     </div>
                     
-                    <div class="form-group" id="referenceNumberGroup" style="display: none;">
-                        <label class="form-label">Reference Number *</label>
-                        <input type="text" id="paymentReference" class="form-input" placeholder="Transaction ID, receipt number, etc.">
-                        <small style="color: var(--dark-gray);">Required for GCash, Maya, and Bank Transfer</small>
+                    <div class="payment-form-error" id="paymentFormError">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <span id="errorMessage"></span>
                     </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Payment Date *</label>
-                        <input type="date" id="paymentDate" class="form-input" value="${new Date().toISOString().split('T')[0]}">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Amount Paid *</label>
-                        <input type="number" id="paymentAmount" class="form-input" value="${bill.totalAmount || 0}" step="0.01" min="0">
-                        <small style="color: var(--dark-gray);">Enter the actual amount received</small>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Notes (Optional)</label>
-                        <textarea id="paymentNotes" class="form-input" placeholder="Additional notes about this payment" rows="3"></textarea>
-                    </div>
-                    
-                    <div id="paymentError" style="color: var(--danger); display: none; margin-bottom: 15px;"></div>
                 </div>
             `;
             
             const modal = ModalManager.openModal(modalContent, {
                 title: 'Record Payment',
                 submitText: 'Record Payment',
-                onSubmit: () => this.processPayment(billId, bill)
+                width: '600px',
+                maxWidth: '100%',
+                onSubmit: () => this.processPaymentSubmit(billId, bill, modal)
             });
             
-            this.setupPaymentMethodSelection();
+            // Setup payment method selector
+            const methodCards = modal.querySelectorAll('.payment-method-card');
+            let selectedMethod = null;
+            
+            methodCards.forEach(card => {
+                card.addEventListener('click', () => {
+                    // Remove previous selection
+                    methodCards.forEach(c => c.classList.remove('selected'));
+                    
+                    // Select this card
+                    card.classList.add('selected');
+                    
+                    // Get selected method and render form
+                    selectedMethod = card.getAttribute('data-method-id');
+                    const dynamicFormFields = modal.querySelector('#dynamicFormFields');
+                    const formHTML = PaymentFormManager.generatePaymentFormFields(selectedMethod, bill);
+                    dynamicFormFields.innerHTML = formHTML;
+                    dynamicFormFields.style.display = 'block';
+                    
+                    // Setup file upload handlers
+                    setTimeout(() => {
+                        PaymentFormManager.setupFileUploadHandlers();
+                    }, 0);
+                });
+            });
             
         } catch (error) {
             console.error('Error showing payment modal:', error);
             this.showNotification('Failed to load payment form', 'error');
         }
     }
+
+    async processPaymentSubmit(billId, bill, modal) {
+        try {
+            // Get selected payment method
+            const selectedMethodCard = modal.querySelector('.payment-method-card.selected');
+            if (!selectedMethodCard) {
+                this.showErrorInModal('Please select a payment method', modal);
+                return;
+            }
+
+            const paymentMethod = selectedMethodCard.getAttribute('data-method-id');
+
+            // Validate form
+            const validation = PaymentFormManager.validatePaymentForm(paymentMethod);
+            if (!validation.isValid) {
+                this.showErrorInModal(validation.errors[0], modal);
+                return;
+            }
+
+            // Get form data
+            const formData = PaymentFormManager.getFormData(paymentMethod, bill);
+
+            // Show loading state
+            const submitBtn = modal.querySelector('.modal-footer .btn-primary');
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+
+            // Upload photo evidence if needed
+            if (formData.photoEvidence) {
+                const photoURL = await this.uploadPaymentEvidence(formData.photoEvidence);
+                formData.photoEvidenceURL = photoURL;
+                delete formData.photoEvidence; // Remove File object before saving to Firestore
+            }
+
+            // Save payment record
+            if (typeof DataManager !== 'undefined' && DataManager.recordPayment) {
+                await DataManager.recordPayment(formData);
+            } else if (typeof firebaseDb !== 'undefined') {
+                await firebaseDb.collection('payments').add({
+                    ...formData,
+                    photoEvidenceURL: formData.photoEvidenceURL || null,
+                    processedAt: new Date().toISOString()
+                });
+            }
+
+            // Update bill status
+            try {
+                if (typeof firebaseDb !== 'undefined') {
+                    await firebaseDb.collection('bills').doc(billId).update({
+                        status: 'payment_pending',
+                        lastUpdated: new Date().toISOString(),
+                        pendingPaymentAmount: formData.amount,
+                        pendingPaymentDate: formData.paymentDate,
+                        isPaymentVerified: false
+                    });
+                }
+            } catch (e) {
+                console.warn('Could not update bill status:', e);
+            }
+
+            // Show success message
+            this.showNotification('Payment submitted successfully! Your landlord will verify it shortly.', 'success');
+
+            // Close modal
+            ModalManager.closeModal(modal);
+
+            // Refresh bills
+            if (window.billingController) {
+                await window.billingController.loadBills();
+                await window.billingController.updateStats();
+            }
+
+        } catch (error) {
+            console.error('Error processing payment:', error);
+            this.showErrorInModal('Failed to submit payment. Please try again.', modal);
+            
+            // Reset button state
+            const submitBtn = modal.querySelector('.modal-footer .btn-primary');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = 'Record Payment';
+        }
+    }
+
+    showErrorInModal(errorMessage, modal) {
+        const errorDiv = modal.querySelector('.payment-form-error');
+        const errorText = modal.querySelector('#errorMessage');
+        if (errorDiv && errorText) {
+            errorText.textContent = errorMessage;
+            errorDiv.classList.add('show');
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                errorDiv.classList.remove('show');
+            }, 5000);
+        }
+    }
+
+    async uploadPaymentEvidence(file) {
+        try {
+            // Generate a unique filename
+            const timestamp = Date.now();
+            const fileName = `payment-evidence-${timestamp}-${file.name}`;
+            
+            // For now, we'll store this in localStorage or Firebase Storage
+            // This is a basic implementation - you may want to use Firebase Storage
+            const reader = new FileReader();
+            
+            return new Promise((resolve, reject) => {
+                reader.onload = async (e) => {
+                    try {
+                        // Store in IndexedDB or Firebase Storage
+                        // For now, returndataURL for demo purposes
+                        // In production, upload to Firebase Storage
+                        resolve(e.target.result);
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                reader.onerror = () => reject(new Error('Failed to read file'));
+                reader.readAsDataURL(file);
+            });
+        } catch (error) {
+            console.error('Error uploading payment evidence:', error);
+            throw error;
+        }
+    }
+
 
     setupBillRowStyles() {
         // Use MutationObserver to watch for bill rows being added to the DOM
@@ -19651,7 +19920,7 @@ class CasaLink {
     }
 
     async showTenantPaymentModal(billId) {
-            try {
+        try {
             const billDoc = await firebaseDb.collection('bills').doc(billId).get();
             if (!billDoc.exists) {
                 this.showNotification('Bill not found', 'error');
@@ -19659,131 +19928,79 @@ class CasaLink {
             }
             
             const bill = { id: billDoc.id, ...billDoc.data() };
-            const paymentMethods = await DataManager.getPaymentMethods();
-            
-            const paymentMethodsHTML = paymentMethods.map(method => `
-                <div class="payment-method-option" data-method="${method.id}">
-                    <i class="${method.icon}"></i>
-                    <span>${method.name}</span>
+
+            // Build bill details section
+            const billDetailsHTML = `
+                <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #162660;">
+                    <h4 style="margin: 0 0 12px 0; color: #162660; display: flex; align-items: center; gap: 8px;">
+                        <i class="fas fa-receipt"></i> Bill Details
+                    </h4>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+                        <div><strong>Amount Due:</strong><br><span style="color: #162660; font-weight: 700; font-size: 14px;">₱${(bill.totalAmount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})}</span></div>
+                        <div><strong>Due Date:</strong><br>${new Date(bill.dueDate).toLocaleDateString('en-PH', {year: 'numeric', month: 'short', day: 'numeric'})}</div>
+                        <div><strong>Room:</strong><br>${bill.roomNumber || 'N/A'}</div>
+                        <div><strong>Description:</strong><br>${bill.description || 'Monthly Rent'}</div>
+                    </div>
                 </div>
-            `).join('');
-            
-            const modalContent = `
-                <div class="payment-modal">
-                    <div class="payment-header" style="text-align: center; margin-bottom: 20px;">
-                        <i class="fas fa-credit-card" style="font-size: 3rem; color: var(--success); margin-bottom: 15px;"></i>
-                        <h3 style="margin-bottom: 10px;">Record Payment</h3>
-                        <p>Record payment for <strong>${bill.tenantName}</strong></p>
+            `;
+
+            // Create modal content with payment method selector
+            let modalContent = `
+                <div class="payment-form-container">
+                    ${billDetailsHTML}
+                    
+                    <div class="payment-form-section">
+                        <div class="payment-form-section-title">
+                            <i class="fas fa-credit-card"></i>
+                            Payment Method Selection
+                        </div>
+                        ${PaymentFormManager.generatePaymentMethodSelector()}
                     </div>
                     
-                    <!-- Bill Details Section -->
-                    <div class="bill-details-section" style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                        <h4 style="margin: 0 0 10px 0; color: var(--royal-blue);">Bill Details</h4>
-                        <div class="bill-details-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                            <div class="bill-detail-item">
-                                <span class="label"><strong>Amount Due:</strong></span>
-                                <span class="value">₱${(bill.totalAmount || 0).toLocaleString()}</span>
-                            </div>
-                            <div class="bill-detail-item">
-                                <span class="label"><strong>Due Date:</strong></span>
-                                <span class="value">${new Date(bill.dueDate).toLocaleDateString()}</span>
-                            </div>
-                            <div class="bill-detail-item">
-                                <span class="label"><strong>Room:</strong></span>
-                                <span class="value">${bill.roomNumber || 'N/A'}</span>
-                            </div>
-                            <div class="bill-detail-item">
-                                <span class="label"><strong>Description:</strong></span>
-                                <span class="value">${bill.description || 'Monthly Rent'}</span>
-                            </div>
-                        </div>
+                    <div id="dynamicFormFields" style="display: none;">
+                        <!-- Dynamic form fields will be inserted here -->
                     </div>
                     
-                    <!-- Payment Form -->
-                    <form id="paymentForm">
-                        <!-- Payment Method -->
-                        <div class="form-group">
-                            <label class="form-label">Payment Method *</label>
-                            <div class="payment-methods-grid">
-                                ${paymentMethodsHTML}
-                            </div>
-                            <input type="hidden" id="selectedPaymentMethod" required>
-                        </div>
-                        
-                        <!-- Reference Number (Conditional) -->
-                        <div class="form-group" id="referenceNumberGroup" style="display: none;">
-                            <label class="form-label">Reference Number *</label>
-                            <input type="text" id="paymentReference" class="form-input" 
-                                placeholder="Transaction ID, receipt number, etc.">
-                            <small class="field-note" style="color: #6c757d; font-size: 0.875rem;">
-                                Required for GCash, Maya, and Bank Transfer
-                            </small>
-                        </div>
-                        
-                        <!-- Payment Date -->
-                        <div class="form-group">
-                            <label class="form-label">Payment Date *</label>
-                            <input type="date" id="paymentDate" class="form-input" 
-                                value="${new Date().toISOString().split('T')[0]}" required>
-                        </div>
-                        
-                        <!-- Amount Paid -->
-                        <div class="form-group">
-                            <label class="form-label">Amount Paid *</label>
-                            <div style="position: relative;">
-                                <span style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: #666;">₱</span>
-                                <input type="number" id="paymentAmount" class="form-input" 
-                                    style="padding-left: 30px;"
-                                    value="${bill.totalAmount || 0}" 
-                                    step="0.01" min="0" required>
-                            </div>
-                            <small class="field-note" style="color: #6c757d; font-size: 0.875rem;">
-                                Enter the actual amount received
-                            </small>
-                        </div>
-                        
-                        <!-- Notes -->
-                        <div class="form-group">
-                            <label class="form-label">Notes (Optional)</label>
-                            <textarea id="paymentNotes" class="form-input" 
-                                    placeholder="Additional notes about this payment" 
-                                    rows="3"></textarea>
-                        </div>
-                        
-                        <!-- Payment Instructions -->
-                        <div class="payment-instructions" style="background: #e7f3ff; border-left: 4px solid #007bff; padding: 12px; border-radius: 4px; margin: 20px 0;">
-                            <p style="margin: 0 0 8px 0; font-weight: 600; color: #495057;">Payment Instructions:</p>
-                            <p style="margin: 0; font-size: 0.9rem; color: #495057;">
-                                Please note that payment submission is recorded. Your landlord will verify the payment and update the status accordingly.
-                            </p>
-                        </div>
-                    </form>
-                    
-                    <div id="paymentError" style="color: var(--danger); display: none; margin-bottom: 15px; padding: 10px; background: #f8d7da; border-radius: 4px;"></div>
+                    <div class="payment-form-error" id="paymentFormError">
+                        <i class="fas fa-exclamation-circle"></i>
+                        <span id="errorMessage"></span>
+                    </div>
                 </div>
             `;
             
             const modal = ModalManager.openModal(modalContent, {
                 title: 'Record Payment',
                 submitText: 'Record Payment',
-                onSubmit: () => this.processPayment(billId, bill)
+                width: '600px',
+                maxWidth: '100%',
+                onSubmit: () => this.processTenantPaymentSubmit(billId, bill, modal)
             });
             
-            this.setupPaymentMethodSelection();
+            // Setup payment method selector
+            const methodCards = modal.querySelectorAll('.payment-method-card');
+            let selectedMethod = null;
             
-            // Add event listener for payment method changes
-            const paymentMethodOptions = modal.querySelectorAll('.payment-method-option');
-            paymentMethodOptions.forEach(option => {
-                option.addEventListener('click', () => {
-                    this.toggleReferenceNumberField(option.dataset.method);
+            methodCards.forEach(card => {
+                card.addEventListener('click', () => {
+                    // Remove previous selection
+                    methodCards.forEach(c => c.classList.remove('selected'));
+                    
+                    // Select this card
+                    card.classList.add('selected');
+                    
+                    // Get selected method and render form
+                    selectedMethod = card.getAttribute('data-method-id');
+                    const dynamicFormFields = modal.querySelector('#dynamicFormFields');
+                    const formHTML = PaymentFormManager.generatePaymentFormFields(selectedMethod, bill);
+                    dynamicFormFields.innerHTML = formHTML;
+                    dynamicFormFields.style.display = 'block';
+                    
+                    // Setup file upload handlers
+                    setTimeout(() => {
+                        PaymentFormManager.setupFileUploadHandlers();
+                    }, 0);
                 });
             });
-            
-            // Initialize reference number field state
-            const selectedMethod = modal.querySelector('.payment-method-option.selected');
-            if (selectedMethod) {
-                this.toggleReferenceNumberField(selectedMethod.dataset.method);
-            }
             
         } catch (error) {
             console.error('Error showing payment modal:', error);
@@ -19791,78 +20008,86 @@ class CasaLink {
         }
     }
 
-    async processTenantPayment(billId, modal) {
-        console.log('💳 Processing tenant payment for bill:', billId);
-        
+    async processTenantPaymentSubmit(billId, bill, modal) {
         try {
-            const method = document.getElementById('paymentMethod').value;
-            const amount = parseFloat(document.getElementById('paymentAmount').value);
-            const reference = document.getElementById('paymentReference').value;
-            const notes = document.getElementById('paymentNotes').value;
-            
-            if (!method) {
-                alert('Please select a payment method');
+            // Get selected payment method
+            const selectedMethodCard = modal.querySelector('.payment-method-card.selected');
+            if (!selectedMethodCard) {
+                this.showErrorInModal('Please select a payment method', modal);
                 return;
             }
-            
-            if (!amount || amount <= 0) {
-                alert('Invalid payment amount');
+
+            const paymentMethod = selectedMethodCard.getAttribute('data-method-id');
+
+            // Validate form
+            const validation = PaymentFormManager.validatePaymentForm(paymentMethod);
+            if (!validation.isValid) {
+                this.showErrorInModal(validation.errors[0], modal);
                 return;
             }
-            
-            // Get bill details
-            const billDoc = await firebaseDb.collection('bills').doc(billId).get();
-            if (!billDoc.exists) {
-                throw new Error('Bill not found');
+
+            // Get form data
+            const formData = PaymentFormManager.getFormData(paymentMethod, bill);
+
+            // Show loading state
+            const submitBtn = modal.querySelector('.modal-footer .btn-primary');
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+
+            // Upload photo evidence if needed
+            if (formData.photoEvidence) {
+                const photoURL = await this.uploadPaymentEvidence(formData.photoEvidence);
+                formData.photoEvidenceURL = photoURL;
+                delete formData.photoEvidence; // Remove File object before saving to Firestore
             }
-            
-            const billData = billDoc.data();
-            
-            // Create payment record
-            const paymentData = {
-                billId: billId,
-                tenantId: this.currentUser.id,
-                tenantName: this.currentUser.name,
-                landlordId: billData.landlordId,
-                roomNumber: billData.roomNumber || 'N/A',
-                paymentMethod: method,
-                amount: amount,
-                reference: reference || null,
-                notes: notes || null,
-                paymentDate: new Date().toISOString(),
-                status: 'pending_verification',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-            
+
             // Save payment record
-            const paymentRef = await firebaseDb.collection('payments').add(paymentData);
-            console.log('✅ Payment record created:', paymentRef.id);
-            
-            // Update bill status to pending_payment (waiting for landlord verification)
-            await firebaseDb.collection('bills').doc(billId).update({
-                status: 'pending_verification',
-                paymentSubmittedAt: new Date().toISOString(),
-                paymentSubmittedBy: this.currentUser.id,
-                updatedAt: new Date().toISOString()
-            });
-            
-            console.log('✅ Bill status updated to pending_verification');
-            
-            // Close modal
-            ModalManager.closeModal(modal);
-            
+            if (typeof DataManager !== 'undefined' && DataManager.recordPayment) {
+                await DataManager.recordPayment(formData);
+            } else if (typeof firebaseDb !== 'undefined') {
+                await firebaseDb.collection('payments').add({
+                    ...formData,
+                    photoEvidenceURL: formData.photoEvidenceURL || null,
+                    processedAt: new Date().toISOString()
+                });
+            }
+
+            // Update bill status
+            try {
+                if (typeof firebaseDb !== 'undefined') {
+                    await firebaseDb.collection('bills').doc(billId).update({
+                        status: 'payment_pending',
+                        lastUpdated: new Date().toISOString(),
+                        pendingPaymentAmount: formData.amount,
+                        pendingPaymentDate: formData.paymentDate,
+                        isPaymentVerified: false
+                    });
+                }
+            } catch (e) {
+                console.warn('Could not update bill status:', e);
+            }
+
             // Show success message
             this.showNotification('Payment submitted successfully! Your landlord will verify it shortly.', 'success');
-            
-            // Refresh billing page
+
+            // Close modal
+            ModalManager.closeModal(modal);
+
+            // Refresh billing page with a slight delay for better UX
             setTimeout(() => {
+                // Reload the current tenant billing view
                 this.showPage('tenantBilling');
-            }, 1500);
-            
+            }, 1000);
+
         } catch (error) {
-            console.error('❌ Error processing payment:', error);
-            this.showNotification('Failed to submit payment: ' + error.message, 'error');
+            console.error('Error processing payment:', error);
+            this.showErrorInModal('Failed to submit payment. Please try again.', modal);
+            
+            // Reset button state
+            const submitBtn = modal.querySelector('.modal-footer .btn-primary');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = 'Record Payment';
         }
     }
 

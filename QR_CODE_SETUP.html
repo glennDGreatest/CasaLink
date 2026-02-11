@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CasaLink - QR Code Setup Helper</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            max-width: 900px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #162660;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #5f6368;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+        }
+        
+        .section h2 {
+            color: #162660;
+            font-size: 20px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .section h2 i {
+            font-size: 24px;
+        }
+        
+        .code-block {
+            background: #f5f5f5;
+            border-left: 4px solid #162660;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        
+        .steps {
+            list-style: none;
+            counter-reset: item;
+        }
+        
+        .steps li {
+            counter-increment: item;
+            margin-bottom: 20px;
+            padding-left: 40px;
+            position: relative;
+            line-height: 1.6;
+        }
+        
+        .steps li::before {
+            content: counter(item);
+            position: absolute;
+            left: 0;
+            top: 0;
+            background: #162660;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        
+        .qr-info {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 15px 0;
+        }
+        
+        .qr-info h3 {
+            color: #162660;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        
+        .qr-info p {
+            color: #5f6368;
+            margin-bottom: 10px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .qr-info ul {
+            margin-left: 20px;
+            color: #5f6368;
+            font-size: 14px;
+        }
+        
+        .qr-info li {
+            margin-bottom: 8px;
+        }
+        
+        .download-section {
+            background: #e7f5f0;
+            border: 2px dashed #34a853;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .download-section h3 {
+            color: #166534;
+            margin-bottom: 10px;
+        }
+        
+        .download-btn {
+            display: inline-block;
+            background: #34a853;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 5px;
+        }
+        
+        .download-btn:hover {
+            background: #1e8449;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(52, 168, 83, 0.3);
+        }
+        
+        .warning {
+            background: #fee2e2;
+            border-left: 4px solid #ea4335;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+            color: #991b1b;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .success {
+            background: #dcfce7;
+            border-left: 4px solid #34a853;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+            color: #166534;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .info {
+            background: #dbeafe;
+            border-left: 4px solid #1a73e8;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+            color: #0c2e6b;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .file-path {
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            display: inline-block;
+            margin: 5px 0;
+        }
+        
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 22px;
+            }
+            
+            .section h2 {
+                font-size: 18px;
+            }
+        }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <h1><i class="fas fa-qrcode" style="color: #162660;"></i> CasaLink - QR Code Setup Helper</h1>
+        <p class="subtitle">Complete guide to setting up payment method QR codes</p>
+
+        <!-- GCash Setup -->
+        <div class="section">
+            <h2><i class="fas fa-mobile-alt"></i> GCash QR Code Setup</h2>
+            
+            <div class="qr-info">
+                <h3>What you need:</h3>
+                <ul>
+                    <li>Your GCash merchant account</li>
+                    <li>Access to GCash Merchant Portal</li>
+                    <li>An image editor (optional, for converting formats)</li>
+                </ul>
+            </div>
+
+            <ol class="steps">
+                <li>
+                    <strong>Log in to GCash Merchant Portal</strong>
+                    <p>Visit the GCash Merchant Portal and sign in with your account</p>
+                </li>
+                <li>
+                    <strong>Generate your QR Code</strong>
+                    <p>Navigate to the QR Code generation section and create a new QR code for your business account</p>
+                </li>
+                <li>
+                    <strong>Download the QR Code</strong>
+                    <p>Download the QR code image. Try to get it in PNG or JPG format</p>
+                </li>
+                <li>
+                    <strong>Optimize the image (optional)</strong>
+                    <p>If needed, use an image editor to:</p>
+                    <ul style="margin-left: 40px; margin-top: 10px;">
+                        <li>Resize to 200x200px or 400x400px</li>
+                        <li>Convert to PNG format if it's not already</li>
+                        <li>Ensure file size is reasonable (< 500KB)</li>
+                    </ul>
+                </li>
+                <li>
+                    <strong>Place the file in the correct location</strong>
+                    <p>Save the file as:</p>
+                    <div class="file-path">icons/payments/gcash.png</div>
+                </li>
+            </ol>
+
+            <div class="success">
+                <i class="fas fa-check-circle"></i> Once you've placed the GCash QR code, it will automatically display when users select GCash as their payment method
+            </div>
+        </div>
+
+        <!-- Maya Setup -->
+        <div class="section">
+            <h2><i class="fas fa-wallet"></i> Maya QR Code Setup</h2>
+            
+            <div class="qr-info">
+                <h3>What you need:</h3>
+                <ul>
+                    <li>Your Maya merchant account</li>
+                    <li>Access to Maya Merchant Portal</li>
+                    <li>An image editor (optional, for converting formats)</li>
+                </ul>
+            </div>
+
+            <ol class="steps">
+                <li>
+                    <strong>Log in to Maya Merchant Portal</strong>
+                    <p>Visit the Maya Merchant Portal and sign in with your account credentials</p>
+                </li>
+                <li>
+                    <strong>Generate your QR Code</strong>
+                    <p>Navigate to the QR Code or Payment Methods section and generate a new QR code</p>
+                </li>
+                <li>
+                    <strong>Download the QR Code</strong>
+                    <p>Download the QR code image in PNG or JPG format</p>
+                </li>
+                <li>
+                    <strong>Optimize the image (optional)</strong>
+                    <p>If needed, use an image editor to:</p>
+                    <ul style="margin-left: 40px; margin-top: 10px;">
+                        <li>Resize to 200x200px or 400x400px</li>
+                        <li>Convert to PNG format if needed</li>
+                        <li>Ensure file size is reasonable (< 500KB)</li>
+                    </ul>
+                </li>
+                <li>
+                    <strong>Place the file in the correct location</strong>
+                    <p>Save the file as:</p>
+                    <div class="file-path">icons/payments/maya.png</div>
+                </li>
+            </ol>
+
+            <div class="success">
+                <i class="fas fa-check-circle"></i> Once you've placed the Maya QR code, it will automatically display when users select Maya as their payment method
+            </div>
+        </div>
+
+        <!-- File Structure -->
+        <div class="section">
+            <h2><i class="fas fa-folder-tree"></i> Required File Structure</h2>
+            
+            <p>After setup, your file structure should look like this:</p>
+            
+            <div class="code-block">
+icons/
+├── payments/
+│   ├── gcash.png
+│   └── maya.png
+├── icon-72x72.png
+├── icon-96x96.png
+└── [other icon files]
+            </div>
+
+            <div class="info">
+                <i class="fas fa-info-circle"></i> The <span class="file-path">icons/payments/</span> directory has been created automatically. Just add your QR code images there.
+            </div>
+        </div>
+
+        <!-- Testing -->
+        <div class="section">
+            <h2><i class="fas fa-flask"></i> Testing Your Setup</h2>
+            
+            <ol class="steps">
+                <li>
+                    <strong>Access the Billing & Payments section</strong>
+                    <p>Log in to CasaLink and navigate to Billing & Payments</p>
+                </li>
+                <li>
+                    <strong>Click "Record Payment" on any bill</strong>
+                    <p>The payment modal will open with payment method options</p>
+                </li>
+                <li>
+                    <strong>Select GCash or Maya</strong>
+                    <p>Your QR code should display correctly in the form</p>
+                </li>
+                <li>
+                    <strong>Verify the QR code is visible</strong>
+                    <p>If the image doesn't appear:</p>
+                    <ul style="margin-left: 40px; margin-top: 10px;">
+                        <li>Clear your browser cache (Ctrl+Shift+Del)</li>
+                        <li>Check the browser console for errors (F12)</li>
+                        <li>Verify files are in the correct location</li>
+                    </ul>
+                </li>
+            </ol>
+
+            <div class="success">
+                <i class="fas fa-check-circle"></i> If the QR codes display correctly, your setup is complete!
+            </div>
+        </div>
+
+        <!-- Troubleshooting -->
+        <div class="section">
+            <h2><i class="fas fa-wrench"></i> Troubleshooting</h2>
+            
+            <div class="warning">
+                <strong>Issue:</strong> QR code images not showing?
+                <ul style="margin-top: 10px; margin-left: 20px;">
+                    <li>Verify files exist at <span class="file-path">icons/payments/gcash.png</span> and <span class="file-path">icons/payments/maya.png</span></li>
+                    <li>Clear browser cache: Ctrl+Shift+Del (Windows) or Cmd+Shift+Del (Mac)</li>
+                    <li>Check File names - must be exactly <code>gcash.png</code> and <code>maya.png</code> (lowercase)</li>
+                    <li>Open browser console (F12) and look for 404 errors</li>
+                </ul>
+            </div>
+
+            <div class="warning">
+                <strong>Issue:</strong> Image is displaying but looks wrong?
+                <ul style="margin-top: 10px; margin-left: 20px;">
+                    <li>Ensure image is actually a QR code (valid PNG/JPG file)</li>
+                    <li>Verify image dimensions are at least 150x150px</li>
+                    <li>Try converting to PNG format using an image editor</li>
+                    <li>Ensure file size is less than 500KB</li>
+                </ul>
+            </div>
+
+            <div class="info">
+                <strong>Pro Tip:</strong> You can find and use online QR code generators if your payment provider doesn't give you a downloadable QR code. Just search "QR code generator" online.
+            </div>
+        </div>
+
+        <!-- Next Steps -->
+        <div class="section">
+            <h2><i class="fas fa-arrow-right"></i> Next Steps</h2>
+            
+            <div class="qr-info">
+                <h3>After QR codes are set up:</h3>
+                <ul>
+                    <li>Update Bank Transfer details (Account Number & Name) in the payment form</li>
+                    <li>Test the complete payment recording flow</li>
+                    <li>Communicate to tenants about available payment methods</li>
+                    <li>Monitor payment submissions for verification</li>
+                    <li>Consider adding additional payment methods as needed</li>
+                </ul>
+            </div>
+
+            <div class="success">
+                <strong><i class="fas fa-rocket"></i> Your payment form system is now ready to use!</strong>
+            </div>
+        </div>
+
+        <!-- Quick Reference -->
+        <div class="section">
+            <h2><i class="fas fa-bookmark"></i> Quick Reference</h2>
+            
+            <div class="qr-info">
+                <h3>Payment Methods Available:</h3>
+                <ul>
+                    <li><strong>Cash:</strong> For direct cash payments. Shows instructions and photo evidence field.</li>
+                    <li><strong>GCash:</strong> Displays QR code from <span class="file-path">icons/payments/gcash.png</span></li>
+                    <li><strong>Maya:</strong> Displays QR code from <span class="file-path">icons/payments/maya.png</span></li>
+                    <li><strong>Bank Transfer:</strong> Shows bank account details (can be customized in paymentFormManager.js)</li>
+                </ul>
+            </div>
+
+            <div class="qr-info">
+                <h3>All Payment Methods Include:</h3>
+                <ul>
+                    <li>Specific instructions for that method</li>
+                    <li>Payment Date (auto-filled with today's date)</li>
+                    <li>Amount Paid field</li>
+                    <li>Photo Evidence upload (required, JPG/PNG, max 5MB)</li>
+                    <li>Optional notes field</li>
+                </ul>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

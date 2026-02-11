@@ -724,7 +724,7 @@
                             <button class="btn-action view-btn" title="View" aria-label="View bill">
                                 <i class="fas fa-eye"></i> View
                             </button>
-                            ${bill.status !== 'paid' ? '<button class="btn-action primary pay-btn" title="Mark Paid"><i class="fas fa-check"></i> Pay</button>' : '<button class="btn-action" disabled><i class="fas fa-check-circle"></i> Paid</button>'}
+                            ${bill.status !== 'paid' ? '<button class="btn-action primary verify-btn" title="Verify Payment"><i class="fas fa-check"></i> Verify</button>' : '<button class="btn-action" disabled><i class="fas fa-check-circle"></i> Paid</button>'}
                         </td>
                     </tr>
                 `;
@@ -742,9 +742,9 @@
                     }
                 });
 
-                row.querySelector('.pay-btn')?.addEventListener('click', () => {
-                    if (window.billingController) {
-                        window.billingController.markBillPaid(billId);
+                row.querySelector('.verify-btn')?.addEventListener('click', () => {
+                    if (window.casaLink) {
+                        window.casaLink.verifyPaymentForBill(billId);
                     }
                 });
             });
