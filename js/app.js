@@ -10690,10 +10690,12 @@ class CasaLink {
             return;
         }
         
-        paymentsList.innerHTML = this.renderPaymentsTable(payments);
-        this.updatePaymentsPaginationInfo();
-        
-        setTimeout(() => this.setupPaymentRowStyles(), 100);
+        // Enrich payments with apartment information before rendering
+        this.enrichPaymentsWithApartment(payments).then(enrichedPayments => {
+            paymentsList.innerHTML = this.renderPaymentsTable(enrichedPayments);
+            this.updatePaymentsPaginationInfo();
+            setTimeout(() => this.setupPaymentRowStyles(), 100);
+        });
     }
 
     updatePaymentsPaginationInfo() {
@@ -10705,6 +10707,45 @@ class CasaLink {
         }
     }
 
+    async enrichPaymentsWithApartment(payments) {
+        try {
+            const enrichedPayments = await Promise.all(
+                payments.map(async (payment) => {
+                    // If apartment field already exists, return as-is
+                    if (payment.apartment && payment.apartment !== 'N/A') {
+                        return payment;
+                    }
+                    
+                    // Try to fetch from lease
+                    try {
+                        const leaseQuery = await firebaseDb.collection('leases')
+                            .where('tenantId', '==', payment.tenantId)
+                            .where('isActive', '==', true)
+                            .limit(1)
+                            .get();
+                        
+                        if (!leaseQuery.empty) {
+                            const leaseData = leaseQuery.docs[0].data();
+                            payment.apartment = leaseData.rentalAddress || 'N/A';
+                        } else {
+                            payment.apartment = 'N/A';
+                        }
+                    } catch (error) {
+                        console.warn(`Could not fetch apartment for payment ${payment.id}:`, error);
+                        payment.apartment = 'N/A';
+                    }
+                    
+                    return payment;
+                })
+            );
+            
+            return enrichedPayments;
+        } catch (error) {
+            console.error('Error enriching payments with apartment:', error);
+            return payments;
+        }
+    }
+
     renderPaymentsTable(payments) {
         return `
             <div class="table-container">
@@ -10713,6 +10754,7 @@ class CasaLink {
                         <tr>
                             <th>Tenant</th>
                             <th>Room</th>
+                            <th>Apartment</th>
                             <th>Amount</th>
                             <th>Method</th>
                             <th>Date</th>
@@ -10733,6 +10775,11 @@ class CasaLink {
                                         </div>
                                     </td>
                                     <td>${payment.roomNumber || 'N/A'}</td>
+                                    <td>
+                                        <div style="font-weight: 500; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${payment.apartment || 'N/A'}">
+                                            ${payment.apartment || 'N/A'}
+                                        </div>
+                                    </td>
                                     <td style="font-weight: 600; color: var(--success);">
                                         ₱${(payment.amount || 0).toLocaleString()}
                                     </td>
@@ -15314,7 +15361,9 @@ class CasaLink {
         
         // Fetch tenant occupations for all bills
         const billsWithOccupations = await this.enrichBillsWithOccupations(bills);
-        billsList.innerHTML = this.renderBillsTable(billsWithOccupations);
+        // Enrich with apartment information
+        const billsWithApartments = await this.enrichBillsWithApartment(billsWithOccupations);
+        billsList.innerHTML = this.renderBillsTable(billsWithApartments);
     }
 
     async enrichBillsWithOccupations(bills) {
@@ -15606,6 +15655,45 @@ class CasaLink {
         }
     }
 
+    async enrichBillsWithApartment(bills) {
+        try {
+            const enrichedBills = await Promise.all(
+                bills.map(async (bill) => {
+                    // If apartment field already exists, return as-is
+                    if (bill.apartment && bill.apartment !== 'N/A') {
+                        return bill;
+                    }
+                    
+                    // Try to fetch from lease
+                    try {
+                        const leaseQuery = await firebaseDb.collection('leases')
+                            .where('tenantId', '==', bill.tenantId)
+                            .where('isActive', '==', true)
+                            .limit(1)
+                            .get();
+                        
+                        if (!leaseQuery.empty) {
+                            const leaseData = leaseQuery.docs[0].data();
+                            bill.apartment = leaseData.rentalAddress || 'N/A';
+                        } else {
+                            bill.apartment = 'N/A';
+                        }
+                    } catch (error) {
+                        console.warn(`Could not fetch apartment for bill ${bill.id}:`, error);
+                        bill.apartment = 'N/A';
+                    }
+                    
+                    return bill;
+                })
+            );
+            
+            return enrichedBills;
+        } catch (error) {
+            console.error('Error enriching bills with apartment:', error);
+            return bills;
+        }
+    }
+
     renderBillsTable(bills) {
         return `
             <div class="table-container">
@@ -15614,6 +15702,7 @@ class CasaLink {
                         <tr>
                             <th>Tenant</th>
                             <th>Room</th>
+                            <th>Apartment</th>
                             <th>Description</th>
                             <th>Amount</th>
                             <th>Due Date</th>
@@ -15646,6 +15735,11 @@ class CasaLink {
                                         </div>
                                     </td>
                                     <td>${bill.roomNumber || 'N/A'}</td>
+                                    <td>
+                                        <div style="font-weight: 500; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${bill.apartment || 'N/A'}">
+                                            ${bill.apartment || 'N/A'}
+                                        </div>
+                                    </td>
                                     <td>
                                         <div style="font-weight: 500;">${bill.description || 'Monthly Rent'}</div>
                                         <small style="color: var(--dark-gray);">
@@ -15823,6 +15917,44 @@ class CasaLink {
         }
     }
 
+    async cleanupDuplicateBills() {
+        try {
+            console.log('🧹 Starting duplicate bill cleanup...');
+            
+            const confirmDelete = confirm(
+                '⚠️ This will remove duplicate bills (keeping only the oldest copy).\n\n' +
+                'Do you want to proceed?'
+            );
+            
+            if (!confirmDelete) {
+                console.log('Cleanup cancelled by user');
+                return;
+            }
+            
+            const result = await DataManager.removeDuplicateBills();
+            
+            console.log('✅ Cleanup result:', result);
+            
+            if (result.duplicatesFound > 0) {
+                this.showNotification(
+                    `Successfully removed ${result.duplicatesFound} duplicate bills!`, 
+                    'success'
+                );
+                
+                // Refresh bills data after cleanup
+                setTimeout(() => {
+                    this.loadBillsData();
+                }, 1000);
+            } else {
+                this.showNotification('No duplicate bills found - data is clean!', 'info');
+            }
+            
+        } catch (error) {
+            console.error('❌ Failed to cleanup duplicate bills:', error);
+            this.showNotification('Failed to cleanup bills: ' + error.message, 'error');
+        }
+    }
+
     async processPayment(billId, bill) {
         const paymentMethod = document.getElementById('selectedPaymentMethod')?.value;
         const referenceNumber = document.getElementById('paymentReference')?.value;
@@ -15879,6 +16011,7 @@ class CasaLink {
                 landlordId: bill.landlordId || userId || null,
                 tenantName: bill.tenantName || '',
                 roomNumber: bill.roomNumber || '',
+                apartment: bill.apartment || 'N/A',
                 amount: paymentAmount,
                 paymentMethod: paymentMethod,
                 referenceNumber: referenceNumber?.trim() || '',
@@ -16477,8 +16610,11 @@ class CasaLink {
             return;
         }
         
-        billsList.innerHTML = this.renderBillsTable(bills);
-        this.updateBillsPaginationInfo();
+        // Enrich bills with apartment information before rendering
+        this.enrichBillsWithApartment(bills).then(enrichedBills => {
+            billsList.innerHTML = this.renderBillsTable(enrichedBills);
+            this.updateBillsPaginationInfo();
+        });
     }
 
     updateBillsPaginationInfo() {
