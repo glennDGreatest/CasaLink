@@ -1562,6 +1562,7 @@ header {
     padding: 0 25px;
     flex-wrap: wrap;
     align-items: center;
+    justify-content: flex-end;
 }
 
 .quick-actions-bar .btn {
@@ -1591,6 +1592,33 @@ header {
 
 .filter-controls .form-input {
     min-width: 150px;
+}
+
+.reset-filters-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #475569;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.reset-filters-button:hover {
+    background: #f1f5f9;
+    border-color: #94a3b8;
+    color: #334155;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.reset-filters-button:active {
+    background: #e2e8f0;
+    border-color: #78909c;
 }
 
 /* ===== RECENT ACTIVITIES STYLES ===== */
@@ -1889,6 +1917,30 @@ header {
     font-size: 0.9rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+}
+
+.recent-activity-container {
+    min-height: 360px;
+    display: flex;
+    flex-direction: column;
+}
+
+.recent-activity-header {
+    padding: 20px 25px;
+    border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+
+.recent-activity-header h3 {
+    margin: 0;
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+.recent-activity-list {
+    flex: 1 1 auto;
+    overflow: auto;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -3677,6 +3729,11 @@ textarea:focus-visible {
     .filter-controls .form-input {
         min-width: 120px;
         flex: 1;
+    }
+    
+    .reset-filters-button {
+        width: 100%;
+        justify-content: center;
     }
     
     .quick-filter-buttons {

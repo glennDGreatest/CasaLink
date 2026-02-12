@@ -1321,16 +1321,19 @@ class DataManager {
                 
             } else {
                 // Tenant-specific stats (keep existing tenant logic)
-                const [bills, maintenance, lease] = await Promise.all([
+                let [bills, maintenance, lease] = await Promise.all([
                     this.getTenantBills(userId),
                     this.getTenantMaintenanceRequests(userId),
                     this.getTenantLease(userId)
                 ]);
 
+                // NOTE: Do NOT auto-generate bills on tenant dashboard access.
+                // Bill generation should only occur when the landlord triggers it
+                // via the "Generate Monthly Bills" control. To ensure tenant
+                // sees the latest data without creating new bills here, refresh
+                // the bills list once if lease is active.
                 if (lease && lease.isActive) {
-                    await this.generateMonthlyBillsForTenant(userId, lease);
-                    const updatedBills = await this.getTenantBills(userId);
-                    // Use updatedBills for calculations...
+                    bills = await this.getTenantBills(userId);
                 }
 
                 const unpaidBills = bills.filter(bill => bill.status === 'pending');
@@ -2308,7 +2311,40 @@ class DataManager {
     }
 
     static async deleteBill(billId) {
-        await firebaseDb.doc(`bills/${billId}`).delete();
+        try {
+            if (!billId) throw new Error('billId is required');
+            const docRef = firebaseDb.doc(`bills/${billId}`);
+            const doc = await docRef.get();
+            if (!doc.exists) {
+                console.warn('❗ Attempted to delete non-existing bill:', billId);
+                return { deleted: false, reason: 'not_found' };
+            }
+            const docData = doc.data();
+            await docRef.delete();
+            console.log('✅ Deleted bill:', billId);
+
+            // Log activity for landlord if available
+            try {
+                const landlordId = docData && docData.landlordId ? docData.landlordId : null;
+                if (landlordId) {
+                    await this.logActivity(landlordId, {
+                        type: 'bill_deleted',
+                        title: 'Bill deleted',
+                        description: `Bill ${doc.id} deleted (${docData?.description || docData?.billNumber || ''})`,
+                        icon: 'fas fa-trash',
+                        color: 'var(--danger)',
+                        data: { billId: doc.id, tenantId: docData?.tenantId, amount: docData?.totalAmount }
+                    });
+                }
+            } catch (e) {
+                console.warn('Failed to log activity for deleted bill:', e);
+            }
+
+            return { deleted: true };
+        } catch (error) {
+            console.error('❌ Error deleting bill:', error);
+            throw error;
+        }
     }
 
     static async updateMaintenance(requestId, updates) {

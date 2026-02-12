@@ -15,7 +15,7 @@ class CasaLink {
         this.currentPage = this.getStoredPage() || 'dashboard';
         this.appInitialized = false;
         this.billsCurrentPage = 1;
-        this.billsItemsPerPage = 10;
+        this.billsItemsPerPage = 5;
         this.billsTotalPages = 1;
         this.billsAllData = [];
         this.billsFilteredData = [];
@@ -32,7 +32,7 @@ class CasaLink {
         this.setupCacheBusting();
 
         this.activitiesCurrentPage = 1;
-        this.activitiesItemsPerPage = 10;
+        this.activitiesItemsPerPage = 5;
         this.activitiesTotalPages = 1;
         this.activitiesAllData = [];
         this.activitiesFilteredData = [];
@@ -1263,11 +1263,23 @@ class CasaLink {
 
             // 🌟 Billing Page Cards
             else if (cardType === 'pending-bills') {
-                this.filterBills('pending');
+                const billStatusFilter = document.getElementById('billStatusFilter');
+                if (billStatusFilter) {
+                    billStatusFilter.value = 'pending';
+                    this.applyBillFilters();
+                }
             } else if (cardType === 'overdue-bills') {
-                this.filterBills('overdue');
+                const billStatusFilter = document.getElementById('billStatusFilter');
+                if (billStatusFilter) {
+                    billStatusFilter.value = 'overdue';
+                    this.applyBillFilters();
+                }
             } else if (cardType === 'all-bills') {
-                this.filterBills('all');
+                const billStatusFilter = document.getElementById('billStatusFilter');
+                if (billStatusFilter) {
+                    billStatusFilter.value = '';
+                    this.applyBillFilters();
+                }
             }
 
             return false;
@@ -6065,9 +6077,6 @@ class CasaLink {
                 <div class="recent-activity-container">
                     <div class="recent-activity-header">
                         <h3>Recent Activities</h3>
-                        <div class="activities-pagination-info" id="activitiesPaginationInfo">
-                            Showing 0–0 of 0 activities
-                        </div>
                     </div>
 
 
@@ -6079,7 +6088,8 @@ class CasaLink {
 
 
                     <!-- Pagination Controls -->
-                    <div class="pagination-container" id="activitiesPagination" style="display: none; margin-top: 20px;">
+                    <div class="pagination-container" id="activitiesPagination" style="display: none; margin-top: auto;">
+                        <div class="pagination-info" id="activitiesPaginationInfo"></div>
                         <div class="pagination-controls">
                             <button class="btn btn-sm btn-secondary" id="activitiesPrevPage">
                                 <i class="fas fa-chevron-left"></i> Previous
@@ -10407,11 +10417,24 @@ class CasaLink {
             
             // Setup bills search and filters
             document.getElementById('billSearch')?.addEventListener('input', (e) => {
-                this.searchBills(e.target.value);
+                this.applyBillFilters();
             });
             
             document.getElementById('billStatusFilter')?.addEventListener('change', (e) => {
-                this.filterBills(e.target.value);
+                this.applyBillFilters();
+            });
+
+            document.getElementById('billApartmentFilter')?.addEventListener('change', (e) => {
+                this.applyBillFilters();
+            });
+
+            document.getElementById('billPaymentVerificationFilter')?.addEventListener('change', (e) => {
+                this.applyBillFilters();
+            });
+            
+            // Setup reset filters button
+            document.getElementById('resetBillFilters')?.addEventListener('click', () => {
+                this.resetBillFilters();
             });
             
             // Setup payments search and filters
@@ -10423,8 +10446,8 @@ class CasaLink {
                 this.filterPaymentsByMethod(e.target.value);
             });
             
-            document.getElementById('paymentDateFilter')?.addEventListener('change', (e) => {
-                this.filterPaymentsByDate(e.target.value);
+            document.getElementById('paymentStatusFilter')?.addEventListener('change', (e) => {
+                this.filterPaymentsByStatus(e.target.value);
             });
             
             // Setup row click handlers
@@ -10798,9 +10821,6 @@ class CasaLink {
                                             <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.showPaymentDetailsModal('${payment.id}')">
                                                 <i class="fas fa-eye"></i>
                                             </button>
-                                            <button class="btn btn-sm btn-warning" onclick="event.stopPropagation(); casaLink.showRefundModal('${payment.id}')">
-                                                <i class="fas fa-undo"></i>
-                                            </button>
                                         </div>
                                     </td>
                                 </tr>
@@ -10810,6 +10830,40 @@ class CasaLink {
                 </table>
             </div>
         `;
+    }
+
+    filterBills(timeRange) {
+        const rows = document.querySelectorAll('#billsList tbody tr');
+        const today = new Date();
+        
+        rows.forEach(row => {
+            // For bills table, the due date is in column 5 (0-indexed: 4)
+            const dateCell = row.querySelector('td:nth-child(5)');
+            if (!dateCell) {
+                row.style.display = 'none';
+                return;
+            }
+            
+            const billDate = new Date(dateCell.textContent);
+            
+            switch(timeRange) {
+                case 'today':
+                    row.style.display = billDate.toDateString() === today.toDateString() ? '' : 'none';
+                    break;
+                case 'week':
+                    const weekAgo = new Date(today);
+                    weekAgo.setDate(weekAgo.getDate() - 7);
+                    row.style.display = billDate >= weekAgo ? '' : 'none';
+                    break;
+                case 'month':
+                    const monthAgo = new Date(today);
+                    monthAgo.setMonth(monthAgo.getMonth() - 1);
+                    row.style.display = billDate >= monthAgo ? '' : 'none';
+                    break;
+                default:
+                    row.style.display = '';
+            }
+        });
     }
 
     filterPayments(timeRange) {
@@ -10863,24 +10917,30 @@ class CasaLink {
         this.setupPaymentsPagination();
     }
 
-    filterPaymentsByStatus(status) {
-        const rows = document.querySelectorAll('#paymentsList tbody tr');
-        rows.forEach(row => {
-            if (status === 'all') {
-                row.style.display = '';
-                return;
-            }
-            
-            const statusBadge = row.querySelector('.status-badge');
-            if (statusBadge) {
-                const paymentStatus = statusBadge.textContent.toLowerCase();
-                if (paymentStatus.includes(status.toLowerCase())) {
-                    row.style.display = '';
-                } else {
-                    row.style.display = 'none';
+    filterPaymentsByStatus(statusFilter) {
+        if (statusFilter === 'all') {
+            this.paymentsFilteredData = [...this.paymentsAllData];
+        } else {
+            this.paymentsFilteredData = this.paymentsAllData.filter(payment => {
+                const paymentStatus = (payment.status || '').toLowerCase();
+                
+                switch(statusFilter.toLowerCase()) {
+                    case 'pending':
+                        return paymentStatus === 'waiting_verification' || paymentStatus === 'pending_verification';
+                    case 'completed':
+                        return paymentStatus === 'completed' || paymentStatus === 'verified';
+                    case 'refunded':
+                        return paymentStatus === 'refunded' || paymentStatus === 'rejected';
+                    default:
+                        return false;
                 }
-            }
-        });
+            });
+        }
+        
+        this.paymentsCurrentPage = 1;
+        this.paymentsTotalPages = Math.ceil(this.paymentsFilteredData.length / this.paymentsItemsPerPage);
+        this.updatePaymentsTable(this.getCurrentPaymentsPage());
+        this.setupPaymentsPagination();
     }
 
     filterPaymentsByMethod(method) {
@@ -13685,42 +13745,139 @@ class CasaLink {
 
 
     searchBills(searchTerm) {
-        if (!searchTerm) {
-            this.billsFilteredData = [...this.billsAllData];
-        } else {
-            const searchLower = searchTerm.toLowerCase();
-            this.billsFilteredData = this.billsAllData.filter(bill => 
-                bill.tenantName?.toLowerCase().includes(searchLower) ||
-                bill.roomNumber?.toLowerCase().includes(searchLower) ||
-                bill.description?.toLowerCase().includes(searchLower) ||
-                bill.type?.toLowerCase().includes(searchLower)
-            );
-        }
+        // Now delegated to applyBillFilters for unified filtering
+        this.applyBillFilters();
+    }
+
+    /**
+     * Unified filtering method for bills
+     * Applies all active filters: search, status, apartment, and payment verification
+     */
+    applyBillFilters() {
+        // Get filter values
+        const searchTerm = document.getElementById('billSearch')?.value.toLowerCase() || '';
+        const statusFilter = document.getElementById('billStatusFilter')?.value || '';
+        const apartmentFilter = document.getElementById('billApartmentFilter')?.value || '';
+        const paymentVerificationFilter = document.getElementById('billPaymentVerificationFilter')?.value || '';
         
+        // Apply all filters
+        this.billsFilteredData = this.billsAllData.filter(bill => {
+            // Search filter - searches across tenant, apartment, property, room, and bill number
+            if (searchTerm) {
+                const searchableText = [
+                    bill.tenantName,
+                    bill.apartment,
+                    bill.propertyName,
+                    bill.roomNumber,
+                    bill.billNumber,
+                    bill.description
+                ].filter(val => val).join(' ').toLowerCase();
+                
+                if (!searchableText.includes(searchTerm)) {
+                    return false;
+                }
+            }
+            
+            // Status filter - handles pending, overdue, and paid status independently
+            if (statusFilter) {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const dueDate = new Date(bill.dueDate);
+                dueDate.setHours(0, 0, 0, 0);
+                const isOverdue = bill.status === 'pending' && dueDate < today;
+                
+                if (statusFilter === 'pending') {
+                    // Pending: Not paid and not overdue
+                    if (bill.status !== 'pending' || isOverdue) return false;
+                } else if (statusFilter === 'overdue') {
+                    // Overdue: Pending but past due date
+                    if (!isOverdue) return false;
+                } else if (statusFilter === 'paid') {
+                    // Paid: status is paid
+                    if (bill.status !== 'paid') return false;
+                }
+            }
+            
+            // Apartment filter - independent filter for specific apartment
+            if (apartmentFilter) {
+                if (!bill.apartment || bill.apartment !== apartmentFilter) {
+                    return false;
+                }
+            }
+            
+            // Payment Verification filter - independent filter for payment status
+            if (paymentVerificationFilter) {
+                if (paymentVerificationFilter === 'verified') {
+                    if (!bill.isPaymentVerified) return false;
+                } else if (paymentVerificationFilter === 'not-verified') {
+                    if (bill.isPaymentVerified) return false;
+                }
+            }
+            
+            return true;
+        });
+        
+        // Sort filtered bills by creation date (most recent first)
+        this.billsFilteredData.sort((a, b) => {
+            const dateA = new Date(a.createdAt || 0);
+            const dateB = new Date(b.createdAt || 0);
+            return dateB - dateA; // Descending order (most recent first)
+        });
+        
+        // Reset pagination and update table
         this.billsCurrentPage = 1;
         this.billsTotalPages = Math.ceil(this.billsFilteredData.length / this.billsItemsPerPage);
         this.updateBillsTable(this.getCurrentBillsPage());
         this.setupBillsPagination();
     }
 
-    filterBills(status) {
-        if (status === 'all') {
-            this.billsFilteredData = [...this.billsAllData];
-        } else {
-            this.billsFilteredData = this.billsAllData.filter(bill => {
-                const isOverdue = bill.status === 'pending' && new Date(bill.dueDate) < new Date();
-                
-                if (status === 'overdue' && isOverdue) return true;
-                if (status === 'pending' && bill.status === 'pending' && !isOverdue) return true;
-                if (status === 'paid' && bill.status === 'paid') return true;
-                return false;
-            });
-        }
+    /**
+     * Reset all bill filters to default state
+     */
+    resetBillFilters() {
+        console.log('🔄 Resetting bill filters to default state...');
         
-        this.billsCurrentPage = 1;
-        this.billsTotalPages = Math.ceil(this.billsFilteredData.length / this.billsItemsPerPage);
-        this.updateBillsTable(this.getCurrentBillsPage());
-        this.setupBillsPagination();
+        // Reset all filter inputs to their default values
+        const billSearch = document.getElementById('billSearch');
+        const billStatusFilter = document.getElementById('billStatusFilter');
+        const billApartmentFilter = document.getElementById('billApartmentFilter');
+        const billPaymentVerificationFilter = document.getElementById('billPaymentVerificationFilter');
+        
+        if (billSearch) billSearch.value = '';
+        if (billStatusFilter) billStatusFilter.value = '';
+        if (billApartmentFilter) billApartmentFilter.value = '';
+        if (billPaymentVerificationFilter) billPaymentVerificationFilter.value = '';
+        
+        // Apply the filters (which will now show all data)
+        this.applyBillFilters();
+        
+        console.log('✅ Bill filters reset to default');
+    }
+
+    /**
+     * Populate apartment filter dropdown with unique apartments from bills
+     */
+    populateApartmentFilter(bills) {
+        const apartmentFilter = document.getElementById('billApartmentFilter');
+        if (!apartmentFilter) return;
+        
+        // Get unique apartments from bills
+        const apartments = [...new Set(bills
+            .map(bill => bill.apartment)
+            .filter(apt => apt && apt.trim() !== '')
+        )].sort();
+        
+        // Keep the current value
+        const currentValue = apartmentFilter.value;
+        
+        // Build options
+        let html = '<option value="">All Apartments</option>';
+        apartments.forEach(apt => {
+            html += `<option value="${apt}">${apt}</option>`;
+        });
+        
+        apartmentFilter.innerHTML = html;
+        apartmentFilter.value = currentValue; // Restore the selection
     }
 
     async showBillingSettings() {
@@ -13863,13 +14020,16 @@ class CasaLink {
                 DataManager.getBillingSettings()
             ]);
 
-            const tenantOptions = tenants.map(tenant => `
-                <option value="${tenant.id}" data-room="${tenant.roomNumber}">
-                    ${tenant.name} - ${tenant.roomNumber}
+            // Enrich tenants with apartment information
+            const enrichedTenants = await this.enrichTenantsWithApartment(tenants);
+
+            const tenantOptions = enrichedTenants.map(tenant => `
+                <option value="${tenant.id}" data-room="${tenant.roomNumber}" data-apartment="${tenant.apartment || 'N/A'}">
+                    ${tenant.name} - ${tenant.roomNumber} - ${tenant.apartment || 'N/A'}
                 </option>
             `).join('');
 
-            // NEW: Smart autofill for description (Rent - Month Year)
+            // Smart autofill for description (Rent - Month Year)
             const today = new Date();
             const defaultDescription = `Rent - ${today.toLocaleDateString('en-US', { 
                 month: 'long', 
@@ -13911,24 +14071,18 @@ class CasaLink {
                     </div>
 
                     <div class="form-group">
-                        <label class="form-label">Amount (₱) *</label>
-                        <input type="number" id="billAmount" class="form-input" 
-                            placeholder="0.00" min="0" step="0.01" required>
-                    </div>
-
-                    <div class="form-group">
                         <label class="form-label">Due Date *</label>
                         <input type="date" id="billDueDate" class="form-input" required>
                     </div>
 
                     <!-- Bill Items Section -->
                     <div class="form-group">
-                        <label class="form-label">Bill Items</label>
+                        <label class="form-label">Bill Items *</label>
                         <div id="billItemsContainer">
                             <div class="bill-item" style="display: flex; gap: 10px; margin-bottom: 10px;">
                                 <input type="text" class="form-input item-description" placeholder="Item description" style="flex: 2;">
                                 <input type="number" class="form-input item-amount" placeholder="Amount" min="0" step="0.01" style="flex: 1;">
-                                <button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.remove(); casaLink.calculateBillTotal();">
+                                <button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.remove(); casaLink.calculateBillTotal(); casaLink.validateBillForm();">
                                     <i class="fas fa-times"></i>
                                 </button>
                             </div>
@@ -13956,11 +14110,29 @@ class CasaLink {
                 onSubmit: () => this.createCustomBill()
             });
 
-            // Set default due date (payment day of current month)
-            const dueDate = new Date(today.getFullYear(), today.getMonth(), settings.defaultPaymentDay);
+            // Set default due date to 5 days from today
+            const dueDate = new Date(today);
+            dueDate.setDate(dueDate.getDate() + 5);
             document.getElementById('billDueDate').value = dueDate.toISOString().split('T')[0];
 
+            // Add real-time validation listeners
+            document.getElementById('billTenant')?.addEventListener('change', () => this.validateBillForm());
+            document.getElementById('billType')?.addEventListener('change', () => this.validateBillForm());
+            document.getElementById('billDescription')?.addEventListener('input', () => this.validateBillForm());
+            document.getElementById('billDueDate')?.addEventListener('change', () => this.validateBillForm());
+
+            // Add listener to first bill item
+            const firstItem = document.querySelector('.bill-item');
+            if (firstItem) {
+                firstItem.querySelector('.item-description')?.addEventListener('input', () => this.validateBillForm());
+                firstItem.querySelector('.item-amount')?.addEventListener('input', () => {
+                    this.calculateBillTotal();
+                    this.validateBillForm();
+                });
+            }
+
             this.createBillModal = modal;
+            this.validateBillForm(); // Initial validation
 
         } catch (error) {
             console.error('Error showing create bill form:', error);
@@ -14032,57 +14204,68 @@ class CasaLink {
             const tenantSelect = document.getElementById('billTenant');
             const selectedOption = tenantSelect.options[tenantSelect.selectedIndex];
             
-            const billData = {
-                tenantId: tenantSelect.value,
-                tenantName: selectedOption.text.split(' - ')[0],
-                roomNumber: selectedOption.getAttribute('data-room'),
-                landlordId: this.currentUser.uid,
-                type: document.getElementById('billType').value,
-                description: document.getElementById('billDescription').value,
-                totalAmount: parseFloat(document.getElementById('billTotal').textContent),
-                dueDate: document.getElementById('billDueDate').value,
-                notes: document.getElementById('billNotes').value,
-                status: 'pending',
-                isAutoGenerated: false
-            };
-
             // Collect bill items
             const items = [];
-            const mainAmount = parseFloat(document.getElementById('billAmount').value) || 0;
-            if (mainAmount > 0) {
-                items.push({
-                    description: billData.description,
-                    amount: mainAmount,
-                    type: billData.type
-                });
-            }
-
-            // Add additional items
             const itemElements = document.querySelectorAll('.bill-item');
             itemElements.forEach(item => {
-                const description = item.querySelector('.item-description').value;
+                const description = item.querySelector('.item-description').value?.trim();
                 const amount = parseFloat(item.querySelector('.item-amount').value) || 0;
                 if (description && amount > 0) {
                     items.push({
                         description: description,
                         amount: amount,
-                        type: 'additional'
+                        type: 'custom'
                     });
                 }
             });
 
-            billData.items = items;
-
             // Validation
-            if (!billData.tenantId) {
+            if (!tenantSelect.value) {
                 this.showCreateBillError('Please select a tenant');
                 return;
             }
 
-            if (billData.totalAmount <= 0) {
-                this.showCreateBillError('Bill amount must be greater than 0');
+            if (!document.getElementById('billType').value) {
+                this.showCreateBillError('Please select a bill type');
                 return;
             }
+
+            if (!document.getElementById('billDescription').value?.trim()) {
+                this.showCreateBillError('Please enter a description');
+                return;
+            }
+
+            if (!document.getElementById('billDueDate').value) {
+                this.showCreateBillError('Please select a due date');
+                return;
+            }
+
+            if (items.length === 0) {
+                this.showCreateBillError('Please add at least one bill item with a description and amount');
+                return;
+            }
+
+            const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
+            if (totalAmount <= 0) {
+                this.showCreateBillError('Total bill amount must be greater than 0');
+                return;
+            }
+
+            const billData = {
+                tenantId: tenantSelect.value,
+                tenantName: selectedOption.text.split(' - ')[0],
+                roomNumber: selectedOption.getAttribute('data-room'),
+                apartment: selectedOption.getAttribute('data-apartment') || 'N/A',
+                landlordId: this.currentUser.uid,
+                type: document.getElementById('billType').value,
+                description: document.getElementById('billDescription').value,
+                totalAmount: totalAmount,
+                dueDate: document.getElementById('billDueDate').value,
+                notes: document.getElementById('billNotes').value,
+                status: 'pending',
+                isAutoGenerated: false,
+                items: items
+            };
 
             const submitBtn = document.querySelector('#modalSubmit');
             if (submitBtn) {
@@ -14115,7 +14298,7 @@ class CasaLink {
 
     calculateBillTotal() {
         const amountInputs = document.querySelectorAll('.item-amount');
-        let total = parseFloat(document.getElementById('billAmount').value) || 0;
+        let total = 0;
         
         amountInputs.forEach(input => {
             total += parseFloat(input.value) || 0;
@@ -14132,26 +14315,289 @@ class CasaLink {
         itemDiv.innerHTML = `
             <input type="text" class="form-input item-description" placeholder="Item description" style="flex: 2;">
             <input type="number" class="form-input item-amount" placeholder="Amount" min="0" step="0.01" style="flex: 1;">
-            <button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.remove(); casaLink.calculateBillTotal();">
+            <button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.remove(); casaLink.calculateBillTotal(); casaLink.validateBillForm();">
                 <i class="fas fa-times"></i>
             </button>
         `;
         container.appendChild(itemDiv);
 
         // Add event listeners to new amount inputs
-        itemDiv.querySelector('.item-amount').addEventListener('input', () => this.calculateBillTotal());
+        itemDiv.querySelector('.item-description').addEventListener('input', () => this.validateBillForm());
+        itemDiv.querySelector('.item-amount').addEventListener('input', () => {
+            this.calculateBillTotal();
+            this.validateBillForm();
+        });
+    }
+
+    validateBillForm() {
+        const tenant = document.getElementById('billTenant')?.value;
+        const billType = document.getElementById('billType')?.value;
+        const description = document.getElementById('billDescription')?.value?.trim();
+        const dueDate = document.getElementById('billDueDate')?.value;
+        
+        // Check if at least one bill item exists with both description and amount
+        const billItems = document.querySelectorAll('.bill-item');
+        let hasValidItem = false;
+        billItems.forEach(item => {
+            const itemDesc = item.querySelector('.item-description')?.value?.trim();
+            const itemAmount = parseFloat(item.querySelector('.item-amount')?.value) || 0;
+            if (itemDesc && itemAmount > 0) {
+                hasValidItem = true;
+            }
+        });
+        
+        // Determine if all required fields are filled
+        const isFormValid = tenant && billType && description && dueDate && hasValidItem;
+        
+        // Enable/disable submit button
+        const submitBtn = document.querySelector('#modalSubmit');
+        if (submitBtn) {
+            submitBtn.disabled = !isFormValid;
+        }
     }
 
     async exportBills() {
-        this.showNotification('Export bills feature coming soon!', 'info');
+        try {
+            // Use print-preview modal + PDF download similar to dashboard report
+            const billsToExport = this.billsFilteredData.length > 0 ? this.billsFilteredData : this.billsAllData;
+            
+            // Ensure payments are loaded
+            if (!this.paymentsAllData || this.paymentsAllData.length === 0) {
+                try {
+                    await this.loadPaymentsData();
+                } catch (e) {
+                    console.warn('Failed to load payments for export:', e);
+                }
+            }
+            
+            const paymentsToExport = this.paymentsAllData || [];
+
+            if (!billsToExport || billsToExport.length === 0) {
+                this.showNotification('No bills to export', 'warning');
+                return;
+            }
+
+            const currentDate = new Date();
+            const periodLabel = currentDate.toLocaleDateString('en-PH');
+
+            // Build printable HTML for bills
+            let billsRowsHtml = '';
+            billsToExport.forEach(bill => {
+                billsRowsHtml += `
+                    <tr>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${bill.billNumber || (bill.id || '').substring(0,8)}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${bill.tenantName || '-'}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${bill.roomNumber || bill.apartment || '-'}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${bill.apartment || bill.propertyName || '-'}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">₱${(bill.totalAmount || bill.amount || 0).toLocaleString('en-PH')}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${new Date(bill.dueDate || bill.due || bill.createdAt).toLocaleDateString('en-PH')}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${(bill.status || 'pending').toUpperCase()}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${bill.isPaymentVerified ? 'Verified' : 'Awaiting Verification'}</td>
+                    </tr>
+                `;
+            });
+
+            // Build printable HTML for payments
+            let paymentsRowsHtml = '';
+            paymentsToExport.forEach(payment => {
+                const paymentDate = new Date(payment.paymentDate || payment.createdAt);
+                paymentsRowsHtml += `
+                    <tr>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${payment.tenantName || '-'}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${payment.roomNumber || '-'}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${payment.apartment || '-'}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">₱${(payment.amount || 0).toLocaleString('en-PH')}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${payment.paymentMethod ? payment.paymentMethod.charAt(0).toUpperCase() + payment.paymentMethod.slice(1) : 'N/A'}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${paymentDate.toLocaleDateString('en-PH')}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${payment.referenceNumber || payment.billId || '-'}</td>
+                        <td style="padding:8px;border:1px solid #e2e8f0">${(payment.status || 'pending').charAt(0).toUpperCase() + (payment.status || 'pending').slice(1)}</td>
+                    </tr>
+                `;
+            });
+
+            const reportHTML = `
+                <div style="padding:20px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background:white;">
+                    <div style="text-align:center; border-bottom:2px solid #e2e8f0; padding-bottom:12px; margin-bottom:20px;">
+                        <h2 style="margin:0;color:#162660">Billing and Payments Report</h2>
+                        <div style="color:#6b7280; font-size:12px;">Generated: ${periodLabel}</div>
+                    </div>
+
+                    <!-- Bills Section -->
+                    <div style="margin-bottom:30px;">
+                        <h3 style="color:#162660; margin-top:0; margin-bottom:12px; border-bottom:1px solid #e2e8f0; padding-bottom:8px;">Bills</h3>
+                        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                            <thead>
+                                <tr>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Bill #</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Tenant</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Room</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Property</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:right">Amount</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Due Date</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Status</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Payment</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${billsRowsHtml}
+                            </tbody>
+                        </table>
+                        <div style="margin-top:12px;color:#6b7280;font-size:13px">Total Bills: ${billsToExport.length}</div>
+                    </div>
+
+                    <!-- Payments Section -->
+                    ${paymentsToExport.length > 0 ? `
+                    <div style="margin-bottom:30px;">
+                        <h3 style="color:#162660; margin-top:0; margin-bottom:12px; border-bottom:1px solid #e2e8f0; padding-bottom:8px;">Payment History</h3>
+                        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                            <thead>
+                                <tr>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Tenant</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Room</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Apartment</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:right">Amount</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Method</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Date</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Reference</th>
+                                    <th style="padding:8px;border:1px solid #e2e8f0;background:#f8fafc;text-align:left">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${paymentsRowsHtml}
+                            </tbody>
+                        </table>
+                        <div style="margin-top:12px;color:#6b7280;font-size:13px">Total Payments Collected: ₱${paymentsToExport.reduce((sum, p) => sum + (p.amount || 0), 0).toLocaleString('en-PH')}</div>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+
+            // Keep report HTML globally for PDF generation function
+            window.currentReportHTML = reportHTML;
+
+            // Show in modal
+            const modal = ModalManager.openModal(reportHTML, {
+                title: 'Billing and Payments - Print Preview',
+                showFooter: true,
+                width: '95%',
+                maxWidth: '1200px'
+            });
+
+            // Add download button to modal footer
+            const modalFooter = modal.querySelector('.modal-footer');
+            if (modalFooter) {
+                const downloadButton = document.createElement('button');
+                downloadButton.id = 'downloadBillsPdfBtn';
+                downloadButton.className = 'btn btn-success';
+                downloadButton.style.print = 'none';
+                downloadButton.innerHTML = '<i class="fas fa-download"></i> Download as PDF';
+                downloadButton.addEventListener('click', () => {
+                    // Reuse the existing PDF generator
+                    if (typeof this.downloadReportAsPDF === 'function') {
+                        this.downloadReportAsPDF();
+                    } else {
+                        this.showNotification('PDF generator not available', 'error');
+                    }
+                });
+
+                modalFooter.innerHTML = '';
+                modalFooter.appendChild(downloadButton);
+            }
+
+            this.showNotification('Billing and Payments report ready for printing', 'success');
+        } catch (error) {
+            console.error('Error exporting bills:', error);
+            this.showNotification('Failed to export bills and payments: ' + (error.message || error), 'error');
+        }
     }
 
     editBill(billId) {
         this.showNotification('Edit bill feature coming soon!', 'info');
     }
 
-    deleteBill(billId) {
-        this.showNotification('Delete bill feature coming soon!', 'info');
+    async deleteBill(billId) {
+        try {
+            if (!billId) return;
+            const confirmed = window.confirm('Are you sure you want to delete this bill? This action cannot be undone.');
+            if (!confirmed) return;
+
+            if (window.setBillingLoading) window.setBillingLoading(true);
+
+            // Delete from datastore
+            let deleteResult = null;
+            if (typeof DataManager !== 'undefined' && DataManager.deleteBill) {
+                // Show inline spinner on the bill row's delete button
+                const row = document.querySelector(`[data-bill-id="${billId}"]`);
+                let deleteBtn = null;
+                let originalBtnHtml = null;
+                if (row) {
+                    deleteBtn = row.querySelector('button.btn-danger');
+                    if (!deleteBtn) {
+                        // fallback: search by onclick attribute
+                        deleteBtn = row.querySelector(`button[onclick*="casaLink.deleteBill('${billId}')"]`);
+                    }
+                    if (deleteBtn) {
+                        originalBtnHtml = deleteBtn.innerHTML;
+                        deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
+                        deleteBtn.disabled = true;
+                    }
+                }
+
+                deleteResult = await DataManager.deleteBill(billId);
+                console.log('deleteBill result:', deleteResult);
+            } else {
+                throw new Error('DataManager.deleteBill is not available');
+            }
+
+            // Refresh billing lists/stats
+            // Prefer controller refresh if present
+            if (window.billingController) {
+                await window.billingController.loadBills();
+                if (window.billingController.updateStats) await window.billingController.updateStats();
+            }
+
+            // Also reload the current billing view so app-level renderers update immediately
+            try {
+                if (typeof this.loadBillingViewData === 'function') {
+                    await this.loadBillingViewData(this.currentBillingView || 'bills');
+                } else if (typeof this.getBillingPage === 'function') {
+                    // fallback: re-render the billing page
+                    await this.getBillingPage();
+                }
+            } catch (e) {
+                console.warn('Failed to re-render billing view after delete:', e);
+            }
+
+            // Success notification
+            if (window.notificationManager && window.notificationManager.success) {
+                window.notificationManager.success('Bill deleted successfully');
+            } else {
+                this.showNotification('Bill deleted successfully', 'success');
+            }
+        } catch (error) {
+            console.error('Error deleting bill:', error);
+            // Restore button and show inline error
+            try {
+                const row = document.querySelector(`[data-bill-id="${billId}"]`);
+                if (row) {
+                    const deleteBtn = row.querySelector('button.btn-danger') || row.querySelector(`button[onclick*="casaLink.deleteBill('${billId}')"]`);
+                    if (deleteBtn && originalBtnHtml) {
+                        deleteBtn.innerHTML = originalBtnHtml;
+                        deleteBtn.disabled = false;
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to restore delete button UI after error:', e);
+            }
+
+            if (typeof window.showBillingError === 'function') {
+                window.showBillingError('Failed to delete bill: ' + (error.message || error));
+            } else {
+                this.showNotification('Failed to delete bill: ' + (error.message || error), 'error');
+            }
+        } finally {
+            if (window.setBillingLoading) window.setBillingLoading(false);
+        }
     }
 
     async loadBillingStatus() {
@@ -14169,36 +14615,68 @@ class CasaLink {
             
             if (settings?.autoBillingEnabled) {
                 statusElement.innerHTML = `
-                    <div class="card" style="background: rgba(52, 168, 83, 0.1); border-left: 4px solid var(--success); margin-bottom: 20px;">
-                        <div class="card-header">
-                            <h4 style="color: var(--success); margin: 0;">
-                                <i class="fas fa-robot"></i> Automatic Billing Active
-                            </h4>
+                    <div class="billing-status-collapsible" style="background: rgba(52, 168, 83, 0.1); border-left: 4px solid var(--success); margin-bottom: 20px; border-radius: 8px; overflow: hidden; cursor: pointer; transition: all 0.3s ease;">
+                        <div class="billing-status-header" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; user-select: none;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <i class="fas fa-robot" style="color: var(--success);"></i>
+                                <span style="color: var(--success); font-weight: 600; font-size: 14px;">Automatic Billing Active</span>
+                            </div>
+                            <i class="fas fa-chevron-down" style="color: var(--success); transition: transform 0.3s ease;"></i>
                         </div>
-                        <div class="card-body">
-                            <p style="margin: 0; color: var(--dark-gray);">
-                                <strong>Rental Bills</strong> are automatically generated on the <strong>1st</strong> of each month. <br>
-                                If app is <strong>not opened</strong> on the <strong>1st</strong> of the month, <strong>Manually Click</strong> the <strong>"Generate Monthly Bills"</strong> and <strong>"Apply Late Fees"</strong> button to create bills for the month.
-                                ${settings.autoLateFees ? `<br><strong>Auto late fees: ₱${settings.lateFeeAmount} ${settings.lateFeeAfterDays}</strong> days after due date` : ''}
-                            </p>
+                        <div class="billing-status-preview" style="padding: 0 16px 12px; color: var(--dark-gray); font-size: 13px; display: block;">
+                            Click here to know more
+                        </div>
+                        <div class="billing-status-content" style="max-height: 0; overflow: hidden; transition: max-height 0.3s ease;">
+                            <div style="padding: 12px 16px; border-top: 1px solid rgba(52, 168, 83, 0.2); color: var(--dark-gray); font-size: 13px; line-height: 1.6;">
+                                <p style="margin: 0 0 8px 0;">
+                                    <strong>Rental Bills</strong> are automatically generated on the <strong>1st</strong> of each month.
+                                </p>
+                                <p style="margin: 0 0 8px 0;">
+                                    If app is <strong>not opened</strong> on the <strong>1st</strong> of the month, <strong>Manually Click</strong> the <strong>"Generate Monthly Bills"</strong> and <strong>"Apply Late Fees"</strong> button to create bills for the month.
+                                </p>
+                                ${settings.autoLateFees ? `<p style="margin: 0;"><strong>Auto late fees: ₱${settings.lateFeeAmount} ${settings.lateFeeAfterDays}</strong> days after due date</p>` : ''}
+                            </div>
                         </div>
                     </div>
                 `;
             } else {
                 statusElement.innerHTML = `
-                    <div class="card" style="background: rgba(251, 188, 4, 0.1); border-left: 4px solid var(--warning); margin-bottom: 20px;">
-                        <div class="card-header">
-                            <h4 style="color: var(--warning); margin: 0;">
-                                <i class="fas fa-robot"></i> Automatic Billing Disabled
-                            </h4>
+                    <div class="billing-status-collapsible" style="background: rgba(251, 188, 4, 0.1); border-left: 4px solid var(--warning); margin-bottom: 20px; border-radius: 8px; overflow: hidden; cursor: pointer; transition: all 0.3s ease;">
+                        <div class="billing-status-header" style="padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; user-select: none;">
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <i class="fas fa-robot" style="color: var(--warning);"></i>
+                                <span style="color: var(--warning); font-weight: 600; font-size: 14px;">Automatic Billing Disabled</span>
+                            </div>
+                            <i class="fas fa-chevron-down" style="color: var(--warning); transition: transform 0.3s ease;"></i>
                         </div>
-                        <div class="card-body">
-                            <p style="margin: 0; color: var(--dark-gray);">
+                        <div class="billing-status-preview" style="padding: 0 16px 12px; color: var(--dark-gray); font-size: 13px; display: block;">
+                            Click here to know more
+                        </div>
+                        <div class="billing-status-content" style="max-height: 0; overflow: hidden; transition: max-height 0.3s ease;">
+                            <div style="padding: 12px 16px; border-top: 1px solid rgba(251, 188, 4, 0.2); color: var(--dark-gray); font-size: 13px;">
                                 Automatic bill generation is turned off. Bills must be generated manually.
-                            </p>
+                            </div>
                         </div>
                     </div>
                 `;
+            }
+            
+            // Add toggle functionality
+            const collapsible = statusElement.querySelector('.billing-status-collapsible');
+            if (collapsible) {
+                collapsible.addEventListener('click', function() {
+                    const content = this.querySelector('.billing-status-content');
+                    const header = this.querySelector('.billing-status-header');
+                    const chevron = header.querySelector('.fa-chevron-down');
+                    
+                    if (content.style.maxHeight === '0px' || content.style.maxHeight === '') {
+                        content.style.maxHeight = content.scrollHeight + 'px';
+                        chevron.style.transform = 'rotate(180deg)';
+                    } else {
+                        content.style.maxHeight = '0px';
+                        chevron.style.transform = 'rotate(0deg)';
+                    }
+                });
             }
             
             console.log('✅ Billing status loaded successfully');
@@ -14229,14 +14707,6 @@ class CasaLink {
             this.currentUser.uid,
             (bills) => this.updateBillsTable(bills)
         );
-    }
-
-    filterBills(searchTerm) {
-        const rows = document.querySelectorAll('#billsTable tbody tr');
-        rows.forEach(row => {
-            const text = row.textContent.toLowerCase();
-            row.style.display = text.includes(searchTerm.toLowerCase()) ? '' : 'none';
-        });
     }
 
     showLogin() {
@@ -15109,6 +15579,7 @@ class CasaLink {
     async loadPaymentStats() {
         try {
             const payments = await DataManager.getPayments(this.currentUser.uid);
+            const bills = await DataManager.getBills(this.currentUser.uid);
             
             const totalCollected = payments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
             
@@ -15125,14 +15596,29 @@ class CasaLink {
                 })
                 .reduce((sum, payment) => sum + (payment.amount || 0), 0);
             
+            // Calculate expected collection for this month (bills with PENDING or PAID status due this month only)
+            const expectedCollection = bills
+                .filter(bill => {
+                    // Explicitly check for PENDING or PAID status
+                    const billStatus = bill.status ? bill.status.toLowerCase() : '';
+                    if (billStatus !== 'pending' && billStatus !== 'paid') {
+                        return false;
+                    }
+                    
+                    // Check if bill is due this month
+                    const billDate = new Date(bill.dueDate || bill.due || bill.createdAt);
+                    return billDate.getMonth() === currentMonth && 
+                        billDate.getFullYear() === currentYear;
+                })
+                .reduce((sum, bill) => sum + (bill.amount || bill.totalAmount || 0), 0);
+            
             const totalTransactions = payments.length;
-            const averagePayment = totalTransactions > 0 ? totalCollected / totalTransactions : 0;
             
             // Update the payment stats cards
             this.updateCard('totalCollected', `₱${totalCollected.toLocaleString()}`);
             this.updateCard('monthlyCollected', `₱${monthlyCollected.toLocaleString()}`);
             this.updateCard('totalTransactions', totalTransactions.toString());
-            this.updateCard('averagePayment', `₱${Math.round(averagePayment).toLocaleString()}`);
+            this.updateCard('expectedCollection', `₱${Math.round(expectedCollection).toLocaleString()}`);
             
         } catch (error) {
             console.error('Error loading payment stats:', error);
@@ -15694,6 +16180,45 @@ class CasaLink {
         }
     }
 
+    async enrichTenantsWithApartment(tenants) {
+        try {
+            const enrichedTenants = await Promise.all(
+                tenants.map(async (tenant) => {
+                    // If apartment field already exists and is valid, return as-is
+                    if (tenant.apartment && tenant.apartment !== 'N/A') {
+                        return tenant;
+                    }
+                    
+                    // Try to fetch from active lease
+                    try {
+                        const leaseQuery = await firebaseDb.collection('leases')
+                            .where('tenantId', '==', tenant.id)
+                            .where('isActive', '==', true)
+                            .limit(1)
+                            .get();
+                        
+                        if (!leaseQuery.empty) {
+                            const leaseData = leaseQuery.docs[0].data();
+                            tenant.apartment = leaseData.rentalAddress || 'N/A';
+                        } else {
+                            tenant.apartment = 'N/A';
+                        }
+                    } catch (error) {
+                        console.warn(`Could not fetch apartment for tenant ${tenant.id}:`, error);
+                        tenant.apartment = 'N/A';
+                    }
+                    
+                    return tenant;
+                })
+            );
+            
+            return enrichedTenants;
+        } catch (error) {
+            console.error('Error enriching tenants with apartment:', error);
+            return tenants;
+        }
+    }
+
     renderBillsTable(bills) {
         return `
             <div class="table-container">
@@ -15743,7 +16268,7 @@ class CasaLink {
                                     <td>
                                         <div style="font-weight: 500;">${bill.description || 'Monthly Rent'}</div>
                                         <small style="color: var(--dark-gray);">
-                                            ${typeDisplay} ${isAutoGenerated ? '(Auto-generated)' : '(Manual)'}
+                                            ${typeDisplay} ${isAutoGenerated ? '(System generated)' : '(Manual)'}
                                         </small>
                                     </td>
                                     <td style="font-weight: 600; color: var(--royal-blue);">
@@ -15881,6 +16406,7 @@ class CasaLink {
             const today = new Date();
             localStorage.removeItem(`bills_generated_${today.getFullYear()}_${today.getMonth()}`);
             
+            if (window.setBillingLoading) window.setBillingLoading(true);
             const result = await DataManager.generateMonthlyBills();
             
             if (!result) {
@@ -15891,7 +16417,7 @@ class CasaLink {
             
             if (result.generated === 0 && result.skipped > 0) {
                 this.showNotification(
-                    `All bills already generated for this month (${result.skipped} bills)`, 
+                    'No outdated bills to create for this month',
                     'info'
                 );
             } else if (result.generated > 0) {
@@ -15906,10 +16432,24 @@ class CasaLink {
                 );
             }
             
-            // Refresh bills data
-            setTimeout(() => {
-                this.loadBillsData();
-            }, 1000);
+            // Refresh bills data and controller so UI updates immediately
+            try {
+                if (window.billingController) {
+                    await window.billingController.loadBills();
+                    if (window.billingController.updateStats) await window.billingController.updateStats();
+                }
+                if (typeof this.loadBillingViewData === 'function') {
+                    await this.loadBillingViewData(this.currentBillingView || 'bills');
+                }
+                // Also keep the previous safe reload for legacy areas
+                setTimeout(() => {
+                    try { this.loadBillsData(); } catch (e) { /* ignore */ }
+                }, 1000);
+            } catch (e) {
+                console.warn('Failed to refresh billing UI after generating bills:', e);
+            } finally {
+                if (window.setBillingLoading) window.setBillingLoading(false);
+            }
             
         } catch (error) {
             console.error('❌ Failed to generate bills:', error);
@@ -16610,11 +17150,10 @@ class CasaLink {
             return;
         }
         
-        // Enrich bills with apartment information before rendering
-        this.enrichBillsWithApartment(bills).then(enrichedBills => {
-            billsList.innerHTML = this.renderBillsTable(enrichedBills);
-            this.updateBillsPaginationInfo();
-        });
+        // Bills are already enriched with apartment information
+        // Just render the table
+        billsList.innerHTML = this.renderBillsTable(bills);
+        this.updateBillsPaginationInfo();
     }
 
     updateBillsPaginationInfo() {
@@ -16636,11 +17175,25 @@ class CasaLink {
     async loadBillsData() {
         try {
             console.log('🔄 Loading bills data...');
-            const bills = await DataManager.getBillsWithTenants(this.currentUser.uid);
+            let bills = await DataManager.getBillsWithTenants(this.currentUser.uid);
+            
+            // Enrich bills with apartment information
+            bills = await this.enrichBillsWithApartment(bills);
+            
+            // Sort bills by creation date (most recent first)
+            bills.sort((a, b) => {
+                const dateA = new Date(a.createdAt || 0);
+                const dateB = new Date(b.createdAt || 0);
+                return dateB - dateA; // Descending order (most recent first)
+            });
+            
             this.billsAllData = bills;
             this.billsFilteredData = [...bills];
             this.billsCurrentPage = 1;
             this.billsTotalPages = Math.ceil(bills.length / this.billsItemsPerPage);
+            
+            // Populate the apartment filter dropdown
+            this.populateApartmentFilter(bills);
             
             this.updateBillsTable(this.getCurrentBillsPage());
             this.updateBillingStats(bills);
@@ -16695,14 +17248,20 @@ class CasaLink {
 
         return `
         <div class="page-content">
-            <div class="page-header">
+            <div class="page-header" style="display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;">
                 <h1 class="page-title">Billing & Payments</h1>
-                <div>
-                    <button class="btn btn-secondary" onclick="casaLink.showBillingSettings()">
-                        <i class="fas fa-cog"></i> Billing Settings
-                    </button>
+                <div class="quick-actions-bar" style="margin-bottom: 0; padding: 0; justify-content: flex-end;">
                     <button class="btn btn-primary" onclick="casaLink.showCreateBillForm()">
-                        <i class="fas fa-plus"></i> Create Bill
+                        <i class="fas fa-plus"></i> Create Custom Bill
+                    </button>
+                    <button class="btn btn-secondary" onclick="casaLink.forceGenerateBills()">
+                        <i class="fas fa-sync"></i> Generate Monthly Bills
+                    </button>
+                    <button class="btn btn-warning" onclick="casaLink.applyLateFeesManually()">
+                        <i class="fas fa-clock"></i> Apply Late Fees
+                    </button>
+                    <button class="btn btn-secondary" onclick="casaLink.exportBills()">
+                        <i class="fas fa-download"></i> Export Bills and Payments
                     </button>
                 </div>
             </div>
@@ -16770,50 +17329,92 @@ class CasaLink {
                         </div>
                     </div>
 
-                    <div class="quick-actions-bar">
-                        <button class="btn btn-primary" onclick="casaLink.showCreateBillForm()">
-                            <i class="fas fa-plus"></i> Create Custom Bill
-                        </button>
-                        <button class="btn btn-secondary" onclick="casaLink.forceGenerateBills()">
-                            <i class="fas fa-sync"></i> Generate Monthly Bills
-                        </button>
-                        <button class="btn btn-warning" onclick="casaLink.applyLateFeesManually()">
-                            <i class="fas fa-clock"></i> Apply Late Fees
-                        </button>
-                        <button class="btn btn-secondary" onclick="casaLink.exportBills()">
-                            <i class="fas fa-download"></i> Export Bills
-                        </button>
-                    </div>
-
-                    <div class="search-filters-container">
-                        <div class="search-box">
-                            <input type="text" id="billSearch" class="form-input" placeholder="Search bills...">
+                    <div class="search-filters-container" style="flex-direction: column; align-items: flex-start; gap: 0; padding: 0;">
+                        <!-- Filter Controls (Linear Layout) -->
+                        <div style="padding: 20px 25px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: center; width: 100%;">
+                            <div style="min-width: 0;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Apartment</label>
+                                <select id="billApartmentFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                                    <option value="">All Apartments</option>
+                                </select>
+                            </div>
+                            
+                            <div style="min-width: 0;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Bill Status</label>
+                                <select id="billStatusFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                                    <option value="">All Status</option>
+                                    <option value="pending">Pending</option>
+                                    <option value="overdue">Overdue</option>
+                                    <option value="paid">Paid</option>
+                                </select>
+                            </div>
+                            
+                            <div style="min-width: 0;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Payment Verification</label>
+                                <select id="billPaymentVerificationFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                                    <option value="">All Payment Status</option>
+                                    <option value="verified">Payment Verified</option>
+                                    <option value="not-verified">Awaiting Verification</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="filter-controls">
-                            <select id="billStatusFilter" class="form-input">
-                                <option value="all">All Status</option>
-                                <option value="pending">Pending</option>
-                                <option value="overdue">Overdue</option>
-                                <option value="paid">Paid</option>
-                            </select>
+                        
+                        <!-- Search Box & Reset Filters Row -->
+                        <div style="padding: 15px 25px 20px; display: flex; align-items: flex-end; gap: 12px; width: 100%; flex-wrap: wrap;">
+                            <div style="flex: 1; min-width: 250px;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Search</label>
+                                <input type="text" id="billSearch" class="form-input" placeholder="Search by tenant, property, or apartment..." style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px;">
+                            </div>
+                            <button id="resetBillFilters" class="reset-filters-button" style="margin-bottom: 0;">
+                                <i class="fas fa-redo"></i> Reset Filters
+                            </button>
                         </div>
+                        
+
+                        
+                        <!-- Responsive Styles -->
+                        <style>
+                            #billSearch {
+                                box-sizing: border-box;
+                            }
+                            
+                            @media (max-width: 1024px) {
+                                #billSearch {
+                                    max-width: 100%;
+                                }
+                                .search-filters-container[style*="flex-direction: column"] > div:nth-child(1) {
+                                    grid-template-columns: repeat(2, 1fr) !important;
+                                }
+                            }
+                            
+                            @media (max-width: 640px) {
+                                #billSearch {
+                                    max-width: 100%;
+                                    font-size: 16px;
+                                }
+                                .search-filters-container[style*="flex-direction: column"] > div:nth-child(1) {
+                                    grid-template-columns: 1fr !important;
+                                }
+                                .search-filters-container[style*="flex-direction: column"] > div:nth-child(2) {
+                                    flex-direction: column;
+                                    align-items: stretch !important;
+                                }
+                                #resetBillFilters {
+                                    width: 100%;
+                                    justify-content: center;
+                                }
+                            }
+                        </style>
                     </div>
 
-                    <div class="quick-filter-buttons">
-                        <button class="btn btn-sm btn-secondary" onclick="casaLink.filterBills('all')">All Bills</button>
-                        <button class="btn btn-sm btn-secondary" onclick="casaLink.filterBills('pending')">Pending</button>
-                        <button class="btn btn-sm btn-secondary" onclick="casaLink.filterBills('overdue')">Overdue</button>
-                        <button class="btn btn-sm btn-secondary" onclick="casaLink.filterBills('paid')">Paid</button>
-                    </div>
-
-                    <div class="table-section">
-                        <div id="billsList">
+                    <div class="table-section" style="display:flex; flex-direction:column; min-height:360px;">
+                        <div id="billsList" style="flex:1 1 auto; overflow:auto;">
                             <div class="data-loading">
                                 <i class="fas fa-spinner fa-spin"></i> Loading bills...
                             </div>
                         </div>
                         <!-- Pagination Controls for Bills -->
-                        <div class="pagination-container" id="billsPagination" style="display: none;">
+                        <div class="pagination-container" id="billsPagination" style="display: none; margin-top: auto;">
                             <div class="pagination-info" id="billsPaginationInfo"></div>
                             <div class="pagination-controls">
                                 <button class="btn btn-sm btn-secondary" id="billsPrevPage">
@@ -16842,7 +17443,7 @@ class CasaLink {
                         
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">This Month</div>
+                                <div class="card-title">Collected This Month</div>
                                 <div class="card-icon success"><i class="fas fa-calendar-check"></i></div>
                             </div>
                             <div class="card-value" id="monthlyCollected">₱0</div>
@@ -16860,55 +17461,52 @@ class CasaLink {
                         
                         <div class="card">
                             <div class="card-header">
-                                <div class="card-title">Avg. Payment</div>
-                                <div class="card-icon tenants"><i class="fas fa-calculator"></i></div>
+                                <div class="card-title">Expected Collection This Month</div>
+                                <div class="card-icon tenants"><i class="fas fa-chart-line"></i></div>
                             </div>
-                            <div class="card-value" id="averagePayment">₱0</div>
-                            <div class="card-subtitle">Per transaction</div>
+                            <div class="card-value" id="expectedCollection">₱0</div>
+                            <div class="card-subtitle">Pending payments due</div>
                         </div>
                     </div>
 
-                    <div class="quick-actions-bar">
-                        <button class="btn btn-warning" onclick="casaLink.showRefundModal()">
-                            <i class="fas fa-undo"></i> Process Refund
-                        </button>
-                        <button class="btn btn-secondary" onclick="casaLink.exportPayments()">
-                            <i class="fas fa-download"></i> Export Payments
-                        </button>
-                    </div>
-
-                    <div class="search-filters-container">
-                        <div class="search-box">
-                            <input type="text" id="paymentSearch" class="form-input" placeholder="Search payments...">
+                    <div class="search-filters-container" style="flex-direction: column; align-items: flex-start; gap: 0; padding: 0;">
+                        <!-- Search Box & Filters Row -->
+                        <div style="padding: 20px 25px; display: flex; align-items: flex-end; gap: 12px; width: 100%; flex-wrap: wrap;">
+                            <div style="flex: 1; min-width: 250px;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Search</label>
+                                <input type="text" id="paymentSearch" class="form-input" placeholder="Search payments..." style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px;">
+                            </div>
+                            <div style="min-width: 200px;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Status</label>
+                                <select id="paymentStatusFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                                    <option value="all">All Status</option>
+                                    <option value="verified">Verified</option>
+                                    <option value="awaiting_verification">Awaiting Verification</option>
+                                </select>
+                            </div>
+                            <div style="min-width: 200px;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Method</label>
+                                <select id="paymentMethodFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                                    <option value="all">All Methods</option>
+                                    <option value="bank_transfer">Bank Transfer</option>
+                                    <option value="gcash">Gcash</option>
+                                    <option value="maya">Maya</option>
+                                    <option value="cash">Cash</option>
+                                </select>
+                            </div>
                         </div>
-                        <div class="filter-controls">
-                            <select id="paymentMethodFilter" class="form-input">
-                                <option value="all">All Methods</option>
-                                <option value="cash">Cash</option>
-                                <option value="gcash">GCash</option>
-                                <option value="maya">Maya</option>
-                                <option value="bank_transfer">Bank Transfer</option>
-                                <option value="check">Check</option>
-                            </select>
-                            <input type="month" id="paymentDateFilter" class="form-input">
-                        </div>
                     </div>
 
-                    <div class="quick-filter-buttons">
-                        <button class="btn btn-sm btn-secondary" onclick="casaLink.filterPayments('all')">All Payments</button>
-                        <button class="btn btn-sm btn-secondary" onclick="casaLink.filterPayments('today')">Today</button>
-                        <button class="btn btn-sm btn-secondary" onclick="casaLink.filterPayments('week')">This Week</button>
-                        <button class="btn btn-sm btn-secondary" onclick="casaLink.filterPayments('month')">This Month</button>
-                    </div>
 
-                    <div class="table-section">
-                        <div id="paymentsList">
+
+                    <div class="table-section" style="display:flex; flex-direction:column; min-height:360px;">
+                        <div id="paymentsList" style="flex:1 1 auto; overflow:auto;">
                             <div class="data-loading">
                                 <i class="fas fa-spinner fa-spin"></i> Loading payments...
                             </div>
                         </div>
                         <!-- Pagination Controls for Payments -->
-                        <div class="pagination-container" id="paymentsPagination" style="display: none;">
+                        <div class="pagination-container" id="paymentsPagination" style="display: none; margin-top: auto;">
                             <div class="pagination-info" id="paymentsPaginationInfo"></div>
                             <div class="pagination-controls">
                                 <button class="btn btn-sm btn-secondary" id="paymentsPrevPage">
@@ -16980,32 +17578,59 @@ class CasaLink {
             <div class="card" style="margin-top: 20px;">
                 <div class="card-header">
                     <h3>Bills Management</h3>
-                    <div style="display: flex; gap: 10px; align-items: center;">
-                        <div class="search-box">
-                            <input type="text" id="billSearch" class="form-input" placeholder="Search bills...">
-                        </div>
-                        <select id="billStatusFilter" class="form-input" style="width: auto;">
-                            <option value="all">All Status</option>
-                            <option value="pending">Pending</option>
-                            <option value="overdue">Overdue</option>
-                            <option value="paid">Paid</option>
-                        </select>
+                </div>
+                <div style="padding: 20px; border-bottom: 1px solid #e0e0e0; background: #f9f9f9;">
+                    <!-- Search Box (Full Width) -->
+                    <div style="margin-bottom: 15px;">
+                        <input type="text" id="billSearch" class="form-input" placeholder="Search bills by tenant, property, or apartment..." style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px;">
                     </div>
+                    
+                    <!-- Filter Controls (Left to Right) -->
+                    <div class="bills-filter-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: center;">
+                        <div style="min-width: 0;">
+                            <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Apartment</label>
+                            <select id="billApartmentFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                                <option value="">All Apartments</option>
+                            </select>
+                        </div>
+                        
+                        <div style="min-width: 0;">
+                            <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Bill Status</label>
+                            <select id="billStatusFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                                <option value="">All Status</option>
+                                <option value="pending">Pending</option>
+                                <option value="overdue">Overdue</option>
+                                <option value="paid">Paid</option>
+                            </select>
+                        </div>
+                        
+                        <div style="min-width: 0;">
+                            <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Payment Verification</label>
+                            <select id="billPaymentVerificationFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                                <option value="">All Payment Status</option>
+                                <option value="verified">Payment Verified</option>
+                                <option value="not-verified">Awaiting Verification</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Responsive Styles -->
+                    <style>
+                        @media (max-width: 1024px) {
+                            .bills-filter-grid {
+                                grid-template-columns: repeat(2, 1fr) !important;
+                            }
+                        }
+                        
+                        @media (max-width: 640px) {
+                            .bills-filter-grid {
+                                grid-template-columns: 1fr !important;
+                            }
+                        }
+                    </style>
                 </div>
                 <div class="card-body">
                     <div style="display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap;">
-                        <button class="btn btn-secondary" onclick="casaLink.filterBills('all')">
-                            All Bills
-                        </button>
-                        <button class="btn btn-secondary" onclick="casaLink.filterBills('pending')">
-                            Pending
-                        </button>
-                        <button class="btn btn-secondary" onclick="casaLink.filterBills('overdue')">
-                            Overdue
-                        </button>
-                        <button class="btn btn-secondary" onclick="casaLink.filterBills('paid')">
-                            Paid
-                        </button>
                         <button class="btn btn-warning" onclick="casaLink.applyLateFeesManually()">
                             <i class="fas fa-clock"></i> Apply Late Fees
                         </button>

@@ -19,8 +19,74 @@ class BillingController {
     async init() {
         try {
             window.setBillingLoading(true);
-            await this.loadBills();
-            await this.updateStats();
+            // Prefer real-time updates when available for landlords
+            let user = null;
+            try {
+                if (this.service && typeof this.service.getCurrentUser === 'function') {
+                    user = await this.service.getCurrentUser();
+                }
+            } catch (e) {
+                console.warn('Failed to fetch current user for billing listener:', e);
+            }
+
+            if (user && typeof DataManager !== 'undefined') {
+                // Landlord: listen to all landlord bills
+                if (user.role === 'landlord' && typeof DataManager.listenToBills === 'function') {
+                    if (this.billsUnsub) this.billsUnsub();
+                    this.billsUnsub = DataManager.listenToBills(user.uid, async (bills) => {
+                        try {
+                            this.allBills = bills || [];
+                            // Sort bills by creation date (most recent first)
+                            this.allBills.sort((a, b) => {
+                                const dateA = new Date(a.createdAt || 0);
+                                const dateB = new Date(b.createdAt || 0);
+                                return dateB - dateA;
+                            });
+                            this.displayFilteredBills();
+                            await this.updateStats();
+                        } catch (e) {
+                            console.error('Error handling real-time bills update (landlord):', e);
+                        }
+                    });
+
+                    // initial load
+                    await this.loadBills();
+                    await this.updateStats();
+                }
+
+                // Tenant: listen to bills for this tenant
+                else if (user.role === 'tenant' && typeof DataManager.listenToTenantBills === 'function') {
+                    if (this.billsUnsub) this.billsUnsub();
+                    this.billsUnsub = DataManager.listenToTenantBills(user.uid, async (bills) => {
+                        try {
+                            this.allBills = bills || [];
+                            // Sort bills by creation date (most recent first)
+                            this.allBills.sort((a, b) => {
+                                const dateA = new Date(a.createdAt || 0);
+                                const dateB = new Date(b.createdAt || 0);
+                                return dateB - dateA;
+                            });
+                            this.displayFilteredBills();
+                            await this.updateStats();
+                        } catch (e) {
+                            console.error('Error handling real-time bills update (tenant):', e);
+                        }
+                    });
+
+                    // initial load
+                    await this.loadBills();
+                    await this.updateStats();
+                }
+
+                // If user exists but no real-time listeners available, fall back to normal load
+                else {
+                    await this.loadBills();
+                    await this.updateStats();
+                }
+            } else {
+                await this.loadBills();
+                await this.updateStats();
+            }
             window.hideBillingError();
         } catch (error) {
             console.error('Error initializing billing:', error);
@@ -82,6 +148,13 @@ class BillingController {
         if (this.statusFilter) {
             filtered = filtered.filter(bill => bill.status === this.statusFilter);
         }
+
+        // Sort by creation date (most recent first)
+        filtered.sort((a, b) => {
+            const dateA = new Date(a.createdAt || 0);
+            const dateB = new Date(b.createdAt || 0);
+            return dateB - dateA;
+        });
 
         window.displayBills(filtered);
     }
@@ -238,6 +311,18 @@ class BillingController {
      */
     getOverdueBills() {
         return this.allBills.filter(b => b.status === 'overdue');
+    }
+
+    // Unsubscribe from real-time listeners when controller is no longer needed
+    destroy() {
+        try {
+            if (this.billsUnsub) {
+                try { this.billsUnsub(); } catch(e) { /* ignore */ }
+                this.billsUnsub = null;
+            }
+        } catch (e) {
+            console.warn('Error while destroying BillingController listeners:', e);
+        }
     }
 
     /**
