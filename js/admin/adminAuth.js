@@ -325,15 +325,21 @@ if (window.AdminAuthClass) {
                 await this.initFirestore();
             }
             
-            // Check if user is in admin collection
-            const adminDoc = await this.adminDb.collection('admin_users').doc(user.uid).get();
+            // Query admin_users collection by email instead of UID
+            const adminSnapshot = await this.adminDb
+                .collection('admin_users')
+                .where('email', '==', user.email)
+                .limit(1)
+                .get();
             
-            if (!adminDoc.exists) {
+            if (adminSnapshot.empty) {
                 await this.adminAuth.signOut();
                 throw new Error('Access denied. Not an administrator.');
             }
             
+            const adminDoc = adminSnapshot.docs[0];
             const adminData = adminDoc.data();
+            const adminDocId = adminDoc.id;
             
             // Check if admin account is active
             if (adminData.is_active === false) {
@@ -349,7 +355,7 @@ if (window.AdminAuthClass) {
             
             // Update last login
             try {
-                await this.adminDb.collection('admin_users').doc(user.uid).update({
+                await this.adminDb.collection('admin_users').doc(adminDocId).update({
                     last_login: new Date().toISOString(),
                     login_count: (adminData.login_count || 0) + 1
                 });
@@ -495,9 +501,15 @@ if (window.AdminAuthClass) {
             try {
                 // Check if user is admin
                 if (this.adminDb) {
-                    const adminDoc = await this.adminDb.collection('admin_users').doc(user.uid).get();
+                    // Query admin_users collection by email instead of UID
+                    const adminSnapshot = await this.adminDb
+                        .collection('admin_users')
+                        .where('email', '==', user.email)
+                        .limit(1)
+                        .get();
                     
-                    if (adminDoc.exists) {
+                    if (!adminSnapshot.empty) {
+                        const adminDoc = adminSnapshot.docs[0];
                         const adminData = adminDoc.data();
                         this.currentAdmin = {
                             uid: user.uid,

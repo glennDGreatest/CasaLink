@@ -294,7 +294,7 @@
             font-size: 15px;
         }
 
-        .badge {
+        .badge, .status-badge {
             display: inline-flex;
             align-items: center;
             gap: 6px;
@@ -304,27 +304,29 @@
             font-weight: 600;
         }
 
-        .badge.paid {
+        .badge.paid, .status-badge.paid {
             background: #dcfce7;
             color: #166534;
         }
 
-        .badge.verified {
+        .badge.verified, .status-badge.verified {
             background: #dcfce7;
             color: #166534;
         }
 
-        .badge.waiting {
+        .badge.waiting, .status-badge.waiting {
+            background: linear-gradient(135deg, #fff4e6 0%, #ffd8a8 100%);
+            color: #b45309;
+            border: 1px solid rgba(180,83,9,0.08);
+            box-shadow: 0 6px 18px rgba(180,83,9,0.06);
+        }
+
+        .badge.pending, .status-badge.pending {
             background: #fef3c7;
             color: #92400e;
         }
 
-        .badge.pending {
-            background: #fef3c7;
-            color: #92400e;
-        }
-
-        .badge.overdue {
+        .badge.overdue, .status-badge.overdue {
             background: #fee2e2;
             color: #991b1b;
         }
@@ -556,6 +558,7 @@
                 <option value="paid">Paid</option>
                 <option value="pending">Pending</option>
                 <option value="overdue">Overdue</option>
+                <option value="awaiting_payment_verification">Awaiting Payment Verification</option>
             </select>
         </div>
 
@@ -656,6 +659,8 @@
             switch(status?.toLowerCase()) {
                 case 'paid': return '<i class="fas fa-check-circle"></i>';
                 case 'payment_pending': return '<i class="fas fa-hourglass-half"></i>';
+                case 'awaiting_verification': return '<i class="fas fa-hourglass-half"></i>';
+                case 'awaiting_payment_verification': return '<i class="fas fa-hourglass-half"></i>';
                 case 'pending': return '<i class="fas fa-hourglass-half"></i>';
                 case 'overdue': return '<i class="fas fa-exclamation-circle"></i>';
                 default: return '';
@@ -670,7 +675,7 @@
             if (!bills || bills.length === 0) {
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="empty-state">
+                        <td colspan="8" class="empty-state">
                             <div class="empty-state-icon">
                                 <i class="fas fa-inbox"></i>
                             </div>
@@ -693,14 +698,22 @@
                 } else if (rawStatus === 'overdue') {
                     statusClass = 'overdue';
                     statusText = 'Overdue';
-                } else if (rawStatus === 'payment_pending') {
-                    statusClass = 'pending';
-                    statusText = 'Pending Payment';
+                } else if (rawStatus === 'payment_pending' || rawStatus === 'waiting_verification' || rawStatus === 'pending_verification' || rawStatus === 'awaiting_verification') {
+                    statusClass = 'waiting';
+                    statusText = 'Awaiting Payment Verification';
                 } else if (rawStatus === 'pending') {
                     statusClass = 'pending';
                     statusText = 'Pending';
                 }
                 const statusIcon = getStatusBadgeIcon(rawStatus);
+
+                // Payment verification column: if bill status is 'pending' there is no payment to verify
+                let paymentVerificationClass = bill.isPaymentVerified ? 'verified' : 'waiting';
+                let paymentVerificationText = bill.isPaymentVerified ? 'Payment Verified' : 'Awaiting Payment Verification';
+                if (rawStatus === 'pending') {
+                    paymentVerificationClass = 'pending';
+                    paymentVerificationText = 'NO PAYMENT TO VERIFY';
+                }
 
                 html += `
                     <tr data-bill-id="${bill.id}">
@@ -713,11 +726,11 @@
                         <td class="amount">${formatCurrencyPhp(bill.amount || bill.totalAmount || 0)}</td>
                         <td>${formatDateLocal(bill.dueDate || bill.due)}</td>
                                 <td>
-                                    <span class="badge ${statusClass}">${statusIcon} ${statusText}</span>
+                                    <span class="status-badge ${statusClass}">${statusIcon} ${statusText}</span>
                                 </td>
                                 <td>
-                                    <span class="badge ${bill.isPaymentVerified ? 'verified' : 'waiting'}">
-                                        ${bill.isPaymentVerified ? 'Payment Verified' : 'Awaiting Payment Verification'}
+                                    <span class="status-badge ${paymentVerificationClass}">
+                                        ${paymentVerificationText}
                                     </span>
                                 </td>
                         <td class="actions">

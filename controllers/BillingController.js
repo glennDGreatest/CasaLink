@@ -146,7 +146,11 @@ class BillingController {
         }
 
         if (this.statusFilter) {
-            filtered = filtered.filter(bill => bill.status === this.statusFilter);
+            if (this.statusFilter === 'awaiting_verification' || this.statusFilter === 'awaiting_payment_verification') {
+                filtered = filtered.filter(bill => !bill.isPaymentVerified);
+            } else {
+                filtered = filtered.filter(bill => bill.status === this.statusFilter);
+            }
         }
 
         // Sort by creation date (most recent first)

@@ -3525,8 +3525,15 @@ class CasaLink {
                 }
             }
 
+            // If we found a lease for this unit, ensure the unit is marked occupied
+            const finalStatus = leaseInfo ? 'occupied' : (unit.status || 'vacant');
+            const finalIsAvailable = leaseInfo ? false : (unit.isAvailable !== undefined ? unit.isAvailable : (finalStatus === 'vacant'));
+
             return {
                 ...unit,
+                status: finalStatus,
+                isAvailable: finalIsAvailable,
+                occupiedBy: leaseInfo?.tenantId || unit.occupiedBy || null,
                 tenantName: leaseInfo?.tenantName || null,
                 tenantEmail: leaseInfo?.tenantEmail || null,
                 numberOfMembers: leaseInfo?.totalOccupants || unit.numberOfMembers || 0,
@@ -5203,6 +5210,29 @@ class CasaLink {
             
             const room = roomDoc.data();
             console.log('📦 Room data loaded:', room);
+            // Resolve a human-friendly apartment name to show in the modal header
+            let apartmentDisplayName = room.apartmentName || room.name || null;
+            try {
+                if (!apartmentDisplayName) {
+                    // Try to get apartment by apartmentId
+                    if (room.apartmentId) {
+                        const aptDoc = await firebaseDb.collection('apartments').doc(room.apartmentId).get();
+                        if (aptDoc && aptDoc.exists) {
+                            const aptData = aptDoc.data();
+                            apartmentDisplayName = aptData.apartmentName || aptData.name || aptData.apartmentAddress || null;
+                        }
+                    }
+
+                    // Fallback: try to match by apartmentAddress against cached apartmentsList
+                    if (!apartmentDisplayName && room.apartmentAddress && this.apartmentsList && Array.isArray(this.apartmentsList)) {
+                        const found = this.apartmentsList.find(a => (a.apartmentAddress || a.address || '').trim() === (room.apartmentAddress || '').trim());
+                        if (found) apartmentDisplayName = found.apartmentName || found.name || found.apartmentAddress || null;
+                    }
+                }
+            } catch (err) {
+                console.warn('⚠️ Could not resolve apartment name for modal header:', err.message);
+            }
+            if (!apartmentDisplayName) apartmentDisplayName = room.apartmentAddress || 'Apartment';
             
             // Format dates
             const createdDate = room.createdAt ? 
@@ -5379,9 +5409,10 @@ class CasaLink {
                     <!-- Header with room number and status -->
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; padding-bottom: 15px; border-bottom: 2px solid #f0f0f0;">
                         <div>
-                            <h4 style="margin: 0; color: var(--royal-blue);">Unit ${room.roomNumber || 'N/A'}</h4>
-                            <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">Floor ${room.floor || 'N/A'}</p>
-                        </div>
+                                ${apartmentDisplayName ? `<div style="font-size:0.95rem; color: var(--dark-gray); margin-bottom:6px; font-weight:600;">${apartmentDisplayName}</div>` : ''}
+                                <h4 style="margin: 0; color: var(--royal-blue);">Unit ${room.roomNumber || 'N/A'}</h4>
+                                <p style="margin: 5px 0 0 0; color: #666; font-size: 0.9em;">Floor ${room.floor || 'N/A'}</p>
+                            </div>
                         <div style="padding: 8px 16px; background: ${room.isAvailable === false ? 'var(--success)' : '#e9ecef'}; color: ${room.isAvailable === false ? 'white' : '#666'}; border-radius: 20px; font-weight: 600; font-size: 0.9em;">
                             ${room.isAvailable === false ? 'OCCUPIED' : 'VACANT'}
                         </div>
@@ -6214,61 +6245,82 @@ class CasaLink {
             let generatedCount = 0;
             let skippedCount = 0;
             
-            const billPromises = leases.map(async (lease) => {
-                // Enhanced validation
-                if (!lease.isActive) {
-                    skippedCount++;
-                    return;
-                }
-                
-                if (!lease.monthlyRent || lease.monthlyRent <= 0) {
-                    console.warn(`⚠️ Skipping ${lease.tenantName}: Invalid rent amount`);
-                    skippedCount++;
-                    return;
-                }
-                
-                // Check for existing bill this month
-                const existingBill = await firebaseDb.collection('bills')
-                    .where('tenantId', '==', lease.tenantId)
-                    .where('dueDate', '>=', new Date(currentYear, currentMonth, 1).toISOString())
-                    .where('dueDate', '<=', new Date(currentYear, currentMonth + 1, 0).toISOString())
-                    .limit(1)
-                    .get();
+            // Process leases sequentially to prevent race conditions and duplicates
+            for (const lease of leases) {
+                try {
+                    // Enhanced validation
+                    if (!lease.isActive) {
+                        skippedCount++;
+                        continue;
+                    }
                     
-                if (existingBill.empty) {
-                    const paymentDay = lease.paymentDueDay || settings?.defaultPaymentDay || 5;
-                    const dueDate = new Date(currentYear, currentMonth, paymentDay);
+                    if (!lease.monthlyRent || lease.monthlyRent <= 0) {
+                        console.warn(`⚠️ Skipping ${lease.tenantName}: Invalid rent amount`);
+                        skippedCount++;
+                        continue;
+                    }
                     
-                    const billData = {
-                        tenantId: lease.tenantId,
-                        landlordId: lease.landlordId,
-                        tenantName: lease.tenantName,
-                        roomNumber: lease.roomNumber,
-                        type: 'rent',
-                        description: `Monthly Rent - ${today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`,
-                        totalAmount: lease.monthlyRent,
-                        dueDate: dueDate.toISOString(),
-                        status: 'pending',
-                        createdAt: new Date().toISOString(),
-                        isAutoGenerated: true,
-                        items: [
-                            {
-                                description: 'Monthly Rent',
-                                amount: lease.monthlyRent,
-                                type: 'rent'
-                            }
-                        ]
-                    };
-                    
-                    await firebaseDb.collection('bills').add(billData);
-                    generatedCount++;
-                    console.log(`✅ Generated bill for ${lease.tenantName} (Due: ${paymentDay}${this.getOrdinalSuffix(paymentDay)})`);
-                } else {
+                    // Check for existing bill this month
+                    const existingBill = await firebaseDb.collection('bills')
+                        .where('tenantId', '==', lease.tenantId)
+                        .where('type', '==', 'rent')
+                        .where('dueDate', '>=', new Date(currentYear, currentMonth, 1).toISOString())
+                        .where('dueDate', '<=', new Date(currentYear, currentMonth + 1, 0).toISOString())
+                        .limit(1)
+                        .get();
+                        
+                    if (existingBill.empty) {
+                        const paymentDay = lease.paymentDueDay || settings?.defaultPaymentDay || 5;
+                        const dueDate = new Date(currentYear, currentMonth, paymentDay);
+                        
+                        const billData = {
+                            tenantId: lease.tenantId,
+                            landlordId: lease.landlordId,
+                            tenantName: lease.tenantName,
+                            roomNumber: lease.roomNumber,
+                            type: 'rent',
+                            description: `Monthly Rent - ${today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`,
+                            totalAmount: lease.monthlyRent,
+                            dueDate: dueDate.toISOString(),
+                            status: 'pending',
+                            createdAt: new Date().toISOString(),
+                            isAutoGenerated: true,
+                            items: [
+                                {
+                                    description: 'Monthly Rent',
+                                    amount: lease.monthlyRent,
+                                    type: 'rent'
+                                }
+                            ]
+                        };
+                        
+                        // ✅ SECONDARY CHECK: Verify no bill was just created by another process
+                        const finalCheckSnap = await firebaseDb.collection('bills')
+                            .where('tenantId', '==', lease.tenantId)
+                            .where('type', '==', 'rent')
+                            .where('dueDate', '>=', new Date(currentYear, currentMonth, 1).toISOString())
+                            .where('dueDate', '<=', new Date(currentYear, currentMonth + 1, 0).toISOString())
+                            .limit(1)
+                            .get();
+                        
+                        if (finalCheckSnap.empty) {
+                            // Safe to create the bill now
+                            await firebaseDb.collection('bills').add(billData);
+                            generatedCount++;
+                            console.log(`✅ Generated bill for ${lease.tenantName} (Due: ${paymentDay}${this.getOrdinalSuffix(paymentDay)})`);
+                        } else {
+                            skippedCount++;
+                            console.log(`⏭️ Bill was created by another process before we could create it for ${lease.tenantName} - duplicate prevented`);
+                        }
+                    } else {
+                        skippedCount++;
+                        console.log(`⏭️ Bill already exists for ${lease.tenantName} for current month`);
+                    }
+                } catch (error) {
+                    console.error(`❌ Error generating bill for lease ${lease.tenantName}:`, error);
                     skippedCount++;
                 }
-            });
-            
-            await Promise.all(billPromises);
+            }
             
             console.log(`✅ Monthly bills generation completed: ${generatedCount} generated, ${skippedCount} skipped`);
             return {
@@ -6369,7 +6421,15 @@ class CasaLink {
     async generateMonthlyBills() {
         try {
             const result = await DataManager.generateMonthlyBills();
-            this.showNotification('Monthly bills generated successfully!', 'success');
+            
+            // Provide detailed feedback based on what was generated
+            if (result.generated > 0) {
+                this.showNotification(`✅ Generated ${result.generated} missing monthly bill(s). ${result.skipped} tenant(s) already had bills for this month.`, 'success');
+            } else if (result.skipped > 0) {
+                this.showNotification(`ℹ️ No new bills generated. All ${result.skipped} tenant(s) already have monthly bill(s) for this month.`, 'info');
+            } else {
+                this.showNotification('No active tenants found to generate bills for.', 'info');
+            }
             
             // Refresh bills data
             setTimeout(() => {
@@ -10925,6 +10985,10 @@ class CasaLink {
                 const paymentStatus = (payment.status || '').toLowerCase();
                 
                 switch(statusFilter.toLowerCase()) {
+                    case 'verified':
+                        return paymentStatus === 'verified' || paymentStatus === 'completed';
+                    case 'awaiting_verification':
+                        return paymentStatus === 'awaiting_verification' || paymentStatus === 'waiting_verification' || paymentStatus === 'pending_verification';
                     case 'pending':
                         return paymentStatus === 'waiting_verification' || paymentStatus === 'pending_verification';
                     case 'completed':
@@ -10948,7 +11012,7 @@ class CasaLink {
             this.paymentsFilteredData = [...this.paymentsAllData];
         } else {
             this.paymentsFilteredData = this.paymentsAllData.filter(payment => 
-                payment.paymentMethod?.toLowerCase().includes(method.toLowerCase())
+                payment.paymentMethod?.toLowerCase() === method.toLowerCase()
             );
         }
         
@@ -10966,6 +11030,7 @@ class CasaLink {
             this.paymentsFilteredData = this.paymentsAllData.filter(payment => 
                 payment.tenantName?.toLowerCase().includes(searchLower) ||
                 payment.roomNumber?.toLowerCase().includes(searchLower) ||
+                payment.apartment?.toLowerCase().includes(searchLower) ||
                 payment.paymentMethod?.toLowerCase().includes(searchLower) ||
                 payment.referenceNumber?.toLowerCase().includes(searchLower)
             );
@@ -14632,7 +14697,7 @@ class CasaLink {
                                     <strong>Rental Bills</strong> are automatically generated on the <strong>1st</strong> of each month.
                                 </p>
                                 <p style="margin: 0 0 8px 0;">
-                                    If app is <strong>not opened</strong> on the <strong>1st</strong> of the month, <strong>Manually Click</strong> the <strong>"Generate Monthly Bills"</strong> and <strong>"Apply Late Fees"</strong> button to create bills for the month.
+                                    If app is <strong>not opened</strong> on the <strong>1st</strong> of the month, <strong>Manually Click</strong> the <strong>"Generate Monthly Rental Bills"</strong> and <strong>"Apply Late Fees"</strong> button to create bills for the month.
                                 </p>
                                 ${settings.autoLateFees ? `<p style="margin: 0;"><strong>Auto late fees: ₱${settings.lateFeeAmount} ${settings.lateFeeAfterDays}</strong> days after due date</p>` : ''}
                             </div>
@@ -15276,7 +15341,7 @@ class CasaLink {
         const normalizedStatus = (status || 'completed').toLowerCase();
         
         if (normalizedStatus === 'waiting_verification' || normalizedStatus === 'pending_verification') {
-            return '<span class="status-badge warning">⏳ Waiting Verification</span>';
+            return '<span class="status-badge waiting">⏳ Waiting Verification</span>';
         } else if (normalizedStatus === 'verified') {
             return '<span class="status-badge active">✓ Verified</span>';
         } else if (normalizedStatus === 'completed') {
@@ -15831,10 +15896,10 @@ class CasaLink {
                 <div class="empty-state">
                     <i class="fas fa-file-invoice-dollar"></i>
                     <h3>No Bills Found</h3>
-                    <p>No bills have been created yet. Generate monthly bills or create a custom bill.</p>
+                    <p>No bills have been created yet. Generate monthly  bills or create a custom bill.</p>
                     <div style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">
                         <button class="btn btn-primary" onclick="casaLink.forceGenerateBills()">
-                            Generate Monthly Bills
+                            Generate Monthly Rental Bills
                         </button>
                         <button class="btn btn-secondary" onclick="casaLink.showCreateBillForm()">
                             Create Custom Bill
@@ -15916,7 +15981,7 @@ class CasaLink {
                 return;
             }
 
-            const bill = { id: billDoc.id, ...billDoc.data() };
+            const bill = { id: billDoc.id, ...DataManager.normalizeBill(billDoc.data()) };
             
             // Generate bill details content
             const billDetailsContent = this.generateBillDetailsContent(bill);
@@ -16102,7 +16167,7 @@ class CasaLink {
         } else if (bill.status === 'overdue') {
             return '<span class="status-badge warning">Overdue</span>';
         } else if (bill.status === 'payment_pending' || bill.status === 'pending_verification') {
-            return '<span class="status-badge info">Awaiting Payment Verification</span>';
+            return '<span class="status-badge waiting">Awaiting Payment Verification</span>';
         } else if (bill.status === 'pending') {
             // For pending status, check if it's actually overdue by comparing dates
             const today = new Date();
@@ -16325,7 +16390,7 @@ class CasaLink {
         } else if (bill.status === 'overdue') {
             return '<span class="status-badge warning">Overdue</span>';
         } else if (bill.status === 'payment_pending' || bill.status === 'pending_verification') {
-            return '<span class="status-badge info">Awaiting Payment Verification</span>';
+            return '<span class="status-badge waiting">Awaiting Payment Verification</span>';
         } else if (bill.status === 'pending') {
             // For pending status, check if it's actually overdue by comparing dates
             const today = new Date();
@@ -16402,33 +16467,45 @@ class CasaLink {
         try {
             console.log('🔄 Force generating monthly bills...');
             
+            // Check if already generating
+            if (DataManager.isGeneratingBills) {
+                this.showNotification('Bill generation is already in progress. Please wait...', 'info');
+                return;
+            }
+            
             // Clear the generation flag to force creation
             const today = new Date();
             localStorage.removeItem(`bills_generated_${today.getFullYear()}_${today.getMonth()}`);
             
             if (window.setBillingLoading) window.setBillingLoading(true);
-            const result = await DataManager.generateMonthlyBills();
+            
+            // Try generating for current month first
+            const result = await DataManager.generateMonthlyBills({ monthOffset: 0 });
             
             if (!result) {
                 throw new Error('Bill generation returned no result');
+            }
+
+            // Check for error in response
+            if (result.error) {
+                this.showNotification(result.error, 'warning');
+                return;
             }
             
             console.log('📊 Bill generation result:', result);
             
             if (result.generated === 0 && result.skipped > 0) {
-                this.showNotification(
-                    'No outdated bills to create for this month',
-                    'info'
-                );
+                // All tenants already have bills for this month - no duplicates will be created
+                this.showNotification('✅ All tenants already have rental bills for this month', 'info');
             } else if (result.generated > 0) {
                 this.showNotification(
-                    `Generated ${result.generated} new bills, ${result.skipped} already existed`, 
+                    `✅ Generated ${result.generated} new bills, ${result.skipped} already existed`, 
                     'success'
                 );
             } else {
                 this.showNotification(
-                    `No bills generated. ${result.skipped} existing, ${result.errors} errors`,
-                    'warning'
+                    `All tenants already have rental bills for this month. ${result.skipped} existing`,
+                    'info'
                 );
             }
             
@@ -16791,7 +16868,7 @@ class CasaLink {
                 return;
             }
             
-            const bill = { id: billDoc.id, ...billDoc.data() };
+            const bill = { id: billDoc.id, ...DataManager.normalizeBill(billDoc.data()) };
 
             // Build bill details section
             const billDetailsHTML = `
@@ -17127,10 +17204,10 @@ class CasaLink {
             <div class="empty-state">
                 <i class="fas fa-file-invoice-dollar"></i>
                 <h3>No Bills Found</h3>
-                <p>No bills have been created yet. Generate monthly bills or create a custom bill.</p>
+                <p>No bills have been created yet. Generate monthly rental bills or create a custom bill.</p>
                 <div style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">
                     <button class="btn btn-primary" onclick="casaLink.forceGenerateBills()">
-                        Generate Monthly Bills
+                        Generate Monthly Rental Bills
                     </button>
                     <button class="btn btn-secondary" onclick="casaLink.showCreateBillForm()">
                         Create Custom Bill
@@ -17255,7 +17332,7 @@ class CasaLink {
                         <i class="fas fa-plus"></i> Create Custom Bill
                     </button>
                     <button class="btn btn-secondary" onclick="casaLink.forceGenerateBills()">
-                        <i class="fas fa-sync"></i> Generate Monthly Bills
+                        <i class="fas fa-sync"></i> Generate Monthly Rental Bills
                     </button>
                     <button class="btn btn-warning" onclick="casaLink.applyLateFeesManually()">
                         <i class="fas fa-clock"></i> Apply Late Fees
@@ -18595,7 +18672,7 @@ class CasaLink {
     }
 
     // Landlord creates tenant accounts
-    async showAddTenantForm() {
+    async showAddTenantForm(preselectedRoom = null) {
         // Fetch available rooms from Firestore (scoped to selected apartment)
         const availableRooms = await this.getAvailableRooms();
 
@@ -18660,11 +18737,16 @@ class CasaLink {
                 <div class="form-group">
                     <label class="form-label">Age *</label>
                     <input type="number" id="tenantAge" class="form-input" placeholder="25" min="18" required>
+                    <div id="tenantAgeError" style="color: var(--danger); margin-top:6px; display:none; font-size:0.9rem;">Unrealistic age, please put your true age.</div>
                 </div>
-                
+
                 <div class="form-group">
                     <label class="form-label">Phone Number *</label>
-                    <input type="tel" id="tenantPhone" class="form-input" placeholder="+63 912 345 6789" required>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <div style="padding:8px 12px; background:#f0f0f0; border-radius:6px; color: #333;">+63</div>
+                        <input type="tel" id="tenantPhoneLocal" class="form-input" placeholder="9123456789" maxlength="10" required style="flex:1;">
+                    </div>
+                    <div id="tenantPhoneError" style="color: var(--danger); margin-top:6px; display:none; font-size:0.9rem;">Please enter a valid 10-digit Philippine mobile number (e.g. 9310458541)</div>
                 </div>
                 
                 <div class="form-group">
@@ -18693,6 +18775,12 @@ class CasaLink {
                     <input type="text" id="rentalAddress" class="form-input" value="${rentalAddress}" readonly>
                     <small style="color: var(--dark-gray);">Auto-filled from selected apartment</small>
                 </div>
+
+                <div class="form-group">
+                    <label class="form-label">Apartment Name</label>
+                    <input type="text" id="apartmentName" class="form-input" value="" readonly>
+                    <small style="color: var(--dark-gray);">Auto-filled from selected unit</small>
+                </div>
                 
                 <div class="form-group">
                     <label class="form-label">Monthly Rental Amount (₱) *</label>
@@ -18707,16 +18795,6 @@ class CasaLink {
                 </div>
                 
                 <div class="form-group">
-                    <label class="form-label">Payment Method</label>
-                    <select id="paymentMethod" class="form-input" ${availableRooms.length === 0 ? 'disabled' : ''}>
-                        <option value="Cash">Cash</option>
-                        <option value="Bank Transfer">Bank Transfer</option>
-                        <option value="GCash">GCash</option>
-                        <option value="Maya">Maya</option>
-                    </select>
-                </div>
-                
-                <div class="form-group">
                     <label class="form-label">Date of Entry *</label>
                     <input type="date" id="dateOfEntry" class="form-input" required ${availableRooms.length === 0 ? 'disabled' : ''}>
                 </div>
@@ -18724,19 +18802,13 @@ class CasaLink {
                 <div class="form-group">
                     <label class="form-label">Date of 1st Payment *</label>
                     <input type="date" id="firstPaymentDate" class="form-input" required ${availableRooms.length === 0 ? 'disabled' : ''}>
+                    <small style="color: var(--dark-gray);">The Day of Payment will be auto-filled based on this date</small>
                 </div>
                 
                 <div class="form-group">
                     <label class="form-label">Day of Payment *</label>
-                    <select id="paymentDay" class="form-input" required ${availableRooms.length === 0 ? 'disabled' : ''}>
-                        <option value="">Select payment day</option>
-                        <option value="5">5th of the month</option>
-                        <option value="10">10th of the month</option>
-                        <option value="15">15th of the month</option>
-                        <option value="20">20th of the month</option>
-                        <option value="25">25th of the month</option>
-                        <option value="30">30th of the month</option>
-                    </select>
+                    <input type="date" id="paymentDay" class="form-input" required ${availableRooms.length === 0 ? 'disabled' : ''} readonly>
+                    <small style="color: var(--dark-gray);">Auto-filled from Date of 1st Payment</small>
                 </div>
                 
                 <div id="tenantCreationResult" style="display: none; margin-top: 15px; padding: 10px; border-radius: 8px;"></div>
@@ -18749,20 +18821,79 @@ class CasaLink {
             onSubmit: availableRooms.length === 0 ? () => {} : () => this.validateTenantForm()
         });
 
-        // Only set up dates and event listeners if there are available rooms
-        if (availableRooms.length > 0) {
+        // Set up dates and event listeners (always run so date defaults and payment-day autofill work)
             setTimeout(() => {
-                const today = new Date().toISOString().split('T')[0];
-                const firstPayment = new Date();
-                firstPayment.setDate(firstPayment.getDate() + 5);
-                
-                document.getElementById('dateOfEntry').value = today;
-                document.getElementById('firstPaymentDate').value = firstPayment.toISOString().split('T')[0];
+                // Use local date components to avoid timezone shifts (toISOString uses UTC)
+                const now = new Date();
+                const pad = (n) => String(n).padStart(2, '0');
+                const todayLocal = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+                const firstPaymentDateObj = new Date(now);
+                firstPaymentDateObj.setDate(firstPaymentDateObj.getDate() + 5);
+                const firstPaymentLocal = `${firstPaymentDateObj.getFullYear()}-${pad(firstPaymentDateObj.getMonth() + 1)}-${pad(firstPaymentDateObj.getDate())}`;
+
+                document.getElementById('dateOfEntry').value = todayLocal;
+                document.getElementById('firstPaymentDate').value = firstPaymentLocal;
                 
                 // Add event listener for room selection
                 this.setupRoomSelectionWithMemberInfo();
+                
+                // Add event listener for Date of 1st Payment to auto-fetch Day of Payment
+                this.setupPaymentDateAutofetch();
+                
+                // Auto-populate the Day of Payment based on initial first payment date
+                this.updatePaymentDayFromFirstPaymentDate();
+
+                // Phone validation: ensure only digits, max length 10, show/hide error
+                const phoneLocal = document.getElementById('tenantPhoneLocal');
+                const phoneError = document.getElementById('tenantPhoneError');
+                if (phoneLocal) {
+                    phoneLocal.addEventListener('input', (ev) => {
+                        // Remove non-digits
+                        const onlyDigits = ev.target.value.replace(/\D/g, '').slice(0, 10);
+                        if (ev.target.value !== onlyDigits) ev.target.value = onlyDigits;
+
+                        if (onlyDigits.length === 10) {
+                            if (phoneError) phoneError.style.display = 'none';
+                        } else {
+                            if (phoneError) phoneError.style.display = 'block';
+                        }
+                    });
+                }
+
+                // Age validation: unrealistic >99
+                const ageInput = document.getElementById('tenantAge');
+                const ageError = document.getElementById('tenantAgeError');
+                if (ageInput) {
+                    ageInput.addEventListener('input', (ev) => {
+                        const val = parseInt(ev.target.value, 10);
+                        if (!isNaN(val) && val > 99) {
+                            if (ageError) ageError.style.display = 'block';
+                        } else {
+                            if (ageError) ageError.style.display = 'none';
+                        }
+                    });
+                }
+
+                // If a room was pre-selected, auto-select it in the dropdown
+                if (preselectedRoom) {
+                    const roomSelect = document.getElementById('roomNumber');
+                    if (roomSelect) {
+                        roomSelect.value = preselectedRoom;
+                        
+                        // Trigger change event to populate rental amount and security deposit
+                        const event = new Event('change', { bubbles: true });
+                        roomSelect.dispatchEvent(event);
+                        
+                        // Focus on tenant name field for better UX
+                        const tenantNameInput = document.getElementById('tenantName');
+                        if (tenantNameInput) {
+                            tenantNameInput.focus();
+                        }
+                        
+                        console.log('✅ Room pre-selected:', preselectedRoom);
+                    }
+                }
             }, 100);
-        }
 
         this.addTenantModal = modal;
     }
@@ -18771,36 +18902,8 @@ class CasaLink {
     async startAddTenantForUnit(roomNumber) {
         console.log('🏠 Starting tenant addition for unit:', roomNumber);
         
-        // First, show the regular add tenant form
-        await this.showAddTenantForm();
-        
-        // Then pre-fill the room number
-        setTimeout(() => {
-            const roomSelect = document.getElementById('roomNumber');
-            if (roomSelect) {
-                // Find and select the room
-                const options = Array.from(roomSelect.options);
-                const roomOption = options.find(opt => opt.value === roomNumber);
-                
-                if (roomOption) {
-                    roomSelect.value = roomNumber;
-                    
-                    // Trigger change event to populate other fields
-                    const event = new Event('change', { bubbles: true });
-                    roomSelect.dispatchEvent(event);
-                    
-                    // Focus on tenant name field for better UX
-                    const tenantNameInput = document.getElementById('tenantName');
-                    if (tenantNameInput) {
-                        tenantNameInput.focus();
-                    }
-                    
-                    console.log('✅ Room pre-filled:', roomNumber);
-                } else {
-                    console.warn('⚠️ Room not found in options:', roomNumber);
-                }
-            }
-        }, 100);
+        // Show the add tenant form with the pre-selected room
+        await this.showAddTenantForm(roomNumber);
     }
 
     setupRoomSelectionWithMemberInfo() {
@@ -18813,6 +18916,7 @@ class CasaLink {
         if (roomSelect) {
             roomSelect.addEventListener('change', (e) => {
                 const selectedOption = e.target.options[e.target.selectedIndex];
+                const aptNameInput = document.getElementById('apartmentName');
                 if (selectedOption.value) {
                     const rent = selectedOption.getAttribute('data-rent');
                     const deposit = selectedOption.getAttribute('data-deposit');
@@ -18830,6 +18934,46 @@ class CasaLink {
                         // Store max members for later use
                         this.selectedRoomMaxMembers = memberLimit;
                     }
+
+                    // Try to populate apartment name field based on room info
+                    (async () => {
+                        try {
+                            if (!aptNameInput) return;
+                            // Get room document to find apartment context
+                            const roomInfo = await this.getRoomByNumber(selectedOption.value);
+                            if (roomInfo) {
+                                if (roomInfo.apartmentName) {
+                                    aptNameInput.value = roomInfo.apartmentName;
+                                    return;
+                                }
+                                if (roomInfo.apartmentId) {
+                                    const aptDoc = await firebaseDb.collection('apartments').doc(roomInfo.apartmentId).get();
+                                    if (aptDoc && aptDoc.exists) {
+                                        const aptData = aptDoc.data();
+                                        aptNameInput.value = aptData.apartmentName || aptData.name || aptData.apartmentAddress || '';
+                                        return;
+                                    }
+                                }
+                                if (roomInfo.apartmentAddress) {
+                                    // Try cached apartments list
+                                    if (this.apartmentsList && Array.isArray(this.apartmentsList)) {
+                                        const found = this.apartmentsList.find(a => (a.apartmentAddress || '').trim() === (roomInfo.apartmentAddress || '').trim());
+                                        if (found) {
+                                            aptNameInput.value = found.apartmentName || found.name || found.apartmentAddress || '';
+                                            return;
+                                        }
+                                    }
+                                    aptNameInput.value = roomInfo.apartmentAddress || '';
+                                    return;
+                                }
+                            }
+
+                            // Fallback to current apartment context
+                            aptNameInput.value = this.currentApartmentAddress || '';
+                        } catch (err) {
+                            console.warn('⚠️ Could not auto-fill apartment name:', err.message);
+                        }
+                    })();
                 } else {
                     rentalAmountInput.value = '';
                     securityDepositInput.value = '';
@@ -18837,8 +18981,58 @@ class CasaLink {
                         memberLimitInfo.style.display = 'none';
                     }
                     this.selectedRoomMaxMembers = null;
+                    if (aptNameInput) aptNameInput.value = '';
                 }
             });
+        }
+    }
+
+    setupPaymentDateAutofetch() {
+        const firstPaymentDateInput = document.getElementById('firstPaymentDate');
+        const paymentDaySelect = document.getElementById('paymentDay');
+        
+        if (firstPaymentDateInput && paymentDaySelect) {
+            firstPaymentDateInput.addEventListener('change', () => {
+                this.updatePaymentDayFromFirstPaymentDate();
+            });
+        }
+    }
+
+    updatePaymentDayFromFirstPaymentDate() {
+        const firstPaymentDateInput = document.getElementById('firstPaymentDate');
+        const paymentDaySelect = document.getElementById('paymentDay');
+        
+        if (firstPaymentDateInput && firstPaymentDateInput.value && paymentDaySelect) {
+            try {
+                // Parse the date from the input
+                const selectedDate = new Date(firstPaymentDateInput.value);
+                
+                // Get the day of the month
+                const dayOfMonth = selectedDate.getDate();
+                
+                console.log('📅 Date of 1st Payment:', firstPaymentDateInput.value, '| Day of month:', dayOfMonth);
+                
+                // Set the payment day input to match the Date of 1st Payment (same format)
+                // If `paymentDay` is an input[type=date], copy the exact value
+                if (paymentDaySelect.tagName && paymentDaySelect.tagName.toLowerCase() === 'input' && paymentDaySelect.type === 'date') {
+                    paymentDaySelect.value = firstPaymentDateInput.value;
+                    paymentDaySelect.disabled = true;
+                    console.log('✅ Payment day set to match first payment date:', paymentDaySelect.value);
+                } else {
+                    // legacy: if it's a select, fall back to previous behavior (day-of-month selection)
+                    const availablePaymentDays = [5, 10, 15, 20, 25, 30];
+                    let selectedPaymentDay = availablePaymentDays.find(day => day >= dayOfMonth);
+                    if (!selectedPaymentDay) selectedPaymentDay = availablePaymentDays[availablePaymentDays.length - 1];
+                    paymentDaySelect.value = selectedPaymentDay.toString();
+                    paymentDaySelect.disabled = true;
+                    console.log('✅ Auto-fetched payment day (legacy select):', selectedPaymentDay + 'th of the month');
+                }
+                
+            } catch (error) {
+                console.error('❌ Error updating payment day:', error);
+                paymentDaySelect.value = '';
+                paymentDaySelect.disabled = true;
+            }
         }
     }
 
@@ -19207,9 +19401,10 @@ class CasaLink {
     validateTenantForm() {
         const name = document.getElementById('tenantName')?.value;
         const email = document.getElementById('tenantEmail')?.value;
-        const phone = document.getElementById('tenantPhone')?.value;
+        const phoneLocal = document.getElementById('tenantPhoneLocal')?.value;
         const occupation = document.getElementById('tenantOccupation')?.value;
         const age = document.getElementById('tenantAge')?.value;
+        const apartmentNameVal = document.getElementById('apartmentName')?.value || '';
         const roomSelect = document.getElementById('roomNumber');
         const selectedRoom = roomSelect?.options[roomSelect.selectedIndex];
         const rentalAmount = document.getElementById('rentalAmount')?.value;
@@ -19217,6 +19412,7 @@ class CasaLink {
         const dateOfEntry = document.getElementById('dateOfEntry')?.value;
         const firstPaymentDate = document.getElementById('firstPaymentDate')?.value;
         const paymentDay = document.getElementById('paymentDay')?.value;
+        const paymentDayOfMonth = firstPaymentDate ? (new Date(firstPaymentDate).getDate()) : null;
 
         // Check if room select is disabled (no available rooms)
         if (roomSelect && roomSelect.disabled) {
@@ -19225,9 +19421,30 @@ class CasaLink {
         }
 
         // Validate required fields
-        if (!name || !email || !occupation || !age || !phone || !selectedRoom?.value ||
-            !rentalAmount || !securityDeposit || !dateOfEntry || !firstPaymentDate || !paymentDay) {
+        const rentalAmountNum = parseFloat(rentalAmount) || 0;
+        const securityDepositNum = parseFloat(securityDeposit) || 0;
+        
+        // Phone: ensure local part is exactly 10 digits
+        const phoneDigits = phoneLocal ? phoneLocal.replace(/\D/g, '') : '';
+        if (!name || !email || !occupation || !age || !phoneDigits || !selectedRoom?.value ||
+            rentalAmountNum <= 0 || securityDepositNum <= 0 || !dateOfEntry || !firstPaymentDate || !paymentDay) {
             this.showNotification('Please fill in all required fields', 'error');
+            return;
+        }
+
+        if (phoneDigits.length !== 10) {
+            const phoneError = document.getElementById('tenantPhoneError');
+            if (phoneError) phoneError.style.display = 'block';
+            this.showNotification('Phone number must be 10 digits (after the +63 prefix).', 'error');
+            return;
+        }
+
+        // Age realistic check
+        const ageNum = parseInt(age, 10);
+        if (!isNaN(ageNum) && ageNum > 99) {
+            const ageError = document.getElementById('tenantAgeError');
+            if (ageError) ageError.style.display = 'block';
+            this.showNotification('Unrealistic age entered. Please correct the age.', 'error');
             return;
         }
 
@@ -19235,18 +19452,26 @@ class CasaLink {
         this.pendingTenantData = {
             name: name,
             email: email,
-            phone: phone,
+            phone: `+63${phoneDigits}`,
             occupation: occupation,
             age: parseInt(age),
             roomNumber: selectedRoom.value, // Now this is the actual room number (e.g., "1A")
+            apartmentName: apartmentNameVal,
             rentalAddress: document.getElementById('rentalAddress')?.value || 'Lot 22 Zarate Compound Purok 4, Bakakent Norte, Baguio City',
             rentalAmount: rentalAmount ? parseFloat(rentalAmount) : 0,
             securityDeposit: securityDeposit ? parseFloat(securityDeposit) : 0,
-            paymentMethod: document.getElementById('paymentMethod')?.value || 'Cash',
             dateOfEntry: dateOfEntry,
             firstPaymentDate: firstPaymentDate,
-            paymentDay: paymentDay
+            paymentDay: paymentDay,
+            paymentDayOfMonth: paymentDayOfMonth,
+            landlordId: this.currentUser?.uid || null
         };
+        
+        console.log('✅ Tenant form validated and data stored:', {
+            roomNumber: this.pendingTenantData.roomNumber,
+            rentalAmount: this.pendingTenantData.rentalAmount,
+            landlordId: this.pendingTenantData.landlordId
+        });
 
         // Close the first modal and show lease agreement
         ModalManager.closeModal(this.addTenantModal);
@@ -19475,7 +19700,16 @@ class CasaLink {
                 }
                 
                 // Create lease document
-                await this.createLeaseDocument(result.tenantId, tenantData, leaseEndDate);
+                const leaseId = await this.createLeaseDocument(result.tenantId, tenantData, leaseEndDate);
+                
+                // Create rental bill for the new tenant
+                try {
+                    await this.createRentalBillForNewTenant(result.tenantId, tenantData, leaseId);
+                    console.log('✅ Rental bill created for new tenant');
+                } catch (billError) {
+                    console.warn('⚠️ Rental bill creation failed:', billError);
+                    this.showNotification('Tenant created but bill generation failed', 'warning');
+                }
                 
                 // Close modal and show success
                 ModalManager.closeModal(this.passwordConfirmationModal);
@@ -19531,7 +19765,9 @@ class CasaLink {
     async createTenantAccount() {
         const name = document.getElementById('tenantName')?.value;
         const email = document.getElementById('tenantEmail')?.value;
-        const phone = document.getElementById('tenantPhone')?.value;
+        const phoneLocal = document.getElementById('tenantPhoneLocal')?.value;
+        const phoneDigits = phoneLocal ? phoneLocal.replace(/\D/g, '') : '';
+        const phone = phoneDigits && phoneDigits.length === 10 ? `+63${phoneDigits}` : (document.getElementById('tenantPhone')?.value || '');
         const occupation = document.getElementById('tenantOccupation')?.value;
         const age = document.getElementById('tenantAge')?.value;
         
@@ -19548,8 +19784,11 @@ class CasaLink {
         const resultElement = document.getElementById('tenantCreationResult');
 
         // Validate required fields (including room number)
+        const rentalAmountNum = parseFloat(rentalAmount) || 0;
+        const securityDepositNum = parseFloat(securityDeposit) || 0;
+        
         if (!name || !email || !occupation || !age || !phone || !roomNumber ||
-            !rentalAmount || !securityDeposit || !dateOfEntry || !firstPaymentDate || !paymentDay) {
+            rentalAmountNum <= 0 || securityDepositNum <= 0 || !dateOfEntry || !firstPaymentDate || !paymentDay) {
             this.showNotification('Please fill in all required fields', 'error');
             return;
         }
@@ -19650,7 +19889,16 @@ class CasaLink {
             }
 
             // Create SINGLE lease document
-            await this.createLeaseDocument(tenantId, tenantData, leaseEndDate);
+            const leaseId = await this.createLeaseDocument(tenantId, tenantData, leaseEndDate);
+            
+            // Create rental bill for the new tenant
+            try {
+                await this.createRentalBillForNewTenant(tenantId, tenantData, leaseId);
+                console.log('✅ Rental bill created for new tenant');
+            } catch (billError) {
+                console.warn('⚠️ Rental bill creation failed:', billError);
+                this.showNotification('Tenant created but bill generation failed', 'warning');
+            }
             
             // Show success message
             ModalManager.closeModal(this.leaseAgreementModal);
@@ -19798,10 +20046,20 @@ class CasaLink {
             let roomDocRef = null;
 
             try {
-                const roomsQuery = firebaseDb.collection('rooms').where('roomNumber', '==', tenantData.roomNumber);
-                // Prefer scoping by apartmentId when available
-                if (this.currentApartmentId) roomsQuery.where('apartmentId', '==', this.currentApartmentId);
-                else if (tenantData.rentalAddress) roomsQuery.where('apartmentAddress', '==', tenantData.rentalAddress);
+                // Build query properly by reassigning when chaining .where()
+                let roomsQuery = firebaseDb.collection('rooms').where('roomNumber', '==', tenantData.roomNumber);
+
+                // Narrow by landlord when available (most reliable)
+                if (tenantData.landlordId) {
+                    roomsQuery = roomsQuery.where('landlordId', '==', tenantData.landlordId);
+                }
+
+                // Scope by selected apartment/address when available
+                if (this.currentApartmentId) {
+                    roomsQuery = roomsQuery.where('apartmentId', '==', this.currentApartmentId);
+                } else if (tenantData.rentalAddress) {
+                    roomsQuery = roomsQuery.where('apartmentAddress', '==', tenantData.rentalAddress);
+                }
 
                 const roomSnapshot = await roomsQuery.limit(1).get();
                 if (!roomSnapshot.empty) {
@@ -19841,6 +20099,7 @@ class CasaLink {
                     occupiedBy: tenantId,
                     occupiedAt: new Date().toISOString(),
                     apartmentId: this.currentApartmentId || null,
+                    landlordId: tenantData.landlordId || this.currentUser?.uid || null,
                     apartmentAddress: tenantData.rentalAddress || null,
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString()
@@ -19899,10 +20158,9 @@ class CasaLink {
                     rentalAddress: tenantData.rentalAddress,
                     monthlyRent: tenantData.rentalAmount,
                     securityDeposit: tenantData.securityDeposit,
-                    paymentMethod: tenantData.paymentMethod,
                     leaseStart: tenantData.dateOfEntry,
                     leaseEnd: leaseEndDate,
-                    paymentDueDay: parseInt(tenantData.paymentDay),
+                    paymentDueDay: tenantData.paymentDayOfMonth || (tenantData.paymentDay ? parseInt(tenantData.paymentDay) : 1),
                     firstPaymentDate: tenantData.firstPaymentDate,
 
                     // 🔹 UPDATED OCCUPANCY LOGIC
@@ -19939,11 +20197,10 @@ class CasaLink {
 
                 monthlyRent: tenantData.rentalAmount,
                 securityDeposit: tenantData.securityDeposit,
-                paymentMethod: tenantData.paymentMethod,
                 leaseStart: tenantData.dateOfEntry,
                 leaseEnd: leaseEndDate,
                 leaseDuration: 12,
-                paymentDueDay: parseInt(tenantData.paymentDay),
+                paymentDueDay: tenantData.paymentDayOfMonth || (tenantData.paymentDay ? parseInt(tenantData.paymentDay) : 1),
                 firstPaymentDate: tenantData.firstPaymentDate,
 
                 // 🔹 NEW OCCUPANCY LOGIC
@@ -19998,8 +20255,228 @@ class CasaLink {
         }
     }
 
+    /**
+     * Create a rental bill for a newly added tenant
+     * @param {string} tenantId - The tenant's ID
+     * @param {object} tenantData - The tenant's data from the form
+     * @param {string} leaseId - The created lease ID
+     */
+    async createRentalBillForNewTenant(tenantId, tenantData, leaseId) {
+        try {
+            console.log('💳 Creating rental bill for new tenant:', tenantId);
+            console.log('📋 TenantData received:', { roomNumber: tenantData.roomNumber, rentalAmount: tenantData.rentalAmount, landlordId: tenantData.landlordId });
 
+            // Get the room document to get the room ID (unitId) and verify rent amount
+            let roomId = null;
+            let rentalAmount = tenantData.rentalAmount || 0;
 
+            // FIRST ATTEMPT: Query by roomNumber and landlordId (most reliable)
+            try {
+                let roomsQuery = firebaseDb.collection('rooms')
+                    .where('roomNumber', '==', tenantData.roomNumber)
+                    .where('landlordId', '==', tenantData.landlordId);
+
+                const roomSnapshot = await roomsQuery.limit(1).get();
+                
+                if (!roomSnapshot.empty) {
+                    const roomData = roomSnapshot.docs[0].data();
+                    roomId = roomSnapshot.docs[0].id;
+                    rentalAmount = roomData.monthlyRent || rentalAmount;
+                    console.log('✅ QUERY 1 SUCCESS - Found room by roomNumber + landlordId:', { roomId, rentalAmount: roomData.monthlyRent });
+                } else {
+                    console.log('⚠️ QUERY 1 - No room found with roomNumber=' + tenantData.roomNumber + ' and landlordId=' + tenantData.landlordId);
+                }
+            } catch (err) {
+                console.warn('⚠️ QUERY 1 FAILED:', err.message);
+            }
+
+            // SECOND ATTEMPT: If first query failed, try with just roomNumber (may get wrong apartment's room)
+            if (!roomId) {
+                try {
+                    let roomsQuery = firebaseDb.collection('rooms')
+                        .where('roomNumber', '==', tenantData.roomNumber);
+
+                    const roomSnapshot = await roomsQuery.limit(1).get();
+                    
+                    if (!roomSnapshot.empty) {
+                        const roomData = roomSnapshot.docs[0].data();
+                        roomId = roomSnapshot.docs[0].id;
+                        rentalAmount = roomData.monthlyRent || rentalAmount;
+                        console.log('✅ QUERY 2 SUCCESS - Found room by roomNumber only:', { roomId, rentalAmount: roomData.monthlyRent, roomLandlordId: roomData.landlordId });
+                    } else {
+                        console.log('⚠️ QUERY 2 - No room found with roomNumber=' + tenantData.roomNumber);
+                    }
+                } catch (err) {
+                    console.warn('⚠️ QUERY 2 FAILED:', err.message);
+                }
+            }
+
+            // THIRD ATTEMPT: Fallback - use roomNumber as docId
+            if (!roomId) {
+                try {
+                    const roomDoc = await firebaseDb.collection('rooms').doc(tenantData.roomNumber).get();
+                    if (roomDoc.exists) {
+                        roomId = roomDoc.id;
+                        const roomData = roomDoc.data();
+                        rentalAmount = roomData.monthlyRent || rentalAmount;
+                        console.log('✅ QUERY 3 SUCCESS - Found room by doc ID:', { roomId, rentalAmount: roomData.monthlyRent });
+                    } else {
+                        console.log('⚠️ QUERY 3 - Document does not exist for roomNumber as ID:', tenantData.roomNumber);
+                        roomId = tenantData.roomNumber; // Use roomNumber as unitId if document doesn't exist yet
+                    }
+                } catch (err) {
+                    console.warn('⚠️ QUERY 3 FAILED:', err.message);
+                    roomId = tenantData.roomNumber; // Use roomNumber as unitId
+                }
+            }
+
+            // FINAL FALLBACK: Ensure rentalAmount is set properly
+            if (!rentalAmount || rentalAmount <= 0) {
+                rentalAmount = tenantData.rentalAmount || 0;
+                console.log('✅ FINAL FALLBACK - Using rental amount from tenantData:', rentalAmount);
+            }
+            
+            if (rentalAmount <= 0) {
+                console.warn('⚠️ WARNING: Rental amount is still 0 or undefined! Bill will have 0 amount.');
+                console.log('Debug info:', { roomId, tenantDataAmount: tenantData.rentalAmount, roomNumber: tenantData.roomNumber });
+            } else {
+                console.log('✅ Rental amount confirmed:', rentalAmount);
+            }
+
+            // Calculate due date based on paymentDueDay
+            const today = new Date();
+            const paymentDueDay = tenantData.paymentDayOfMonth || (tenantData.paymentDay ? parseInt(tenantData.paymentDay) : 1);
+            
+            // If we're before the payment day this month, use this month; otherwise use next month
+            let dueDate = new Date(today.getFullYear(), today.getMonth(), paymentDueDay);
+            if (dueDate <= today) {
+                dueDate = new Date(today.getFullYear(), today.getMonth() + 1, paymentDueDay);
+            }
+
+            // Create the bill
+            const billData = {
+                tenantId: tenantId,
+                tenantName: tenantData.name,
+                tenantEmail: tenantData.email,
+                landlordId: this.currentUser.uid,
+                unitId: roomId,
+                roomNumber: tenantData.roomNumber,
+                propertyId: this.currentApartmentId || '',
+                apartment: tenantData.rentalAddress || '',
+                leaseId: leaseId,
+                amount: rentalAmount,
+                dueDate: dueDate.toISOString(),
+                status: 'pending',
+                paymentMethod: tenantData.paymentMethod || 'bank_transfer',
+                notes: `Monthly rental bill for ${tenantData.name}`,
+                description: `Rent - ${today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`,
+                isAutoGenerated: true,
+                type: 'rent',
+                billType: 'rent',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+                paidAmount: 0,
+                lateFeeAmount: 0,
+                isPaymentVerified: false
+            };
+
+            console.log('📋 Bill details:', {
+                tenantId,
+                landlordId: this.currentUser.uid,
+                amount: rentalAmount,
+                dueDate: dueDate.toLocaleDateString(),
+                unitId: roomId
+            });
+
+            // Create the bill in Firestore
+            const billRef = await firebaseDb.collection('bills').add(billData);
+            console.log('✅ Rental bill created with ID:', billRef.id);
+
+            // Create activity record for the bill
+            try {
+                await firebaseDb.collection('activities').add({
+                    type: 'bill_created',
+                    billId: billRef.id,
+                    tenantId: tenantId,
+                    landlordId: this.currentUser.uid,
+                    amount: rentalAmount,
+                    title: 'Auto-generated Rental Bill',
+                    message: `Rental bill created for ${tenantData.name}`,
+                    createdAt: new Date().toISOString()
+                });
+                console.log('✅ Activity record created for bill');
+            } catch (actErr) {
+                console.warn('⚠️ Could not create activity record:', actErr.message);
+            }
+
+            // --- Create security deposit bill (auto-generated) ---
+            try {
+                const depositAmount = parseFloat(tenantData.securityDeposit) || 0;
+                if (depositAmount > 0) {
+                    // Use first payment date if provided, otherwise use date of entry or today
+                    let depositDue = tenantData.firstPaymentDate ? new Date(tenantData.firstPaymentDate) : (tenantData.dateOfEntry ? new Date(tenantData.dateOfEntry) : new Date());
+                    // Ensure due date is ISO string
+                    const depositDueIso = depositDue.toISOString();
+
+                    const depositBillData = {
+                        tenantId: tenantId,
+                        tenantName: tenantData.name,
+                        tenantEmail: tenantData.email,
+                        landlordId: this.currentUser.uid,
+                        unitId: roomId,
+                        roomNumber: tenantData.roomNumber,
+                        propertyId: this.currentApartmentId || '',
+                        apartment: tenantData.rentalAddress || '',
+                        leaseId: leaseId,
+                        amount: depositAmount,
+                        totalAmount: depositAmount,
+                        dueDate: depositDueIso,
+                        status: 'pending',
+                        paymentMethod: tenantData.paymentMethod || 'bank_transfer',
+                        notes: `Security deposit (refundable) for ${tenantData.name}`,
+                        description: `Security Deposit - ${today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`,
+                        isAutoGenerated: true,
+                        type: 'security_deposit',
+                        billType: 'security_deposit',
+                        createdAt: new Date().toISOString(),
+                        updatedAt: new Date().toISOString(),
+                        paidAmount: 0,
+                        lateFeeAmount: 0,
+                        isPaymentVerified: false
+                    };
+
+                    const depositRef = await firebaseDb.collection('bills').add(depositBillData);
+                    console.log('✅ Security deposit bill created with ID:', depositRef.id);
+
+                    try {
+                        await firebaseDb.collection('activities').add({
+                            type: 'bill_created',
+                            billId: depositRef.id,
+                            tenantId: tenantId,
+                            landlordId: this.currentUser.uid,
+                            amount: depositAmount,
+                            title: 'Auto-generated Security Deposit Bill',
+                            message: `Security deposit bill created for ${tenantData.name}`,
+                            createdAt: new Date().toISOString()
+                        });
+                        console.log('✅ Activity record created for security deposit bill');
+                    } catch (actErr2) {
+                        console.warn('⚠️ Could not create activity record for deposit bill:', actErr2.message);
+                    }
+                } else {
+                    console.log('ℹ️ Security deposit amount is 0 or not provided; skipping deposit bill creation');
+                }
+            } catch (depositErr) {
+                console.warn('⚠️ Failed to create security deposit bill:', depositErr.message || depositErr);
+            }
+
+            return billRef.id;
+
+        } catch (error) {
+            console.error('❌ Error creating rental bill:', error);
+            throw new Error('Failed to create rental bill: ' + error.message);
+        }
+    }
 
 
 
@@ -20552,7 +21029,7 @@ class CasaLink {
                 throw new Error('Bill not found');
             }
             
-            const billData = { id: bill.id, ...bill.data() };
+            const billData = { id: bill.id, ...DataManager.normalizeBill(bill.data()) };
             const dueDate = new Date(billData.dueDate);
             const today = new Date();
             const isOverdue = dueDate < today && billData.status === 'pending';
@@ -20688,7 +21165,7 @@ class CasaLink {
                 return;
             }
             
-            const bill = { id: billDoc.id, ...billDoc.data() };
+            const bill = { id: billDoc.id, ...DataManager.normalizeBill(billDoc.data()) };
 
             // Build bill details section
             const billDetailsHTML = `
