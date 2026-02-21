@@ -8,7 +8,24 @@ class NotificationManager {
         
         if ('Notification' in window && 'serviceWorker' in navigator) {
             try {
-                this.registration = await navigator.serviceWorker.ready;
+                // Try to get a ready registration, but fall back to getRegistration
+                try {
+                    this.registration = await navigator.serviceWorker.ready;
+                } catch (e) {
+                    console.warn('navigator.serviceWorker.ready failed, trying getRegistration()', e);
+                    try {
+                        this.registration = await navigator.serviceWorker.getRegistration();
+                    } catch (e2) {
+                        console.warn('navigator.serviceWorker.getRegistration failed', e2);
+                        this.registration = null;
+                    }
+                }
+
+                // Ensure registration has an active worker
+                if (this.registration && !this.registration.active) {
+                    const r = await navigator.serviceWorker.getRegistration();
+                    if (r && r.active) this.registration = r;
+                }
                 
                 if (this.permission === 'default') {
                     await this.requestPermission();
@@ -48,12 +65,36 @@ class NotificationManager {
             ...options
         };
 
-        // Show notification via service worker
-        if (this.registration) {
-            this.registration.showNotification(title, notificationOptions);
-        } else {
-            // Fallback to regular notifications
-            new Notification(title, notificationOptions);
+        // Show notification via service worker if active, otherwise fallback
+        if (this.registration && this.registration.active) {
+            try {
+                await this.registration.showNotification(title, notificationOptions);
+                return;
+            } catch (err) {
+                console.warn('ServiceWorkerRegistration.showNotification failed, falling back:', err);
+            }
+        }
+
+        // Fallback to regular Notification API
+        try {
+            if ('Notification' in window) {
+                new Notification(title, notificationOptions);
+                return;
+            }
+        } catch (err) {
+            console.warn('Fallback Notification() failed:', err);
+        }
+
+        // Final fallback: in-app toast via casaLink if available
+        try {
+            if (window.casaLink && typeof window.casaLink.showNotification === 'function') {
+                // Use textual body override
+                const text = notificationOptions.body || title;
+                window.casaLink.showNotification(text, 'info');
+                return;
+            }
+        } catch (err) {
+            console.warn('In-app notification fallback failed:', err);
         }
     }
 

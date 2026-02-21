@@ -346,12 +346,31 @@
             window.maintenanceController.init();
         }
 
-        // Create request button
-        document.getElementById('createRequestBtn')?.addEventListener('click', () => {
-            if (window.maintenanceController) {
-                window.maintenanceController.openCreateRequestModal();
+        // Show create button only for tenants and attach handler
+        (async function() {
+            const btn = document.getElementById('createRequestBtn');
+            let user = null;
+            if (window.DataManager && window.DataManager.currentUser) {
+                user = window.DataManager.currentUser;
+            } else if (window.dataService && typeof window.dataService.getCurrentUser === 'function') {
+                try { user = await window.dataService.getCurrentUser(); } catch (e) { user = window.currentUser || null; }
+            } else {
+                user = window.currentUser || null;
             }
-        });
+
+            if (!user || user.role !== 'tenant') {
+                if (btn) btn.style.display = 'none';
+                return;
+            }
+
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    if (window.maintenanceController) {
+                        window.maintenanceController.openCreateRequestModal();
+                    }
+                });
+            }
+        })();
 
         // Search requests
         let searchTimeout;

@@ -3077,7 +3077,7 @@ class CasaLink {
                 </div>
 
                 <!-- OPERATIONS SECTION -->
-                <div class="card-group-title">Operations</div>
+                <div class="card-group-title">Operations Overview</div>
                 <div class="card-group">
                     <div class="card" data-clickable="renewals" style="cursor: pointer;" title="Click to view lease renewals">
                         <div class="card-header">
@@ -7645,10 +7645,13 @@ class CasaLink {
                 <div class="empty-state">
                     <i class="fas fa-tools"></i>
                     <h3>No Maintenance Requests</h3>
-                    <p>No maintenance requests found. Create your first request to get started.</p>
-                    <button class="btn btn-primary" onclick="casaLink.showCreateMaintenanceForm()">
-                        <i class="fas fa-plus"></i> Create First Request
-                    </button>
+                    <p>No maintenance requests found.</p>
+                    ${this.currentUser && this.currentUser.role === 'tenant' ? `
+                        <p>Create your first request to get started.</p>
+                        <button class="btn btn-primary" onclick="casaLink.showCreateMaintenanceForm()">
+                            <i class="fas fa-plus"></i> Create First Request
+                        </button>
+                    ` : ''}
                 </div>
             `;
             return;
@@ -7710,10 +7713,18 @@ class CasaLink {
 
     async showCreateMaintenanceForm() {
         try {
+            // Only tenants may create maintenance requests
+            if (!this.currentUser || this.currentUser.role !== 'tenant') {
+                this.showNotification('Only tenants can create maintenance requests', 'warning');
+                return;
+            }
+
+            // For tenants, prefill tenant info and do not allow selecting other tenants
             const tenants = await DataManager.getTenants(this.currentUser.uid);
             const maintenanceTypes = await DataManager.getMaintenanceTypes();
             const priorities = await DataManager.getMaintenancePriorities();
 
+            // If current user is tenant, show a hidden input with their id instead of a select
             const tenantOptions = tenants.map(tenant => `
                 <option value="${tenant.id}" data-room="${tenant.roomNumber}">
                     ${tenant.name} - ${tenant.roomNumber}
@@ -7736,6 +7747,10 @@ class CasaLink {
                         <p>Submit a new maintenance request for a tenant</p>
                     </div>
 
+                    ${this.currentUser && this.currentUser.role === 'tenant' ? `
+                    <input type="hidden" id="maintenanceTenant" value="${this.currentUser.id || this.currentUser.uid}" />
+                    <div style="margin-bottom:12px; color:var(--dark-gray); font-weight:600;">Requesting as: ${this.currentUser.name || this.currentUser.email}</div>
+                    ` : `
                     <div class="form-group">
                         <label class="form-label">Tenant *</label>
                         <select id="maintenanceTenant" class="form-input" required>
@@ -7743,6 +7758,7 @@ class CasaLink {
                             ${tenantOptions}
                         </select>
                     </div>
+                    `}
 
                     <div class="form-group">
                         <label class="form-label">Request Type *</label>
@@ -10509,6 +10525,15 @@ class CasaLink {
             document.getElementById('paymentStatusFilter')?.addEventListener('change', (e) => {
                 this.filterPaymentsByStatus(e.target.value);
             });
+
+            document.getElementById('paymentApartmentFilter')?.addEventListener('change', (e) => {
+                this.applyPaymentFilters();
+            });
+
+            // Setup reset filters button for payments
+            document.getElementById('resetPaymentFilters')?.addEventListener('click', () => {
+                this.resetPaymentFilters();
+            });
             
             // Setup row click handlers
             this.setupBillRowClickHandlers();
@@ -10977,69 +11002,104 @@ class CasaLink {
         this.setupPaymentsPagination();
     }
 
-    filterPaymentsByStatus(statusFilter) {
-        if (statusFilter === 'all') {
-            this.paymentsFilteredData = [...this.paymentsAllData];
-        } else {
-            this.paymentsFilteredData = this.paymentsAllData.filter(payment => {
+    applyPaymentFilters() {
+        // Get all filter values
+        const searchTerm = document.getElementById('paymentSearch')?.value.toLowerCase() || '';
+        const apartmentFilter = document.getElementById('paymentApartmentFilter')?.value || '';
+        const statusFilter = document.getElementById('paymentStatusFilter')?.value || 'all';
+        const methodFilter = document.getElementById('paymentMethodFilter')?.value || 'all';
+        
+        // Apply all filters cohesively
+        this.paymentsFilteredData = this.paymentsAllData.filter(payment => {
+            // Search filter
+            if (searchTerm) {
+                const searchableText = [
+                    payment.tenantName,
+                    payment.roomNumber,
+                    payment.apartment,
+                    payment.paymentMethod,
+                    payment.referenceNumber
+                ].filter(val => val).join(' ').toLowerCase();
+                
+                if (!searchableText.includes(searchTerm)) {
+                    return false;
+                }
+            }
+            
+            // Apartment filter
+            if (apartmentFilter) {
+                if (!payment.apartment || payment.apartment !== apartmentFilter) {
+                    return false;
+                }
+            }
+            
+            // Status filter
+            if (statusFilter !== 'all') {
                 const paymentStatus = (payment.status || '').toLowerCase();
+                let statusMatched = false;
                 
                 switch(statusFilter.toLowerCase()) {
                     case 'verified':
-                        return paymentStatus === 'verified' || paymentStatus === 'completed';
+                        statusMatched = paymentStatus === 'verified' || paymentStatus === 'completed';
+                        break;
                     case 'awaiting_verification':
-                        return paymentStatus === 'awaiting_verification' || paymentStatus === 'waiting_verification' || paymentStatus === 'pending_verification';
+                        statusMatched = paymentStatus === 'awaiting_verification' || paymentStatus === 'waiting_verification' || paymentStatus === 'pending_verification';
+                        break;
                     case 'pending':
-                        return paymentStatus === 'waiting_verification' || paymentStatus === 'pending_verification';
+                        statusMatched = paymentStatus === 'waiting_verification' || paymentStatus === 'pending_verification';
+                        break;
                     case 'completed':
-                        return paymentStatus === 'completed' || paymentStatus === 'verified';
+                        statusMatched = paymentStatus === 'completed' || paymentStatus === 'verified';
+                        break;
                     case 'refunded':
-                        return paymentStatus === 'refunded' || paymentStatus === 'rejected';
+                        statusMatched = paymentStatus === 'refunded' || paymentStatus === 'rejected';
+                        break;
                     default:
-                        return false;
+                        statusMatched = false;
                 }
-            });
-        }
+                
+                if (!statusMatched) {
+                    return false;
+                }
+            }
+            
+            // Method filter
+            if (methodFilter !== 'all') {
+                if (payment.paymentMethod?.toLowerCase() !== methodFilter.toLowerCase()) {
+                    return false;
+                }
+            }
+            
+            return true;
+        });
         
+        // Sort by date (most recent first)
+        this.paymentsFilteredData.sort((a, b) => {
+            const dateA = new Date(a.paymentDate || a.createdAt || 0);
+            const dateB = new Date(b.paymentDate || b.createdAt || 0);
+            return dateB - dateA;
+        });
+        
+        // Reset pagination and update table
         this.paymentsCurrentPage = 1;
         this.paymentsTotalPages = Math.ceil(this.paymentsFilteredData.length / this.paymentsItemsPerPage);
         this.updatePaymentsTable(this.getCurrentPaymentsPage());
         this.setupPaymentsPagination();
+    }
+
+    filterPaymentsByStatus(statusFilter) {
+        // Just call the unified filter
+        this.applyPaymentFilters();
     }
 
     filterPaymentsByMethod(method) {
-        if (method === 'all') {
-            this.paymentsFilteredData = [...this.paymentsAllData];
-        } else {
-            this.paymentsFilteredData = this.paymentsAllData.filter(payment => 
-                payment.paymentMethod?.toLowerCase() === method.toLowerCase()
-            );
-        }
-        
-        this.paymentsCurrentPage = 1;
-        this.paymentsTotalPages = Math.ceil(this.paymentsFilteredData.length / this.paymentsItemsPerPage);
-        this.updatePaymentsTable(this.getCurrentPaymentsPage());
-        this.setupPaymentsPagination();
+        // Just call the unified filter
+        this.applyPaymentFilters();
     }
 
     searchPayments(searchTerm) {
-        if (!searchTerm) {
-            this.paymentsFilteredData = [...this.paymentsAllData];
-        } else {
-            const searchLower = searchTerm.toLowerCase();
-            this.paymentsFilteredData = this.paymentsAllData.filter(payment => 
-                payment.tenantName?.toLowerCase().includes(searchLower) ||
-                payment.roomNumber?.toLowerCase().includes(searchLower) ||
-                payment.apartment?.toLowerCase().includes(searchLower) ||
-                payment.paymentMethod?.toLowerCase().includes(searchLower) ||
-                payment.referenceNumber?.toLowerCase().includes(searchLower)
-            );
-        }
-        
-        this.paymentsCurrentPage = 1;
-        this.paymentsTotalPages = Math.ceil(this.paymentsFilteredData.length / this.paymentsItemsPerPage);
-        this.updatePaymentsTable(this.getCurrentPaymentsPage());
-        this.setupPaymentsPagination();
+        // Just call the unified filter
+        this.applyPaymentFilters();
     }
 
     async showPaymentDetailsModal(paymentId) {
@@ -13843,7 +13903,7 @@ class CasaLink {
                 }
             }
             
-            // Status filter - handles pending, overdue, and paid status independently
+            // Status filter - handles pending, overdue, paid, and awaiting_payment_verification status independently
             if (statusFilter) {
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
@@ -13860,6 +13920,11 @@ class CasaLink {
                 } else if (statusFilter === 'paid') {
                     // Paid: status is paid
                     if (bill.status !== 'paid') return false;
+                } else if (statusFilter === 'awaiting_payment_verification') {
+                    // Awaiting Payment Verification: bills where payment is awaiting verification (not pending, not paid, and not verified)
+                    if (bill.status === 'pending' || bill.status === 'paid' || bill.isPaymentVerified) {
+                        return false;
+                    }
                 }
             }
             
@@ -13873,9 +13938,14 @@ class CasaLink {
             // Payment Verification filter - independent filter for payment status
             if (paymentVerificationFilter) {
                 if (paymentVerificationFilter === 'verified') {
+                    // Payment Verified: payment has been verified
                     if (!bill.isPaymentVerified) return false;
                 } else if (paymentVerificationFilter === 'not-verified') {
-                    if (bill.isPaymentVerified) return false;
+                    // "No Payment To Verify" means the bill status is pending (has no payment to verify)
+                    if (bill.status !== 'pending') return false;
+                } else if (paymentVerificationFilter === 'awaiting-verification') {
+                    // "Awaiting Payment Verification" means payment is not verified and status is not pending
+                    if (bill.isPaymentVerified || bill.status === 'pending') return false;
                 }
             }
             
@@ -13920,6 +13990,42 @@ class CasaLink {
     }
 
     /**
+     * Reset all payment filters to default state
+     */
+    resetPaymentFilters() {
+        console.log('🔄 Resetting payment filters to default state...');
+        
+        // Reset all filter inputs to their default values
+        const paymentSearch = document.getElementById('paymentSearch');
+        const paymentApartmentFilter = document.getElementById('paymentApartmentFilter');
+        const paymentStatusFilter = document.getElementById('paymentStatusFilter');
+        const paymentMethodFilter = document.getElementById('paymentMethodFilter');
+        
+        if (paymentSearch) paymentSearch.value = '';
+        if (paymentApartmentFilter) paymentApartmentFilter.value = '';
+        if (paymentStatusFilter) paymentStatusFilter.value = 'all';
+        if (paymentMethodFilter) paymentMethodFilter.value = 'all';
+        
+        // Re-load all payments data
+        this.paymentsFilteredData = [...this.paymentsAllData];
+        
+        // Sort by date (most recent first)
+        this.paymentsFilteredData.sort((a, b) => {
+            const dateA = new Date(a.paymentDate || a.createdAt || 0);
+            const dateB = new Date(b.paymentDate || b.createdAt || 0);
+            return dateB - dateA;
+        });
+        
+        // Reset pagination and update table
+        this.paymentsCurrentPage = 1;
+        this.paymentsTotalPages = Math.ceil(this.paymentsFilteredData.length / this.paymentsItemsPerPage);
+        this.updatePaymentsTable(this.getCurrentPaymentsPage());
+        this.setupPaymentsPagination();
+        
+        console.log('✅ Payment filters reset to default');
+    }
+
+    /**
      * Populate apartment filter dropdown with unique apartments from bills
      */
     populateApartmentFilter(bills) {
@@ -13929,6 +14035,32 @@ class CasaLink {
         // Get unique apartments from bills
         const apartments = [...new Set(bills
             .map(bill => bill.apartment)
+            .filter(apt => apt && apt.trim() !== '')
+        )].sort();
+        
+        // Keep the current value
+        const currentValue = apartmentFilter.value;
+        
+        // Build options
+        let html = '<option value="">All Apartments</option>';
+        apartments.forEach(apt => {
+            html += `<option value="${apt}">${apt}</option>`;
+        });
+        
+        apartmentFilter.innerHTML = html;
+        apartmentFilter.value = currentValue; // Restore the selection
+    }
+
+    /**
+     * Populate apartment filter dropdown for payments with unique apartments from payments
+     */
+    populatePaymentApartmentFilter(payments) {
+        const apartmentFilter = document.getElementById('paymentApartmentFilter');
+        if (!apartmentFilter) return;
+        
+        // Get unique apartments from payments
+        const apartments = [...new Set(payments
+            .map(payment => payment.apartment)
             .filter(apt => apt && apt.trim() !== '')
         )].sort();
         
@@ -15790,6 +15922,7 @@ class CasaLink {
             this.updatePaymentsTable(this.getCurrentPaymentsPage());
             this.updatePaymentStats(payments);
             this.setupPaymentsPagination();
+            this.populatePaymentApartmentFilter(payments);
             
             console.log('✅ Payments data loaded and pagination set up');
         } catch (error) {
@@ -16351,19 +16484,25 @@ class CasaLink {
                                         ${statusBadge}
                                     </td>
                                     <td>
-                                        ${bill.status === 'payment_pending' || bill.status === 'pending_verification' ? this.getBillStatusBadge(bill) : `
+                                        ${bill.status === 'pending' ? `
+                                            <span class="status-badge inactive">NO PAYMENT TO VERIFY</span>
+                                        ` : (bill.status === 'payment_pending' || bill.status === 'pending_verification' ? this.getBillStatusBadge(bill) : `
                                             <span class="status-badge ${bill.isPaymentVerified ? 'active' : 'inactive'}">
                                                 ${bill.isPaymentVerified ? 'Payment Verified' : 'Awaiting Payment Verification'}
                                             </span>
-                                        `}
+                                        `)}
                                     </td>
                                     <td>
                                         <div class="action-buttons">
-                                            ${bill.status !== 'paid' ? `
+                                            ${bill.status !== 'paid' && bill.status !== 'pending' ? `
                                                 <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); casaLink.verifyPaymentForBill('${bill.id}')">
                                                     <i class="fas fa-check-circle"></i> Verify
                                                 </button>
-                                            ` : ''}
+                                            ` : (bill.status === 'pending' ? `
+                                                <button class="btn btn-sm btn-success" disabled title="Cannot verify pending bills">
+                                                    <i class="fas fa-check-circle"></i> Verify
+                                                </button>
+                                            ` : '')}
                                             ${bill.status !== 'paid' ? `
                                                 <button class="btn btn-sm btn-warning" onclick="event.stopPropagation(); casaLink.editBill('${bill.id}')">
                                                     <i class="fas fa-edit"></i>
@@ -17423,6 +17562,7 @@ class CasaLink {
                                     <option value="pending">Pending</option>
                                     <option value="overdue">Overdue</option>
                                     <option value="paid">Paid</option>
+                                    <option value="awaiting_payment_verification">Awaiting Payment Verification</option>
                                 </select>
                             </div>
                             
@@ -17431,7 +17571,8 @@ class CasaLink {
                                 <select id="billPaymentVerificationFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
                                     <option value="">All Payment Status</option>
                                     <option value="verified">Payment Verified</option>
-                                    <option value="not-verified">Awaiting Verification</option>
+                                    <option value="not-verified">No Payment To Verify</option>
+                                    <option value="awaiting-verification">Awaiting Payment Verification</option>
                                 </select>
                             </div>
                         </div>
@@ -17554,6 +17695,12 @@ class CasaLink {
                                 <input type="text" id="paymentSearch" class="form-input" placeholder="Search payments..." style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px;">
                             </div>
                             <div style="min-width: 200px;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Apartment</label>
+                                <select id="paymentApartmentFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                                    <option value="">All Apartments</option>
+                                </select>
+                            </div>
+                            <div style="min-width: 200px;">
                                 <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Status</label>
                                 <select id="paymentStatusFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
                                     <option value="all">All Status</option>
@@ -17571,6 +17718,9 @@ class CasaLink {
                                     <option value="cash">Cash</option>
                                 </select>
                             </div>
+                            <button id="resetPaymentFilters" class="reset-filters-button" style="margin-bottom: 0;" title="Reset all filters to default">
+                                <i class="fas fa-redo"></i> Reset Filters
+                            </button>
                         </div>
                     </div>
 
@@ -18293,16 +18443,18 @@ class CasaLink {
         return `
         <div class="page-content">
             <div class="page-header">
-                <h1 class="page-title">Maintenance Management</h1>
-                <div>
-                    <button class="btn btn-secondary" onclick="casaLink.showMaintenanceSettings()">
-                        <i class="fas fa-cog"></i> Settings
-                    </button>
-                    <button class="btn btn-primary" onclick="casaLink.showCreateMaintenanceForm()">
-                        <i class="fas fa-plus"></i> Create Request
-                    </button>
+                    <h1 class="page-title">Maintenance Management</h1>
+                    <div>
+                        <button class="btn btn-secondary" onclick="casaLink.showMaintenanceSettings()">
+                            <i class="fas fa-cog"></i> Settings
+                        </button>
+                        ${this.currentUser && this.currentUser.role === 'tenant' ? `
+                        <button class="btn btn-primary" onclick="casaLink.showCreateMaintenanceForm()">
+                            <i class="fas fa-plus"></i> Create Request
+                        </button>
+                        ` : ''}
+                    </div>
                 </div>
-            </div>
 
             <!-- Maintenance Stats -->
             <div class="card-group">
@@ -18345,9 +18497,11 @@ class CasaLink {
 
             <!-- Quick Actions -->
             <div class="quick-actions-bar">
+                ${this.currentUser && this.currentUser.role === 'tenant' ? `
                 <button class="btn btn-primary" onclick="casaLink.showCreateMaintenanceForm()">
                     <i class="fas fa-plus"></i> Create New Request
                 </button>
+                ` : ''}
                 <button class="btn btn-secondary" onclick="casaLink.showAssignStaffForm()">
                     <i class="fas fa-user-plus"></i> Assign Staff
                 </button>

@@ -416,10 +416,31 @@ class DataService {
    */
   async createMaintenanceRequest(request) {
     try {
-      if (!request.isValid()) {
-        throw new Error('Invalid request: ' + request.getValidationErrors().join(', '));
+      // Ensure caller is an authenticated tenant
+      const user = await this.getCurrentUser();
+      if (!user) {
+        throw new Error('Authentication required to create maintenance requests');
       }
-      return await this.firebaseService.create('maintenanceRequests', request.toJSON());
+      if (user.role !== 'tenant') {
+        throw new Error('Only tenants can create maintenance requests');
+      }
+
+      // Accept either a MaintenanceRequest instance or plain object
+      let reqObj = request;
+      if (!request || typeof request.isValid !== 'function') {
+        reqObj = new MaintenanceRequest(Object.assign({}, request || {}));
+      }
+
+      // Ensure tenant identity is enforced server-side
+      reqObj.tenantId = reqObj.tenantId || user.uid || user.id;
+      reqObj.reportedBy = reqObj.reportedBy || user.name || user.email || '';
+      reqObj.createdAt = reqObj.createdAt || new Date().toISOString();
+
+      if (!reqObj.isValid()) {
+        throw new Error('Invalid request: ' + reqObj.getValidationErrors().join(', '));
+      }
+
+      return await this.firebaseService.create('maintenanceRequests', reqObj.toJSON());
     } catch (error) {
       console.error('Error creating maintenance request:', error);
       throw error;

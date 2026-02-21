@@ -399,6 +399,61 @@ body:not(.logged-in) .admin-portal-link {
     background: var(--warning);
 }
 
+/* ===== Maintenance improvements (responsive & cleaner) ===== */
+.quick-actions-bar {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin: 16px 0;
+}
+
+.card-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.maintenance-page .card {
+    padding: 16px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 30px 18px;
+    color: #6b7280;
+}
+
+.requests-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+}
+
+.request-card {
+    transition: transform .15s ease, box-shadow .15s ease;
+}
+.request-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 18px rgba(22,38,96,0.08);
+}
+
+@media (max-width: 720px) {
+    .requests-list {
+        grid-template-columns: 1fr;
+    }
+    .card-group {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    .page-header { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+}
+
+@media (max-width: 420px) {
+    .card-group { grid-template-columns: 1fr; }
+    .quick-actions-bar { gap: 8px; }
+}
+
 .metric-icon.info {
     background: var(--info);
 }

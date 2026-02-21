@@ -577,13 +577,56 @@ class DataManager {
     static async createMaintenanceRequest(requestData) {
         try {
             console.log('🔧 Creating maintenance request:', requestData);
-            
-            const requestRef = await firebaseDb.collection('maintenance').add({
-                ...requestData,
-                status: 'open',
+
+            // Resolve current user from multiple possible sources (DataManager may not be synced yet)
+            let current = null;
+            try {
+                if (typeof window !== 'undefined') {
+                    if (window.DataManager && window.DataManager.currentUser) current = window.DataManager.currentUser;
+                    if (!current && window.currentUser) current = window.currentUser;
+                }
+
+                if (!current && typeof AuthManager !== 'undefined' && typeof AuthManager.getCurrentUserWithAdminStatus === 'function') {
+                    current = await AuthManager.getCurrentUserWithAdminStatus();
+                }
+
+                // Last-resort: check Firebase auth and fetch user doc
+                if (!current && typeof firebaseDb !== 'undefined' && window.firebase && window.firebase.auth().currentUser) {
+                    const fbUser = window.firebase.auth().currentUser;
+                    try {
+                        const doc = await firebaseDb.collection('users').doc(fbUser.uid).get();
+                        if (doc && doc.exists) {
+                            current = { id: doc.id, uid: fbUser.uid, ...(doc.data()) };
+                        } else {
+                            current = { uid: fbUser.uid, email: fbUser.email };
+                        }
+                    } catch (e) {
+                        console.warn('Could not read user doc from Firestore fallback:', e);
+                    }
+                }
+            } catch (e) {
+                console.warn('Error resolving current user for maintenance creation:', e);
+            }
+
+            // Enforce that only tenants create requests via the client-facing API
+            if (!current) {
+                throw new Error('Authentication required to create maintenance requests');
+            }
+            if (current.role !== 'tenant') {
+                throw new Error('Only tenants can create maintenance requests');
+            }
+
+            // Ensure tenant identity enforced
+            const normalized = Object.assign({}, requestData, {
+                tenantId: requestData.tenantId || current.id || current.uid,
+                createdBy: requestData.createdBy || current.id || current.uid,
+                createdByName: requestData.createdByName || current.name || current.email,
+                status: requestData.status || 'open',
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             });
+
+            const requestRef = await firebaseDb.collection('maintenance').add(normalized);
 
             console.log('✅ Maintenance request created:', requestRef.id);
             return requestRef.id;
