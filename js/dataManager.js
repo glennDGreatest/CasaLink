@@ -577,6 +577,10 @@ class DataManager {
     static async createMaintenanceRequest(requestData) {
         try {
             console.log('🔧 Creating maintenance request:', requestData);
+            console.log('   - Has images property:', !!requestData.images, 'Count:', requestData.images ? requestData.images.length : 0);
+            if (requestData.images && requestData.images.length > 0) {
+                console.log('   - Image URLs:', requestData.images);
+            }
 
             // Resolve current user from multiple possible sources (DataManager may not be synced yet)
             let current = null;
@@ -625,6 +629,58 @@ class DataManager {
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             });
+
+            // Ensure we have a sensible property/apartment name for landlords to see
+            try {
+                if (!normalized.propertyName || normalized.propertyName === 'N/A') {
+                    // Prefer propertyName from the original requestData if present
+                    let resolved = requestData.propertyName || requestData.apartment || null;
+
+                    // Try current user fields (rentalAddress, apartmentName, roomNumber)
+                    const rentalAddr = (current && (current.rentalAddress || current.apartmentAddress || current.apartmentName)) || null;
+                    const tenantRoom = (current && (current.roomNumber || current.unitNumber)) || null;
+
+                    if (!resolved && rentalAddr) resolved = rentalAddr;
+
+                    // If we have an address-like value, try to find matching apartment document
+                    if (resolved) {
+                        try {
+                            const aptQuery = await firebaseDb.collection('apartments')
+                                .where('apartmentAddress', '==', resolved)
+                                .limit(1)
+                                .get();
+                            if (!aptQuery.empty) {
+                                const apt = aptQuery.docs[0].data();
+                                normalized.propertyName = apt.apartmentName || apt.apartmentAddress || resolved;
+                            }
+                        } catch (e) {
+                            console.warn('Could not query apartments by apartmentAddress:', e);
+                        }
+                    }
+
+                    // If still unresolved, try rooms collection by roomNumber + landlordId
+                    if ((!normalized.propertyName || normalized.propertyName === 'N/A') && tenantRoom) {
+                        try {
+                            let roomsQuery = firebaseDb.collection('rooms').where('roomNumber', '==', tenantRoom).limit(1);
+                            if (current && current.landlordId) roomsQuery = roomsQuery.where('landlordId', '==', current.landlordId);
+                            const roomsSnap = await roomsQuery.get();
+                            if (!roomsSnap.empty) {
+                                const room = roomsSnap.docs[0].data();
+                                normalized.propertyName = room.apartmentName || room.apartmentAddress || room.apartmentId || tenantRoom;
+                            }
+                        } catch (e) {
+                            console.warn('Could not query rooms by roomNumber:', e);
+                        }
+                    }
+
+                    // As a last resort, fall back to tenant's roomNumber or rentalAddress
+                    if (!normalized.propertyName || normalized.propertyName === 'N/A') {
+                        normalized.propertyName = tenantRoom || rentalAddr || 'N/A';
+                    }
+                }
+            } catch (resolveErr) {
+                console.warn('Error resolving propertyName for maintenance request:', resolveErr);
+            }
 
             const requestRef = await firebaseDb.collection('maintenance').add(normalized);
 

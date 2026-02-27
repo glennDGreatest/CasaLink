@@ -1,0 +1,54 @@
+================================================================================
+STEP 1: UPDATE FIRESTORE RULES
+================================================================================
+
+Go to: Firebase Console → Firestore Database → Rules tab
+
+Delete everything and COPY+PASTE this:
+
+---START COPY HERE---
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
+
+---END COPY HERE---
+
+Then click PUBLISH button.
+
+================================================================================
+STEP 2: UPDATE STORAGE RULES
+================================================================================
+
+Go to: Firebase Console → Storage → Rules tab
+
+Delete everything and COPY+PASTE this:
+
+---START COPY HERE---
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if true;
+    }
+  }
+}
+
+---END COPY HERE---
+
+Then click PUBLISH button.
+
+================================================================================
+DONE!
+================================================================================
+
+Your app should now work. All features including maintenance request image 
+uploads will work properly.
+
+⚠️ NOTE: Remember to switch to secure rules before going to production!

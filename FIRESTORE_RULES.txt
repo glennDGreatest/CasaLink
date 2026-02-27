@@ -1,0 +1,53 @@
+FIRESTORE SECURITY RULES - DEVELOPMENT (ALLOW ALL)
+===================================================
+
+⚠️ WARNING: These rules allow ALL read/write access.
+Use ONLY for development/testing. Switch to restrictive rules before production.
+
+Copy and paste these rules into your Firebase Console > Firestore > Rules tab.
+Then click "Publish" to apply them.
+
+---
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // DEVELOPMENT: Allow everything
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
+
+---
+
+STORAGE SECURITY RULES - DEVELOPMENT (ALLOW ALL)
+=================================================
+
+⚠️ WARNING: These rules allow ALL read/write access.
+Use ONLY for development/testing. Switch to restrictive rules before production.
+
+Copy and paste these rules into your Firebase Console > Storage > Rules tab.
+Then click "Publish" to apply them.
+
+---
+
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // DEVELOPMENT: Allow everything
+    match /{allPaths=**} {
+      allow read, write: if true;
+    }
+  }
+}
+
+---
+
+NOTES:
+======
+- These rules allow complete access to all Firestore and Storage data
+- Useful for rapid development and testing
+- NEVER use these rules in production
+- Replace with proper security rules before going live
+

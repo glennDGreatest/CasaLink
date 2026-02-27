@@ -52,6 +52,7 @@ class CasaLink {
         
         console.log('🔄 Initializing CasaLink...');
         this.init();
+        this.registerImageModalHelper();
     }
 
     onLoginSuccess(user) {
@@ -860,6 +861,28 @@ class CasaLink {
                 </div>
             </div>
         `;
+    }
+
+    // Helper: open a full-size image in a modal
+    registerImageModalHelper() {
+        try {
+            window.openFullSizeImage = function(url) {
+                try {
+                    const content = `
+                        <div style="text-align:center;padding:16px;">
+                            <img src="${url}" alt="Photo" style="max-width:100%; height:auto; border-radius:8px;" />
+                        </div>
+                    `;
+                    ModalManager.openModal(content, { title: 'Photo', showFooter: false });
+                } catch (err) {
+                    console.error('Error opening image modal:', err);
+                    // fallback to opening in new tab
+                    window.open(url, '_blank');
+                }
+            };
+        } catch (e) {
+            console.warn('Could not register openFullSizeImage helper:', e);
+        }
     }
 
 
@@ -2185,7 +2208,18 @@ class CasaLink {
                             ${data.assignedName ? `<div style="background: rgba(26, 115, 232, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px;"><p style="margin: 0;"><i class="fas fa-user-check"></i> <strong>Assigned To:</strong> ${data.assignedName}</p></div>` : ''}
                             <div class="modal-footer">
                                 <button class="btn btn-primary" onclick="casaLink.showPage('maintenance')"><i class="fas fa-tools"></i> View All Maintenance</button>
-                                ${data.status !== 'completed' ? `<button class="btn btn-warning" onclick="casaLink.updateMaintenanceRequest('${data.id}')"><i class="fas fa-edit"></i> Update Status</button>` : ''}
+                                <!-- status-specific actions -->
+                                ${data.status === 'open' ? `
+                                    <button class="btn btn-danger" onclick="casaLink.closeMaintenanceRequest('${data.id}')"><i class="fas fa-times-circle"></i> Close Request</button>
+                                    <button class="btn btn-warning" onclick="casaLink.updateMaintenanceRequest('${data.id}')"><i class="fas fa-edit"></i> Update</button>
+                                    <button class="btn btn-success" onclick="casaLink.assignMaintenance('${data.id}')"><i class="fas fa-user-check"></i> Assign Staff</button>
+                                ` : data.status === 'in-progress' ? `
+                                    <button class="btn btn-danger" onclick="casaLink.closeMaintenanceRequest('${data.id}')"><i class="fas fa-times-circle"></i> Close Request</button>
+                                    <button class="btn btn-warning" onclick="casaLink.updateMaintenanceRequest('${data.id}')"><i class="fas fa-edit"></i> Update</button>
+                                    <button class="btn btn-success" onclick="casaLink.markMaintenanceComplete('${data.id}')"><i class="fas fa-check-circle"></i> Mark as Complete</button>
+                                ` : data.status !== 'completed' ? `
+                                    <button class="btn btn-warning" onclick="casaLink.updateMaintenanceRequest('${data.id}')"><i class="fas fa-edit"></i> Update Status</button>
+                                ` : ''}
                                 <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                             </div>
                         </div>
@@ -7236,6 +7270,18 @@ class CasaLink {
         const tenantName = tenant.name || tenant.email || (firebaseAuth && firebaseAuth.currentUser && firebaseAuth.currentUser.email) || 'Tenant';
         const roomNumber = tenant.roomNumber || '';
 
+        // Priority mapping based on request type
+        const typePriorityMap = {
+            'plumbing': 'high',
+            'electrical': 'high',
+            'hvac': 'medium',
+            'appliance': 'medium',
+            'structural': 'emergency',
+            'pest_control': 'medium',
+            'general': 'low',
+            'other': 'low'
+        };
+
         // Build the landlord-style form for tenants
         const content = `
             <div style="max-width:700px;">
@@ -7262,13 +7308,14 @@ class CasaLink {
                 
                 <div class="form-group">
                     <label class="form-label">Priority *</label>
-                    <select id="maintPriority" class="form-input" required>
-                        <option value="">Select priority</option>
+                    <select id="maintPriority" class="form-input" required disabled>
+                        <option value="">Select a request type first</option>
                         <option value="low">Low</option>
                         <option value="medium">Medium</option>
                         <option value="high">High</option>
                         <option value="emergency">Emergency</option>
                     </select>
+                    <small class="text-muted">Priority will be auto-filled based on request type, and you can adjust it if needed</small>
                 </div>
                 
                 <div class="form-group">
@@ -7286,16 +7333,12 @@ class CasaLink {
                         <label class="form-label">Preferred Date</label>
                         <input id="maintPreferredDate" type="date" class="form-input" />
                     </div>
-                    <div class="form-group">
-                        <label class="form-label">Estimated Cost (₱)</label>
-                        <input id="maintEstimatedCost" type="number" min="0" step="0.01" class="form-input" placeholder="0" />
-                    </div>
                 </div>
                 
                 <div class="form-group">
                     <label class="form-label">Upload Photos (Optional)</label>
                     <input id="maintImages" type="file" accept="image/*" multiple class="form-input" />
-                    <small class="text-muted">You can upload multiple photos</small>
+                    <small class="text-muted">You can upload multiple photos to show the issue. If upload fails, your request will still be created.</small>
                 </div>
                 
                 <div class="form-group">
@@ -7318,7 +7361,6 @@ class CasaLink {
                 const type = document.getElementById('maintType')?.value;
                 const priority = document.getElementById('maintPriority')?.value;
                 const preferredDate = document.getElementById('maintPreferredDate')?.value;
-                const estimatedCost = document.getElementById('maintEstimatedCost')?.value;
                 const specialInstructions = document.getElementById('maintInstructions')?.value.trim();
                 const filesInput = document.getElementById('maintImages');
                 const errorEl = document.getElementById('maintFormError');
@@ -7350,10 +7392,10 @@ class CasaLink {
                     tenantId,
                     tenantName,
                     landlordId: tenant.landlordId || tenant.landlord || null,
+                    propertyName: tenant.apartment || tenant.propertyName || tenant.property || tenant.roomNumber || 'N/A',
                     roomNumber: roomNumber,
                     status: 'open',
                     images: [],
-                    estimatedCost: estimatedCost ? parseFloat(estimatedCost) : 0,
                     preferredDate: preferredDate || null,
                     specialInstructions: specialInstructions || '',
                     createdAt: new Date().toISOString(),
@@ -7369,23 +7411,41 @@ class CasaLink {
                 }
 
                 try {
-                    // Upload images if provided
-                    if (filesInput && filesInput.files && filesInput.files.length > 0 && window.firebase && firebase.storage) {
-                        const storageRef = firebase.storage().ref();
-                        const uploadPromises = Array.from(filesInput.files).map(async (file) => {
-                            const filePath = `maintenance_images/${tenantId || 'unknown'}/${Date.now()}_${file.name}`;
-                            const ref = storageRef.child(filePath);
-                            const snapshot = await ref.put(file);
-                            const url = await snapshot.ref.getDownloadURL();
-                            return url;
+                    // Attach images as data URLs (same approach used for payment evidence)
+                    if (filesInput && filesInput.files && filesInput.files.length > 0) {
+                        console.log('📸 Reading', filesInput.files.length, 'image(s) as data URLs for maintenance request');
+
+                        const readFileAsDataURL = (file) => new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = () => reject(new Error('Failed to read file'));
+                            reader.readAsDataURL(file);
                         });
 
                         try {
-                            const urls = await Promise.all(uploadPromises);
-                            requestData.images = urls;
-                        } catch (uploadErr) {
-                            console.warn('Image upload failed (continuing without images):', uploadErr);
+                            const promises = Array.from(filesInput.files).map(async (file) => {
+                                if (!file.type.startsWith('image/')) {
+                                    console.warn('⚠️ Skipping non-image file:', file.name);
+                                    return null;
+                                }
+                                const dataUrl = await readFileAsDataURL(file);
+                                console.log('✅ Read image as data URL:', file.name);
+                                return dataUrl;
+                            });
+
+                            const urls = await Promise.all(promises);
+                            requestData.images = urls.filter(u => u);
+                            console.log('✅ All images processed as data URLs, count:', requestData.images.length);
+                            if (requestData.images.length > 0) {
+                                this.showNotification(`${requestData.images.length} image(s) attached to your request (stored as data URLs)`, 'success');
+                            }
+                        } catch (readErr) {
+                            console.error('❌ Error reading images as data URLs:', readErr);
+                            this.showNotification('⚠️ Photos could not be attached, but your request will still be created', 'warning');
+                            requestData.images = [];
                         }
+                    } else {
+                        console.log('⚠️ No files selected. filesInput:', !!filesInput, 'files:', filesInput?.files?.length || 0);
                     }
 
                     // Persist request via DataManager
@@ -7422,6 +7482,26 @@ class CasaLink {
                 }
             }
         });
+
+        // Setup priority auto-fill based on request type
+        setTimeout(() => {
+            const typeSelect = document.getElementById('maintType');
+            const prioritySelect = document.getElementById('maintPriority');
+            
+            if (typeSelect && prioritySelect) {
+                typeSelect.addEventListener('change', (e) => {
+                    const selectedType = e.target.value;
+                    if (selectedType && typePriorityMap[selectedType]) {
+                        const defaultPriority = typePriorityMap[selectedType];
+                        prioritySelect.value = defaultPriority;
+                        prioritySelect.disabled = false;
+                    } else {
+                        prioritySelect.value = '';
+                        prioritySelect.disabled = true;
+                    }
+                });
+            }
+        }, 100);
     }
 
     // Add helper method for HTML escaping
@@ -7515,6 +7595,7 @@ class CasaLink {
                 tenantId: this.currentUser.uid,
                 tenantName: this.currentUser.name,
                 roomNumber: this.currentUser.roomNumber,
+                propertyName: this.currentUser.apartment || this.currentUser.propertyName || this.currentUser.property || this.currentUser.roomNumber || 'N/A',
                 landlordId: this.currentUser.landlordId,
                 type: document.getElementById('tenantIssueType').value,
                 priority: document.getElementById('tenantUrgency').value,
@@ -7626,8 +7707,65 @@ class CasaLink {
         try {
             console.log('🔄 Loading maintenance data...');
             const requests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
-            this.currentMaintenanceRequests = requests;
-            this.updateMaintenanceTable(requests);
+            // Resolve missing propertyName/apartment for each request so the table shows apartment, not just unit
+            const resolvedRequests = await Promise.all(requests.map(async (req) => {
+                try {
+                    if (req.propertyName && req.propertyName !== 'N/A') return req;
+
+                    let resolved = req.propertyName || req.apartment || null;
+
+                    // Try tenant/user document
+                    if (!resolved && req.tenantId) {
+                        try {
+                            const userDoc = await firebaseDb.collection('users').doc(req.tenantId).get();
+                            if (userDoc.exists) {
+                                const u = userDoc.data();
+                                resolved = resolved || u.rentalAddress || u.apartmentAddress || u.apartmentName || u.apartment || u.roomNumber || null;
+                            }
+                        } catch (e) {
+                            console.warn('Could not fetch tenant document for property resolution:', e);
+                        }
+                    }
+
+                    // Try rooms collection by roomNumber
+                    if (!resolved && req.roomNumber) {
+                        try {
+                            let roomsQuery = firebaseDb.collection('rooms').where('roomNumber', '==', req.roomNumber).limit(1);
+                            if (req.landlordId) roomsQuery = roomsQuery.where('landlordId', '==', req.landlordId);
+                            const roomsSnap = await roomsQuery.get();
+                            if (!roomsSnap.empty) {
+                                const room = roomsSnap.docs[0].data();
+                                resolved = resolved || room.apartmentName || room.apartmentAddress || room.apartmentId || req.roomNumber;
+                            }
+                        } catch (e) {
+                            console.warn('Could not query rooms for property resolution:', e);
+                        }
+                    }
+
+                    // Try apartments collection by apartmentAddress
+                    if (!resolved && req.apartmentAddress) {
+                        try {
+                            const aptQuery = await firebaseDb.collection('apartments').where('apartmentAddress', '==', req.apartmentAddress).limit(1).get();
+                            if (!aptQuery.empty) {
+                                const apt = aptQuery.docs[0].data();
+                                resolved = resolved || apt.apartmentName || apt.apartmentAddress || null;
+                            }
+                        } catch (e) {
+                            console.warn('Could not query apartments for property resolution:', e);
+                        }
+                    }
+
+                    req.propertyName = resolved || req.roomNumber || 'N/A';
+                    return req;
+                } catch (err) {
+                    console.warn('Error resolving property for request', req.id, err);
+                    req.propertyName = req.roomNumber || 'N/A';
+                    return req;
+                }
+            }));
+
+            this.currentMaintenanceRequests = resolvedRequests;
+            this.updateMaintenanceTable(resolvedRequests);
             
             console.log('✅ Maintenance data loaded:', requests.length, 'requests');
         } catch (error) {
@@ -7726,8 +7864,8 @@ class CasaLink {
 
             // If current user is tenant, show a hidden input with their id instead of a select
             const tenantOptions = tenants.map(tenant => `
-                <option value="${tenant.id}" data-room="${tenant.roomNumber}">
-                    ${tenant.name} - ${tenant.roomNumber}
+                <option value="${tenant.id}" data-room="${tenant.roomNumber}" data-apartment="${tenant.apartment || tenant.propertyName || tenant.property || 'N/A'}" data-tenant-json="${btoa(JSON.stringify(tenant))}">
+                    ${tenant.name} - ${tenant.roomNumber}${tenant.apartment ? ' (' + tenant.apartment + ')' : ''}
                 </option>
             `).join('');
 
@@ -7770,10 +7908,11 @@ class CasaLink {
 
                     <div class="form-group">
                         <label class="form-label">Priority *</label>
-                        <select id="maintenancePriority" class="form-input" required>
-                            <option value="">Select priority</option>
+                        <select id="maintenancePriority" class="form-input" required disabled>
+                            <option value="">Select a request type first</option>
                             ${priorityOptions}
                         </select>
+                        <small style="color: var(--dark-gray);">Priority will be auto-filled based on request type, and you can adjust it if needed</small>
                     </div>
 
                     <div class="form-group">
@@ -7787,12 +7926,6 @@ class CasaLink {
                         <textarea id="maintenanceDescription" class="form-input" 
                             placeholder="Please provide detailed information about the maintenance issue..."
                             rows="4" required></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label class="form-label">Estimated Cost (₱)</label>
-                        <input type="number" id="maintenanceCost" class="form-input" 
-                            placeholder="0" min="0" step="0.01">
                     </div>
 
                     <div class="form-group">
@@ -7823,6 +7956,54 @@ class CasaLink {
                 submitText: 'Create Request',
                 onSubmit: () => this.createMaintenanceRequest()
             });
+
+            // Setup priority auto-fill based on request type
+            setTimeout(() => {
+                const typeSelect = document.getElementById('maintenanceType');
+                const prioritySelect = document.getElementById('maintenancePriority');
+                
+                const typePriorityMap = {
+                    'plumbing': 'high',
+                    'electrical': 'high',
+                    'hvac': 'medium',
+                    'appliance': 'medium',
+                    'structural': 'emergency',
+                    'pest_control': 'medium',
+                    'general': 'low',
+                    'other': 'low'
+                };
+                
+                if (typeSelect && prioritySelect) {
+                    typeSelect.addEventListener('change', (e) => {
+                        const selectedType = e.target.value;
+                        if (selectedType) {
+                            // For landlord form, types might have different IDs, so we match by name
+                            let matchedPriority = null;
+                            
+                            // Check if it's a direct match in the map
+                            if (typePriorityMap[selectedType]) {
+                                matchedPriority = typePriorityMap[selectedType];
+                            } else {
+                                // Try to match by text content
+                                const typeText = selectedType.toLowerCase();
+                                if (typeText.includes('plumb')) matchedPriority = 'high';
+                                else if (typeText.includes('electric')) matchedPriority = 'high';
+                                else if (typeText.includes('struct')) matchedPriority = 'emergency';
+                                else if (typeText.includes('hvac') || typeText.includes('appliance') || typeText.includes('pest')) matchedPriority = 'medium';
+                                else matchedPriority = 'low';
+                            }
+                            
+                            if (matchedPriority) {
+                                prioritySelect.value = matchedPriority;
+                                prioritySelect.disabled = false;
+                            }
+                        } else {
+                            prioritySelect.value = '';
+                            prioritySelect.disabled = true;
+                        }
+                    });
+                }
+            }, 100);
 
             this.createMaintenanceModal = modal;
 
@@ -7878,6 +8059,18 @@ class CasaLink {
                             <div><strong>Type:</strong> ${request.type.replace('_', ' ')}</div>
                             <div><strong>Title:</strong> ${request.title}</div>
                         </div>
+                        ${request.photoURLs && request.photoURLs.length > 0 ? `
+                            <div style="margin-top: 15px;">
+                                <strong>Attached Photos:</strong>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px; margin-top: 10px;">
+                                    ${request.photoURLs.map(photoURL => `
+                                        <div style="border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); cursor: pointer;" onclick='window.openFullSizeImage(${JSON.stringify(photoURL)})'>
+                                            <img src="${photoURL}" alt="Issue photo" style="width: 100%; height: 100px; object-fit: cover;" />
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
                     </div>
 
                     <div class="form-group">
@@ -8114,7 +8307,7 @@ class CasaLink {
             
             // Create CSV content
             let csvContent = "Maintenance Report\n\n";
-            csvContent += "ID,Tenant,Room,Type,Priority,Status,Title,Estimated Cost,Actual Cost,Created Date,Completed Date,Assigned To\n";
+            csvContent += "ID,Tenant,Room,Type,Priority,Status,Title,Actual Cost,Created Date,Completed Date,Assigned To\n";
             
             maintenanceRequests.forEach(request => {
                 const row = [
@@ -8125,7 +8318,6 @@ class CasaLink {
                     request.priority,
                     request.status,
                     `"${request.title}"`,
-                    request.estimatedCost || 0,
                     request.actualCost || 0,
                     new Date(request.createdAt).toLocaleDateString(),
                     request.completedDate ? new Date(request.completedDate).toLocaleDateString() : 'N/A',
@@ -8277,11 +8469,15 @@ class CasaLink {
             const staffSelect = document.getElementById('assignStaff');
             const selectedStaff = staffSelect.options[staffSelect.selectedIndex].text.split(' - ')[0];
 
+            const estCostVal = document.getElementById('estimatedCost') ? document.getElementById('estimatedCost').value : '';
+            const estimatedCost = estCostVal !== '' ? parseFloat(estCostVal) : null;
+
             const updates = {
                 assignedTo: staffId,
                 assignedName: selectedStaff,
                 assignmentNotes: assignmentNotes,
                 estimatedCompletion: estimatedCompletion,
+                estimatedCost: estimatedCost,
                 status: 'in-progress',
                 assignedAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
@@ -8347,10 +8543,38 @@ class CasaLink {
                     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
                         <h4 style="margin: 0 0 10px 0; color: var(--royal-blue);">Request Details</h4>
                         <div style="font-size: 0.9rem;">
-                            <div><strong>Tenant:</strong> ${request.tenantName} (${request.roomNumber})</div>
+                            <div style="margin-bottom: 12px;">
+                                <strong>Tenant:</strong> ${request.tenantName} (${request.roomNumber})<br>
+                                <span style="margin-left: 20px; color: #666;"><strong>Apartment:</strong> ${request.propertyName || 'N/A'}</span>
+                            </div>
                             <div><strong>Issue:</strong> ${request.title}</div>
                             <div><strong>Priority:</strong> <span class="status-badge ${this.getPriorityBadge(request.priority).split('"')[1]}">${request.priority}</span></div>
+                            ${request.description ? `<div style="margin-top: 10px;"><strong>Description:</strong><br><span style="color: #555;">${request.description}</span></div>` : ''}
                         </div>
+                        ${(() => {
+                            const images = request.photoURLs || request.images || [];
+                            const hasImages = Array.isArray(images) && images.length > 0;
+                            
+                            if (!hasImages) return '';
+                            
+                            return `
+                                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                                    <strong style="color: var(--royal-blue); display: block; margin-bottom: 10px;">
+                                        <i class="fas fa-images"></i> Attached Photos (${images.length})
+                                    </strong>
+                                    <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 10px;">
+                                        ${images.map(photoURL => {
+                                            if (!photoURL) return '';
+                                            return `
+                                                <div style="border-radius: 6px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); cursor: pointer;" onclick='window.openFullSizeImage(${JSON.stringify(photoURL)})'>
+                                                    <img src="${photoURL}" alt="Maintenance photo" style="width: 100%; height: 100px; object-fit: cover;" />
+                                                </div>
+                                            `;
+                                        }).join('')}
+                                    </div>
+                                </div>
+                            `;
+                        })()}
                     </div>
 
                     <div class="form-group">
@@ -8372,6 +8596,11 @@ class CasaLink {
                         <label class="form-label">Estimated Completion Date</label>
                         <input type="date" id="estimatedCompletion" class="form-input"
                             min="${new Date().toISOString().split('T')[0]}">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Estimated Cost</label>
+                        <input type="number" id="estimatedCost" class="form-input" placeholder="Estimated cost (PHP)" min="0" step="0.01">
                     </div>
 
                     <div id="assignMaintenanceError" style="color: var(--danger); display: none; margin-bottom: 15px;"></div>
@@ -8397,6 +8626,101 @@ class CasaLink {
         if (errorElement) {
             errorElement.textContent = message;
             errorElement.style.display = 'block';
+        }
+    }
+
+    // completion modal for landlords marking a request complete
+    async showCompletionModal(requestId) {
+        try {
+            const modalContent = `
+                <div class="complete-maintenance-modal">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <i class="fas fa-check-double" style="font-size: 3rem; color: var(--success); margin-bottom: 15px;"></i>
+                        <h3 style="margin-bottom: 10px;">Complete Maintenance Request</h3>
+                        <p>Please provide actual cost and photo evidence before marking complete.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Actual Cost *</label>
+                        <input type="number" id="completionCost" class="form-input" placeholder="Actual cost (PHP)" min="0" step="0.01" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Photo Evidence</label>
+                        <input type="file" id="completionPhotos" class="form-input" accept="image/*" multiple>
+                        <small style="color: var(--dark-gray);">You may attach one or more images as proof of work.</small>
+                    </div>
+
+                    <div id="completionError" style="color: var(--danger); display: none; margin-bottom: 15px;"></div>
+                </div>
+            `;
+
+            const modal = ModalManager.openModal(modalContent, {
+                title: 'Maintenance Completion',
+                submitText: 'Submit',
+                onSubmit: async () => {
+                    const costEl = document.getElementById('completionCost');
+                    const costVal = costEl ? parseFloat(costEl.value) : 0;
+                    if (!costVal || costVal < 0) {
+                        const err = document.getElementById('completionError');
+                        if (err) { err.textContent = 'Please enter a valid cost'; err.style.display = 'block'; }
+                        return false; // prevent modal close
+                    }
+
+                    // process photos
+                    const photosInput = document.getElementById('completionPhotos');
+                    const completionPhotos = [];
+                    if (photosInput && photosInput.files && photosInput.files.length > 0) {
+                        const readFileAsDataURL = (file) => new Promise((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = () => reject(new Error('Failed to read file'));
+                            reader.readAsDataURL(file);
+                        });
+
+                        try {
+                            const promises = Array.from(photosInput.files).map(async (file) => {
+                                if (!file.type.startsWith('image/')) return null;
+                                const dataUrl = await readFileAsDataURL(file);
+                                return dataUrl;
+                            });
+                            const urls = await Promise.all(promises);
+                            completionPhotos.push(...urls.filter(u => u));
+                        } catch (readErr) {
+                            console.warn('Error reading completion photos:', readErr);
+                            // continue without photos
+                        }
+                    }
+
+                    // prepare updates
+                    const updates = {
+                        actualCost: costVal,
+                        completionPhotos: completionPhotos,
+                        status: 'completed',
+                        completedDate: new Date().toISOString(),
+                        updatedAt: new Date().toISOString()
+                    };
+
+                    try {
+                        await DataManager.updateMaintenanceRequest(requestId, updates);
+                        this.showNotification('Maintenance request marked as complete', 'success');
+
+                        // close modal and refresh
+                        ModalManager.closeModal(modal);
+                        setTimeout(() => {
+                            this.loadMaintenanceData();
+                            this.loadMaintenanceStats();
+                        }, 1000);
+                    } catch (err) {
+                        console.error('Error completing maintenance request:', err);
+                        this.showNotification('Failed to complete request: ' + err.message, 'error');
+                    }
+                }
+            });
+
+        } catch (error) {
+            console.error('Error showing completion modal:', error);
+            this.showNotification('Unable to open completion form', 'error');
         }
     }
 
@@ -8446,6 +8770,41 @@ class CasaLink {
         }
     }
 
+    // close the maintenance request (mark as closed)
+    async closeMaintenanceRequest(requestId) {
+        try {
+            const updates = {
+                status: 'closed',
+                closedDate: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            await DataManager.updateMaintenanceRequest(requestId, updates);
+            this.showNotification('Maintenance request closed', 'success');
+
+            // close modal if open
+            ModalManager.closeModal(document.querySelector('.modal-overlay'));
+
+            setTimeout(() => {
+                this.loadMaintenanceData();
+                this.loadMaintenanceStats();
+            }, 1000);
+        } catch (error) {
+            console.error('Error closing maintenance request:', error);
+            this.showNotification('Failed to close request: ' + error.message, 'error');
+        }
+    }
+
+    // mark an in-progress request as completed (shows completion form first)
+    async markMaintenanceComplete(requestId) {
+        try {
+            // open a modal that requires cost + photos before completing
+            this.showCompletionModal(requestId);
+        } catch (error) {
+            console.error('Error marking maintenance complete:', error);
+            this.showNotification('Failed to mark complete: ' + error.message, 'error');
+        }
+    }
+
     setupMaintenanceRowStyles() {
         const maintenanceRows = document.querySelectorAll('.maintenance-row');
         maintenanceRows.forEach(row => {
@@ -8473,6 +8832,13 @@ class CasaLink {
         const preferredDate = request.preferredDate ? new Date(request.preferredDate) : null;
         const completedDate = request.completedDate ? new Date(request.completedDate) : null;
         const assignedDate = request.assignedAt ? new Date(request.assignedAt) : null;
+
+        // Debug: Check images
+        console.log('🖼️ Image Check in generateMaintenanceRequestDetails:');
+        console.log('   - request.images:', request.images, 'Type:', Array.isArray(request.images) ? 'array (' + request.images.length + ' items)' : typeof request.images);
+        console.log('   - request.photoURLs:', request.photoURLs, 'Type:', Array.isArray(request.photoURLs) ? 'array (' + request.photoURLs.length + ' items)' : typeof request.photoURLs);
+        const imagesAvailable = (request.images && Array.isArray(request.images) && request.images.length > 0) || (request.photoURLs && Array.isArray(request.photoURLs) && request.photoURLs.length > 0);
+        console.log('   - Will show images:', imagesAvailable);
 
         // Calculate days open
         const today = new Date();
@@ -8506,12 +8872,6 @@ class CasaLink {
                         <div>
                             <h3 style="margin: 0 0 5px 0;">${request.title}</h3>
                             <p style="margin: 0; opacity: 0.9;">Request #${request.id.substring(0, 8)} • ${request.type.replace('_', ' ')}</p>
-                        </div>
-                        <div style="text-align: right;">
-                            <div style="font-size: 1.8rem; font-weight: 700;">
-                                ${request.estimatedCost > 0 ? `₱${request.estimatedCost.toLocaleString()}` : 'No cost estimate'}
-                            </div>
-                            <div style="opacity: 0.9;">Estimated Cost</div>
                         </div>
                     </div>
                 </div>
@@ -8563,6 +8923,14 @@ class CasaLink {
                             <strong>Room Number:</strong><br>
                             ${request.roomNumber || 'N/A'}
                         </div>
+                        <div>
+                            <strong>Apartment:</strong><br>
+                            ${request.propertyName || request.apartment || 'N/A'}
+                        </div>
+                        <div>
+                            <strong>Type:</strong><br>
+                            ${request.type ? request.type.replace('_', ' ') : 'N/A'}
+                        </div>
                         ${request.contactPreference ? `
                             <div>
                                 <strong>Contact Preference:</strong><br>
@@ -8594,6 +8962,38 @@ class CasaLink {
                             <p style="margin: 10px 0; line-height: 1.6; background: rgba(251, 188, 4, 0.1); padding: 15px; border-radius: 8px;">${request.specialInstructions}</p>
                         </div>
                     ` : ''}
+
+                    ${(() => {
+                        const images = request.photoURLs || request.images || [];
+                        const hasImages = Array.isArray(images) && images.length > 0;
+                        
+                        if (!hasImages) {
+                            console.log('❌ No images found for request. photoURLs:', request.photoURLs, 'images:', request.images);
+                            return '';
+                        }
+                        
+                        console.log('✅ Rendering', images.length, 'images');
+                        return `
+                            <div style="margin-top: 15px; padding-top: 15px; border-top: 2px solid var(--royal-blue);">
+                                <strong style="color: var(--royal-blue); display: block; margin-bottom: 12px;">
+                                    <i class="fas fa-images"></i> Attached Photos (${images.length})
+                                </strong>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px;">
+                                    ${images.map((photoURL, idx) => {
+                                        if (!photoURL) {
+                                            console.warn('⚠️ Invalid image URL at index', idx, ':', photoURL);
+                                            return '';
+                                        }
+                                        return `
+                                            <div style="border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); cursor: pointer;" onclick='window.openFullSizeImage(${JSON.stringify(photoURL)})'>
+                                                <img src="${photoURL}" alt="Maintenance photo" style="width: 100%; height: 120px; object-fit: cover;" />
+                                            </div>
+                                        `;
+                                    }).join('')}
+                                </div>
+                            </div>
+                        `;
+                    })()}
                 </div>
 
                 <!-- Assignment & Scheduling -->
@@ -8641,19 +9041,18 @@ class CasaLink {
                 </div>
 
                 <!-- Cost Information -->
-                ${request.estimatedCost > 0 || request.actualCost > 0 ? `
+                ${(request.actualCost > 0 || request.estimatedCost) ? `
                     <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                         <h4 style="color: var(--royal-blue); margin-bottom: 15px; border-bottom: 2px solid var(--royal-blue); padding-bottom: 8px;">
                             <i class="fas fa-money-bill-wave"></i> Cost Information
                         </h4>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                            ${request.estimatedCost > 0 ? `
+                            ${request.estimatedCost !== undefined && request.estimatedCost !== null ? `
                                 <div>
                                     <strong>Estimated Cost:</strong><br>
-                                    <span style="font-weight: 600; color: var(--warning);">₱${request.estimatedCost.toLocaleString()}</span>
+                                    <span style="font-weight: 600; color: var(--warning);">₱${(Number(request.estimatedCost) || 0).toLocaleString()}</span>
                                 </div>
                             ` : ''}
-                            
                             ${request.actualCost > 0 ? `
                                 <div>
                                     <strong>Actual Cost:</strong><br>
@@ -8703,17 +9102,6 @@ class CasaLink {
                     </div>
                 </div>
 
-                <!-- Photos Section -->
-                ${request.photosAttached ? `
-                    <div style="background: white; padding: 20px; border-radius: 8px; margin-top: 20px;">
-                        <h4 style="color: var(--royal-blue); margin-bottom: 15px; border-bottom: 2px solid var(--royal-blue); padding-bottom: 8px;">
-                            <i class="fas fa-images"></i> Attached Photos
-                        </h4>
-                        <p style="color: var(--dark-gray); font-style: italic;">
-                            Photos are attached to this request. (Photo viewing functionality coming soon)
-                        </p>
-                    </div>
-                ` : ''}
             </div>
         `;
     }
@@ -8744,6 +9132,69 @@ class CasaLink {
                 return;
             }
 
+            // Debug: Log request object to check if images/photoURLs are present
+            console.log('📋 Maintenance Request Object:', request);
+            console.log('   - Has images property:', !!request.images, 'Count:', request.images ? request.images.length : 0);
+            console.log('   - Has photoURLs property:', !!request.photoURLs, 'Count:', request.photoURLs ? request.photoURLs.length : 0);
+
+            // Resolve propertyName/apartment for existing requests if missing
+            if (!request.propertyName || request.propertyName === 'N/A') {
+                try {
+                    console.log('🔎 Resolving propertyName for request', requestId);
+                    let resolved = request.propertyName || request.apartment || null;
+
+                    // Try to read tenant/user document for rentalAddress/apartment info
+                    if (!resolved && request.tenantId) {
+                        try {
+                            const userDoc = await firebaseDb.collection('users').doc(request.tenantId).get();
+                            if (userDoc.exists) {
+                                const u = userDoc.data();
+                                resolved = resolved || u.rentalAddress || u.apartmentAddress || u.apartmentName || u.apartment || u.roomNumber || null;
+                                console.log('   - Found tenant data for apartment resolution:', resolved);
+                            }
+                        } catch (e) {
+                            console.warn('   - Could not fetch tenant document:', e);
+                        }
+                    }
+
+                    // Try rooms collection by roomNumber + landlordId
+                    if (!resolved && request.roomNumber) {
+                        try {
+                            let roomsQuery = firebaseDb.collection('rooms').where('roomNumber', '==', request.roomNumber).limit(1);
+                            if (request.landlordId) roomsQuery = roomsQuery.where('landlordId', '==', request.landlordId);
+                            const roomsSnap = await roomsQuery.get();
+                            if (!roomsSnap.empty) {
+                                const room = roomsSnap.docs[0].data();
+                                resolved = resolved || room.apartmentName || room.apartmentAddress || room.apartmentId || request.roomNumber;
+                                console.log('   - Resolved from rooms collection:', resolved);
+                            }
+                        } catch (e) {
+                            console.warn('   - Could not query rooms collection:', e);
+                        }
+                    }
+
+                    // Try apartments collection by apartmentAddress
+                    if (!resolved && request.apartmentAddress) {
+                        try {
+                            const aptQuery = await firebaseDb.collection('apartments').where('apartmentAddress', '==', request.apartmentAddress).limit(1).get();
+                            if (!aptQuery.empty) {
+                                const apt = aptQuery.docs[0].data();
+                                resolved = resolved || apt.apartmentName || apt.apartmentAddress || null;
+                                console.log('   - Resolved from apartments collection:', resolved);
+                            }
+                        } catch (e) {
+                            console.warn('   - Could not query apartments collection:', e);
+                        }
+                    }
+
+                    request.propertyName = resolved || request.roomNumber || 'N/A';
+                    console.log('   - Final propertyName:', request.propertyName);
+                } catch (err) {
+                    console.warn('⚠️ Error resolving propertyName:', err);
+                    request.propertyName = request.roomNumber || 'N/A';
+                }
+            }
+
             // Generate maintenance request details content
             const requestDetailsContent = this.generateMaintenanceRequestDetails(request);
             
@@ -8753,24 +9204,49 @@ class CasaLink {
                 modalBody.innerHTML = requestDetailsContent;
             }
 
-            // Add footer with action buttons
+            // Add footer with action buttons tailored to status
             const modalFooter = modal.querySelector('.modal-footer');
             if (!modalFooter) {
                 const footer = document.createElement('div');
                 footer.className = 'modal-footer';
-                footer.innerHTML = `
-                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
-                        Close
-                    </button>
-                    ${request.status !== 'completed' ? `
+
+                // build status‑specific buttons (close request, update, assign/complete)
+                let buttonsHtml = '';
+
+                if (request.status === 'open') {
+                    buttonsHtml = `
+                        <button class="btn btn-danger" onclick="casaLink.closeMaintenanceRequest('${request.id}')">
+                            <i class="fas fa-times-circle"></i> Close Request
+                        </button>
                         <button class="btn btn-warning" onclick="casaLink.updateMaintenanceRequest('${request.id}')">
                             <i class="fas fa-edit"></i> Update
                         </button>
                         <button class="btn btn-success" onclick="casaLink.assignMaintenance('${request.id}')">
                             <i class="fas fa-user-check"></i> Assign Staff
                         </button>
-                    ` : ''}
-                `;
+                    `;
+                } else if (request.status === 'in-progress') {
+                    buttonsHtml = `
+                        <button class="btn btn-danger" onclick="casaLink.closeMaintenanceRequest('${request.id}')">
+                            <i class="fas fa-times-circle"></i> Close Request
+                        </button>
+                        <button class="btn btn-warning" onclick="casaLink.updateMaintenanceRequest('${request.id}')">
+                            <i class="fas fa-edit"></i> Update
+                        </button>
+                        <button class="btn btn-success" onclick="casaLink.markMaintenanceComplete('${request.id}')">
+                            <i class="fas fa-check-circle"></i> Mark as Complete
+                        </button>
+                    `;
+                } else {
+                    // for completed/cancelled requests just allow closing the modal
+                    buttonsHtml = `
+                        <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                            Close
+                        </button>
+                    `;
+                }
+
+                footer.innerHTML = buttonsHtml;
                 modal.querySelector('.modal-content').appendChild(footer);
             }
 
@@ -8793,21 +9269,33 @@ class CasaLink {
             const tenantSelect = document.getElementById('maintenanceTenant');
             const selectedOption = tenantSelect.options[tenantSelect.selectedIndex];
             
+            // Try to get apartment name from the data attributes
+            let apartmentName = selectedOption.getAttribute('data-apartment') || 'N/A';
+            if (apartmentName === 'N/A' && selectedOption.getAttribute('data-tenant-json')) {
+                try {
+                    const tenantData = JSON.parse(atob(selectedOption.getAttribute('data-tenant-json')));
+                    apartmentName = tenantData.apartment || tenantData.propertyName || tenantData.property || 'N/A';
+                } catch (e) {
+                    console.warn('Could not parse tenant data:', e);
+                }
+            }
+            
             const requestData = {
                 tenantId: tenantSelect.value,
                 tenantName: selectedOption.text.split(' - ')[0],
                 roomNumber: selectedOption.getAttribute('data-room'),
+                propertyName: apartmentName,
                 landlordId: this.currentUser.uid,
                 type: document.getElementById('maintenanceType').value,
                 priority: document.getElementById('maintenancePriority').value,
                 title: document.getElementById('maintenanceTitle').value,
                 description: document.getElementById('maintenanceDescription').value,
-                estimatedCost: parseFloat(document.getElementById('maintenanceCost').value) || 0,
                 preferredDate: document.getElementById('maintenancePreferredDate').value,
                 specialInstructions: document.getElementById('maintenanceInstructions').value,
                 status: 'open',
                 createdBy: this.currentUser.uid,
-                createdByName: this.currentUser.name
+                createdByName: this.currentUser.name,
+                photoURLs: [] // for storing uploaded photo URLs
             };
 
             // Validation
@@ -8830,10 +9318,14 @@ class CasaLink {
             // Handle file uploads if any
             const photoFiles = document.getElementById('maintenancePhotos').files;
             if (photoFiles.length > 0) {
-                // You can implement file upload to Firebase Storage here
-                console.log('Photos to upload:', photoFiles.length);
-                // For now, we'll just note that photos were attached
-                requestData.photosAttached = true;
+                try {
+                    const photoURLs = await this.uploadMaintenancePhotos(photoFiles, requestData.tenantId);
+                    if (photoURLs.length > 0) {
+                        requestData.photoURLs = photoURLs;
+                    }
+                } catch (photoError) {
+                    console.warn('Warning: Photos could not be uploaded, continuing without photos:', photoError);
+                }
             }
 
             await DataManager.createMaintenanceRequest(requestData);
@@ -8857,6 +9349,33 @@ class CasaLink {
                 submitBtn.disabled = false;
             }
         }
+    }
+
+    async uploadMaintenancePhotos(files, tenantId) {
+        const photoURLs = [];
+        const storage = firebase.storage();
+        const timestamp = new Date().getTime();
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            if (!file.type.startsWith('image/')) {
+                console.warn('Skipping non-image file:', file.name);
+                continue;
+            }
+
+            try {
+                const storagePath = `maintenance-photos/${tenantId}/${timestamp}-${file.name}`;
+                const fileRef = storage.ref(storagePath);
+                await fileRef.put(file);
+                const downloadURL = await fileRef.getDownloadURL();
+                photoURLs.push(downloadURL);
+                console.log('✅ Photo uploaded:', downloadURL);
+            } catch (error) {
+                console.error('Error uploading photo:', error);
+            }
+        }
+
+        return photoURLs;
     }
 
 
@@ -8961,6 +9480,7 @@ class CasaLink {
                         <tr>
                             <th>ID</th>
                             <th>Title</th>
+                            <th>Apartment</th>
                             <th>Tenant/Room</th>
                             <th>Type</th>
                             <th>Priority</th>
@@ -8985,6 +9505,10 @@ class CasaLink {
                                     <td>
                                         <div style="font-weight: 500;">${request.title}</div>
                                         <small style="color: var(--dark-gray);">${request.description.substring(0, 50)}${request.description.length > 50 ? '...' : ''}</small>
+                                    </td>
+                                    <td>
+                                        <div style="font-weight: 500;">${request.propertyName || request.apartment || request.roomNumber || 'N/A'}</div>
+                                        <small style="color: var(--dark-gray);">${request.propertyName ? '' : ''}</small>
                                     </td>
                                     <td>
                                         <div>${request.tenantName || 'N/A'}</div>
@@ -9015,12 +9539,19 @@ class CasaLink {
                                             <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.viewMaintenanceRequest('${request.id}')">
                                                 <i class="fas fa-eye"></i>
                                             </button>
-                                            <button class="btn btn-sm btn-warning" onclick="event.stopPropagation(); casaLink.updateMaintenanceRequest('${request.id}')">
-                                                <i class="fas fa-edit"></i>
-                                            </button>
                                             ${request.status !== 'completed' ? `
+                                                <button class="btn btn-sm btn-warning" onclick="event.stopPropagation(); casaLink.updateMaintenanceRequest('${request.id}')">
+                                                    <i class="fas fa-edit"></i>
+                                                </button>
+                                            ` : ''}
+                                            ${request.status === 'open' ? `
                                                 <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); casaLink.assignMaintenance('${request.id}')">
                                                     <i class="fas fa-user-check"></i>
+                                                </button>
+                                            ` : ''}
+                                            ${request.status === 'in-progress' ? `
+                                                <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); casaLink.markMaintenanceComplete('${request.id}')">
+                                                    <i class="fas fa-check-circle"></i>
                                                 </button>
                                             ` : ''}
                                         </div>
