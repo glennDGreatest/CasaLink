@@ -76,8 +76,8 @@
 
         .filters {
             display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
+            gap: 12px;            /* slightly more horizontal spacing */
+            margin-bottom: 24px;  /* add extra vertical breathing after filters */
             flex-wrap: wrap;
         }
 
@@ -325,6 +325,9 @@
                 <option value="closed">Closed</option>
             </select>
         </div>
+        <button id="resetRequestFilters" class="reset-filters-button" style="margin-bottom:0; align-self:flex-end;">
+            <i class="fas fa-redo"></i> Reset Filters
+        </button>
 
         <div class="loading" id="loadingIndicator">Loading requests...</div>
 
@@ -397,10 +400,31 @@
             }
         });
 
+        // Reset tenant filters
+        document.getElementById('resetRequestFilters')?.addEventListener('click', () => {
+            // clear inputs
+            const searchEl = document.getElementById('requestSearch');
+            const priorityEl = document.getElementById('priorityFilter');
+            const statusEl = document.getElementById('statusFilter');
+            if (searchEl) searchEl.value = '';
+            if (priorityEl) priorityEl.value = '';
+            if (statusEl) statusEl.value = '';
+            if (window.maintenanceController) {
+                window.maintenanceController.searchRequests('');
+                window.maintenanceController.filterByPriority('');
+                window.maintenanceController.filterByStatus('');
+            }
+        });
+
         // Helper: Display requests
         window.displayMaintenanceRequests = function(requests) {
             const container = document.getElementById('requestsList');
             if (!container) return;
+
+            // default sort - newest first
+            if (Array.isArray(requests)) {
+                requests.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+            }
 
             if (!requests || requests.length === 0) {
                 container.innerHTML = `

@@ -246,6 +246,7 @@ class DataManager {
         try {
             const snapshot = await firebaseDb.collection('properties')
                 .where('landlordId', '==', landlordId)
+                .orderBy('createdAt', 'desc')
                 .get();
             
             const properties = snapshot.docs.map(doc => {
@@ -696,6 +697,8 @@ class DataManager {
         try {
             let query = firebaseDb.collection('maintenance')
                 .where('landlordId', '==', landlordId)
+                // Order by updatedAt if available, fallback to createdAt
+                .orderBy('updatedAt', 'desc')
                 .orderBy('createdAt', 'desc');
 
             // Apply filters
@@ -710,10 +713,19 @@ class DataManager {
             }
 
             const snapshot = await query.get();
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            return snapshot.docs.map(doc => {
+                const raw = doc.data();
+                ['createdAt','updatedAt','completedDate','preferredDate','estimatedCompletion'].forEach(field => {
+                    if (raw[field] && typeof raw[field].toDate === 'function') {
+                        try {
+                            raw[field] = raw[field].toDate().toISOString();
+                        } catch (e) {
+                            console.warn('❗Could not normalize timestamp for', field, e);
+                        }
+                    }
+                });
+                return { id: doc.id, ...raw };
+            });
         } catch (error) {
             console.error('Error getting maintenance requests:', error);
             return [];
@@ -2033,6 +2045,7 @@ class DataManager {
             const querySnapshot = await firebaseDb.collection('users')
                 .where('landlordId', '==', landlordId)
                 .where('role', '==', 'tenant')
+                .orderBy('createdAt', 'desc')
                 .get();
             
             return querySnapshot.docs.map(doc => ({ 
@@ -2055,6 +2068,7 @@ class DataManager {
             const snapshot = await firebaseDb.collection('users')
                 .where('landlordId', '==', userId)
                 .where('role', '==', 'tenant')
+                .orderBy('createdAt', 'desc')
                 .get();
 
             const tenants = snapshot.docs.map(doc => {
@@ -2074,6 +2088,7 @@ class DataManager {
         try {
             const querySnapshot = await firebaseDb.collection('leases')
                 .where('landlordId', '==', landlordId)
+                .orderBy('createdAt', 'desc')
                 .get();
             
             return querySnapshot.docs.map(doc => ({

@@ -411,8 +411,8 @@ body:not(.logged-in) .admin-portal-link {
 .card-group {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 12px;
-    margin-bottom: 18px;
+    gap: 16px;            /* slightly larger gap between cards for breathing room */
+    margin-bottom: 24px;  /* added extra bottom spacing under stats */
 }
 
 .maintenance-page .card {
@@ -1620,6 +1620,52 @@ header {
     justify-content: flex-end;
 }
 
+/* quick actions when inside a page header should have no extra horizontal padding */
+.page-header .quick-actions-bar {
+    padding: 0;
+    margin-bottom: 0;
+}
+
+/* layout tweaks for maintenance header */
+.page-header.maintenance {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;   /* more breathing room between title and action buttons */
+    margin-bottom: 20px; /* separate header from stats section */
+}
+
+/* card hover effects for clickable maintenance stats */
+.card[data-clickable]:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateY(-2px);
+    transition: all 0.2s ease;
+}
+
+/* active filter button state */
+.quick-filter-buttons .btn.active {
+    background: var(--primary-blue);
+    color: #fff;
+    border-color: var(--primary-blue);
+}
+
+/* search & filter container spacing tweaks */
+.search-filters-container {
+    display: flex;
+    gap: 15px;
+    padding: 0 25px 20px;
+    align-items: center;
+    flex-wrap: wrap;
+    border-bottom: 1px solid #e9ecef;
+}
+
+/* make filters slightly bigger on desktop */
+@media (min-width: 768px) {
+    .search-filters-container .form-input {
+        min-width: 180px;
+    }
+}
+
 .quick-actions-bar .btn {
     white-space: nowrap;
     padding: 10px 16px;
@@ -2116,7 +2162,8 @@ header {
     flex: 1;
 }
 
-.tenants-table {
+/* base styling for ALL tables in the system */
+table {
     width: 100%;
     border-collapse: collapse;
     background: white;
@@ -2125,20 +2172,64 @@ header {
     min-width: 1000px;
 }
 
-.tenants-table th,
-.tenants-table td {
+table th,
+table td {
     padding: 12px 15px;
     text-align: left;
     border-bottom: 1px solid #eee;
 }
 
+/* globally make headers stand out and stick on scroll */
+table thead th,
+table th {
+    background-color: #f1f3f5;
+    font-weight: 700;
+    color: var(--dark-gray);
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 2px solid #dee2e6;
+}
+
+table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+/* legacy tenant-specific selectors retained for backward compatibility */
+.tenants-table {
+    min-width: 1000px;
+}
+
+.tenants-table th,
+.tenants-table td {
+    /* inherited from generic rules above */
+}
+
+/* tenant tables and any other data tables should have a clear header style */
 .tenants-table th {
+    /* header-specific tweaks now handled globally */
+}
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* generic header style applied to all tables for consistency */
+table th {
     background-color: #f8f9fa;
     font-weight: 600;
     color: var(--dark-gray);
     font-size: 0.9rem;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #eee;
+}
+
+table tbody tr:hover {
+    background-color: #f8f9fa;
 }
 
 .tenants-table tbody tr {

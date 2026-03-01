@@ -687,6 +687,15 @@
             const tbody = document.getElementById('billsList');
             if (!tbody) return;
 
+            // sort by most recent due date / creation date
+            if (Array.isArray(bills)) {
+                bills.sort((a, b) => {
+                    const da = new Date(b.dueDate || b.createdAt || 0);
+                    const db = new Date(a.dueDate || a.createdAt || 0);
+                    return da - db; // already newest first if use descending order - reversed logic
+                });
+            }
+
             if (!bills || bills.length === 0) {
                 tbody.innerHTML = `
                     <tr>

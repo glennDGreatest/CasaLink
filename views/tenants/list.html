@@ -279,6 +279,11 @@
             const tbody = document.getElementById('tenantsList');
             if (!tbody) return;
 
+            // sort most recent tenants first
+            if (Array.isArray(tenants)) {
+                tenants.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+            }
+
             if (!tenants || tenants.length === 0) {
                 tbody.innerHTML = `
                     <tr>

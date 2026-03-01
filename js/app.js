@@ -31,6 +31,14 @@ class CasaLink {
         this.tenantsFilteredData = [];
         this.setupCacheBusting();
 
+        // maintenance pagination state (landlord table)
+        this.maintenanceCurrentPage = 1;
+        // show at most 5 rows per page for landlord maintenance table
+        this.maintenanceItemsPerPage = 5;
+        this.maintenanceTotalPages = 1;
+        this.maintenanceAllData = [];
+        this.maintenanceFilteredData = [];
+
         this.activitiesCurrentPage = 1;
         this.activitiesItemsPerPage = 5;
         this.activitiesTotalPages = 1;
@@ -107,7 +115,23 @@ class CasaLink {
     }
 
     
+    // Utility: sort arrays of objects by newest timestamp
+    // Uses the passed field, falling back to updatedAt or createdAt automatically.
+    sortByDateDesc(arr, field = 'createdAt') {
+        if (!Array.isArray(arr)) return arr;
+        return arr.sort((a, b) => {
+            const getDate = (obj) => {
+                if (!obj) return 0;
+                const val = obj[field] || obj.updatedAt || obj.createdAt || 0;
+                return new Date(val);
+            };
+            const da = getDate(a);
+            const db = getDate(b);
+            return db - da;
+        });
+    }
 
+    
     addDebugTools() {
         // Only add in development or if there are issues
         if (window.location.hostname === 'localhost' || window.location.hostname.includes('firebaseapp.com')) {
@@ -446,6 +470,13 @@ class CasaLink {
             case 'maintenance':
                 // Any additional maintenance cleanup can go here
                 break;
+            case 'tenantMaintenance':
+                if (this.tenantMaintenanceListener) {
+                    console.log('🧹 Removing tenant maintenance listener');
+                    this.tenantMaintenanceListener();
+                    this.tenantMaintenanceListener = null;
+                }
+                break;
         }
     }
 
@@ -580,6 +611,14 @@ class CasaLink {
                 // Note: setupPageEvents calls setupDashboardEvents which handles apartment selection
                 // and conditionally loads stats based on apartment selection state
                 // Don't load stats here - let setupDashboardEvents handle it
+
+                // Extra safety: if a tenant navigates back to dashboard we want to
+                // guarantee fresh stats regardless of apartment selector shenanigans.
+                if (this.currentRole === 'tenant') {
+                    console.log('🔁 Tenant returning to dashboard — forcing stats reload');
+                    // fire-and-forget; setupDashboardEvents already initiated a load
+                    this.loadDashboardData().catch(err => console.warn('Failed to reload dashboard data for tenant', err));
+                }
             }
 
         } catch (error) {
@@ -1823,6 +1862,9 @@ class CasaLink {
             return;
         }
         
+        // ensure sorted newest first
+        activities.sort((a, b) => new Date(b.timestamp || b.updatedAt || b.createdAt || 0) - new Date(a.timestamp || a.updatedAt || a.createdAt || 0));
+        
         activityList.innerHTML = this.renderActivitiesList(activities);
         this.updateActivitiesPaginationInfo();
     }
@@ -1872,6 +1914,10 @@ class CasaLink {
             console.log(`📊 Total activities received: ${activities.length}`);
             
             // Set up pagination data
+            // ensure activities are sorted by timestamp newest first
+            if (Array.isArray(activities)) {
+                activities.sort((a, b) => new Date(b.timestamp || b.updatedAt || b.createdAt || 0) - new Date(a.timestamp || a.updatedAt || a.createdAt || 0));
+            }
             this.activitiesAllData = activities;
             this.activitiesFilteredData = [...activities];
             this.activitiesCurrentPage = 1;
@@ -2362,6 +2408,24 @@ class CasaLink {
 
     async setupDashboardEvents() {
         console.log('🔄 Setting up dashboard events with fresh data...');
+
+        // tenant users don't have apartments, so bypass landlord-only logic
+        if (this.currentRole === 'tenant') {
+            console.log('👤 Tenant detected - skipping apartment selector and loading stats directly');
+
+            // load stats each time dashboard is entered
+            await this.loadDashboardData();
+
+            // still show recent activities and setup realtime listeners
+            setTimeout(() => {
+                this.loadRecentActivities();
+            }, 500);
+            this.updateActiveNavState('dashboard');
+            this.setupRealTimeStats();
+
+            console.log('✅ Tenant dashboard events complete');
+            return;
+        }
         
         // Add Property Button
         document.getElementById('addPropertyBtn')?.addEventListener('click', () => {
@@ -6662,6 +6726,12 @@ class CasaLink {
             case 'maintenance':
                 this.setupMaintenancePage();
                 break;
+            case 'tenantMaintenance':
+                // make sure list is loaded and listener attached
+                await this.loadTenantMaintenanceData();
+                // maintain row click handlers for detail modal
+                this.setupMaintenanceRowClickHandlers();
+                break;
             case 'lease-management':                
                 this.setupLeaseManagementPage?.();
                 break;
@@ -6723,7 +6793,13 @@ class CasaLink {
             `;
 
             // Fetch tenants from Firestore
-            const tenants = await DataManager.getTenants(this.currentUser.uid);
+            let tenants = await DataManager.getTenants(this.currentUser.uid);
+            // sort tenants by creation date (most recent first)
+            tenants = tenants.sort((a, b) => {
+                const da = new Date(a.updatedAt || a.createdAt || 0);
+                const db = new Date(b.updatedAt || b.createdAt || 0);
+                return db - da;
+            });
             
             console.log('Raw tenants data:', tenants);
             
@@ -6847,6 +6923,9 @@ class CasaLink {
             if (paginationContainer) paginationContainer.style.display = 'none';
             return;
         }
+        
+        // ensure incoming page is sorted
+        tenants.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
         
         tenantsList.innerHTML = this.renderTenantsTable(tenants);
         this.updateTenantsPaginationInfo();
@@ -7356,6 +7435,9 @@ class CasaLink {
             cancelText: 'Cancel',
             showFooter: true,
             onSubmit: async () => {
+                // as soon as user clicks create, refresh the list so it's ready
+                this.loadTenantMaintenanceData().catch(() => {});
+
                 const title = document.getElementById('maintTitle')?.value.trim();
                 const description = document.getElementById('maintDescription')?.value.trim();
                 const type = document.getElementById('maintType')?.value;
@@ -7455,8 +7537,16 @@ class CasaLink {
 
                     const createdId = await DataManager.createMaintenanceRequest(requestData);
 
-                    // Close modal and refresh
+                    // Close creation modal first (don't reload yet)
                     ModalManager.closeModal(modal);
+
+                    // If we're not already viewing tenantMaintenance, navigate there
+                    if (this.currentPage !== 'tenantMaintenance') {
+                        // await ensures the page and its container exist
+                        await this.showPage('tenantMaintenance');
+                    }
+
+                    // reload the list now that page is active (listener is attached)
                     await this.loadTenantMaintenanceData();
 
                     // Show success notification
@@ -7519,8 +7609,23 @@ class CasaLink {
             const tenant = this.currentUser || {};
             const tenantId = tenant.id || tenant.uid || (firebaseAuth && firebaseAuth.currentUser && firebaseAuth.currentUser.uid);
 
-            const container = document.getElementById('tenantMaintenanceList');
-            if (!container) return;
+            // always set up listener (container not needed)
+            if (tenantId && !this.tenantMaintenanceListener) {
+                console.log('🔔 Setting up tenant real-time maintenance listener');
+                this.tenantMaintenanceListener = firebaseDb.collection('maintenance')
+                    .where('tenantId', '==', tenantId)
+                    .onSnapshot(() => {
+                        console.log('🔄 Tenant maintenance snapshot received, reloading list');
+                        this.loadTenantMaintenanceData();
+                    }, err => {
+                        console.error('Tenant listener error:', err);
+                    });
+            }
+
+            const container1 = document.getElementById('tenantMaintenanceList');
+            const container2 = document.getElementById('maintenanceTableContainer');
+            const container = container1 || container2;
+            if (!container) return; // no visible page yet
 
             container.innerHTML = `<div class="data-loading"><i class="fas fa-spinner fa-spin"></i> Loading maintenance requests...</div>`;
 
@@ -7537,7 +7642,7 @@ class CasaLink {
             const requests = await DataManager.getTenantMaintenanceRequests(tenantId);
 
             if (!requests || requests.length === 0) {
-                container.innerHTML = `
+                const emptyHtml = `
                     <div class="empty-state">
                         <i class="fas fa-wrench" style="font-size:40px;"></i>
                         <h3>No maintenance requests</h3>
@@ -7545,46 +7650,89 @@ class CasaLink {
                         <button class="btn btn-primary" onclick="casaLink.showTenantMaintenanceRequestForm()">Create a request</button>
                     </div>
                 `;
+                container.innerHTML = emptyHtml;
                 return;
             }
 
             // Sort newest first
             requests.sort((a,b) => (new Date(b.createdAt || 0)) - (new Date(a.createdAt || 0)));
 
-            const html = requests.map(r => {
-                const created = r.createdAt ? new Date(r.createdAt).toLocaleString() : '–';
-                const priorityClass = r.priority === 'high' || r.priority === 'emergency' ? 'priority-high' : (r.priority === 'medium' ? 'priority-medium' : 'priority-low');
-                const status = (r.status || 'open');
-                return `
-                    <div class="maintenance-row lease-card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-                        <div style="flex:1;">
-                            <div style="display:flex;gap:12px;align-items:center;">
-                                <div>
-                                    <div style="font-weight:700;">${r.title || 'Untitled request'}</div>
-                                    <div class="text-muted" style="font-size:0.9rem;">${r.type || 'general'} • ${created}</div>
-                                </div>
-                            </div>
-                            <div style="margin-top:10px;color:var(--dark-gray);">${(r.description || '').substring(0,300)}</div>
-                            ${r.images && r.images.length ? `<div style="margin-top:10px;"><img src="${r.images[0]}" style="max-width:120px;border-radius:8px;border:1px solid #eee;" /></div>` : ''}
-                        </div>
-                        <div style="min-width:160px;text-align:right;">
-                            <div style="margin-bottom:8px;"><span class="lease-status ${status}">${status}</span></div>
-                            <div style="margin-bottom:8px;"><span class="${priorityClass}">${r.priority || 'medium'}</span></div>
-                            <div>
-                                <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); casaLink.viewTenantMaintenanceRequest('${r.id || r.documentId || r._id || r.requestId || ''}')">
+            // if tenant page table is present, render rows into a table
+            if (container2) {
+                let rows = '';
+                requests.forEach(r => {
+                    const created = r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'N/A';
+                    const priorityBadge = this.getPriorityBadge(r.priority);
+                    const statusBadge = this.getStatusBadge(r.status);
+                    rows += `
+                        <tr class="maintenance-row" data-request-id="${r.id}" data-created-at="${r.createdAt || ''}" style="cursor:pointer;">
+                            <td><strong>${r.type || 'N/A'}</strong></td>
+                            <td>${r.title || r.description || 'No title'}</td>
+                            <td>${priorityBadge}</td>
+                            <td>${statusBadge}</td>
+                            <td>${created}</td>
+                            <td>
+                                <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.viewTenantMaintenanceRequest('${r.id}')">
                                     <i class="fas fa-eye"></i> View
                                 </button>
-                            </div>
-                        </div>
+                            </td>
+                        </tr>
+                    `;
+                });
+
+                container2.innerHTML = `
+                    <div class="table-container">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Title</th>
+                                    <th>Priority</th>
+                                    <th>Status</th>
+                                    <th>Created</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rows}</tbody>
+                        </table>
                     </div>
                 `;
-            }).join('');
+            } else {
+                const html = requests.map(r => {
+                    const created = r.createdAt ? new Date(r.createdAt).toLocaleString() : '–';
+                    const priorityClass = r.priority === 'high' || r.priority === 'emergency' ? 'priority-high' : (r.priority === 'medium' ? 'priority-medium' : 'priority-low');
+                    const status = (r.status || 'open');
+                    return `
+                        <div class="maintenance-row lease-card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+                            <div style="flex:1;">
+                                <div style="display:flex;gap:12px;align-items:center;">
+                                    <div>
+                                        <div style="font-weight:700;">${r.title || 'Untitled request'}</div>
+                                        <div class="text-muted" style="font-size:0.9rem;">${r.type || 'general'} • ${created}</div>
+                                    </div>
+                                </div>
+                                <div style="margin-top:10px;color:var(--dark-gray);">${(r.description || '').substring(0,300)}</div>
+                                ${r.images && r.images.length ? `<div style="margin-top:10px;"><img src="${r.images[0]}" style="max-width:120px;border-radius:8px;border:1px solid #eee;" /></div>` : ''}
+                            </div>
+                            <div style="min-width:160px;text-align:right;">
+                                <div style="margin-bottom:8px;"><span class="lease-status ${status}">${status}</span></div>
+                                <div style="margin-bottom:8px;"><span class="${priorityClass}">${r.priority || 'medium'}</span></div>
+                                <div>
+                                    <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); casaLink.viewTenantMaintenanceRequest('${r.id || r.documentId || r._id || r.requestId || ''}')">
+                                        <i class="fas fa-eye"></i> View
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
 
-            container.innerHTML = `<div class="maintenance-list">${html}</div>`;
+                container.innerHTML = `<div class="maintenance-list">${html}</div>`;
+            }
 
         } catch (error) {
             console.error('Failed loading tenant maintenance data:', error);
-            const container = document.getElementById('tenantMaintenanceList');
+            const container = document.getElementById('tenantMaintenanceList') || document.getElementById('maintenanceTableContainer');
             if (container) container.innerHTML = `<div class="error-state"><h3>Error</h3><p>Unable to load maintenance requests. Try refreshing.</p></div>`;
         }
     }
@@ -7616,6 +7764,8 @@ class CasaLink {
 
             const submitBtn = document.querySelector('#modalSubmit');
             if (submitBtn) {
+                // reload list immediately on click
+                this.loadTenantMaintenanceData().catch(() => {});
                 submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
                 submitBtn.disabled = true;
             }
@@ -7625,12 +7775,11 @@ class CasaLink {
             ModalManager.closeModal(document.querySelector('.modal-overlay'));
             this.showNotification('Maintenance request submitted successfully!', 'success');
 
-            // Refresh tenant maintenance page if open
-            if (this.currentPage === 'tenantMaintenance') {
-                setTimeout(() => {
-                    this.showPage('tenantMaintenance');
-                }, 1000);
+            // ensure we're on the maintenance page to load fresh data
+            if (this.currentPage !== 'tenantMaintenance') {
+                await this.showPage('tenantMaintenance');
             }
+            await this.loadTenantMaintenanceData();
 
         } catch (error) {
             console.error('Error submitting tenant maintenance request:', error);
@@ -7706,7 +7855,14 @@ class CasaLink {
     async loadMaintenanceData() {
         try {
             console.log('🔄 Loading maintenance data...');
-            const requests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
+            let requests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
+            // ensure newest first by date before resolving
+            requests = requests.sort((a, b) => {
+                const da = new Date(a.updatedAt || a.createdAt || 0);
+                const db = new Date(b.updatedAt || b.createdAt || 0);
+                return db - da;
+            });
+
             // Resolve missing propertyName/apartment for each request so the table shows apartment, not just unit
             const resolvedRequests = await Promise.all(requests.map(async (req) => {
                 try {
@@ -7764,9 +7920,17 @@ class CasaLink {
                 }
             }));
 
-            this.currentMaintenanceRequests = resolvedRequests;
-            this.updateMaintenanceTable(resolvedRequests);
-            
+            // assign to pagination arrays (make sure data is sorted newest-first)
+            const sorted = this.sortByDateDesc(resolvedRequests, 'updatedAt');
+            this.maintenanceAllData = sorted;
+            this.maintenanceFilteredData = [...sorted];
+            this.maintenanceCurrentPage = 1;
+            this.maintenanceTotalPages = Math.ceil(sorted.length / this.maintenanceItemsPerPage);
+
+            // render first page and setup pagination
+            this.updateMaintenanceTable(this.getCurrentMaintenancePage());
+            this.setupMaintenancePagination();
+
             console.log('✅ Maintenance data loaded:', requests.length, 'requests');
         } catch (error) {
             console.error('Error loading maintenance data:', error);
@@ -7777,6 +7941,12 @@ class CasaLink {
     updateMaintenanceTable(requests) {
         const maintenanceList = document.getElementById('maintenanceList');
         if (!maintenanceList) return;
+
+        // ensure page slice is sorted
+        requests.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
+        
+        // DEBUG: log order of this page
+        console.log('🧾 Maintenance page entries timestamps:', requests.map(r => r.updatedAt || r.createdAt));
         
         if (requests.length === 0) {
             maintenanceList.innerHTML = `
@@ -7792,11 +7962,19 @@ class CasaLink {
                     ` : ''}
                 </div>
             `;
+            const pag = document.getElementById('maintenancePagination');
+            if (pag) pag.style.display = 'none';
             return;
         }
         
         maintenanceList.innerHTML = this.renderMaintenanceTable(requests);
         
+        // clear any active quick-filter button when new data loads
+        document.querySelectorAll('.quick-filter-buttons .btn').forEach(b => b.classList.remove('active'));
+
+        // show pagination info
+        this.updateMaintenancePaginationInfo();
+
         // ADD THIS LINE to setup hover effects:
         setTimeout(() => this.setupMaintenanceRowStyles(), 100);
     }
@@ -7827,24 +8005,25 @@ class CasaLink {
     }
 
     setupMaintenanceEventListeners() {
-        // Search functionality
-        document.getElementById('maintenanceSearch')?.addEventListener('input', (e) => {
-            this.searchMaintenance(e.target.value);
+        // Search and filter functionality unified
+        const searchEl = document.getElementById('maintenanceSearch');
+        const statusEl = document.getElementById('statusFilter');
+        const priorityEl = document.getElementById('priorityFilter');
+        const typeEl = document.getElementById('typeFilter');
+
+        const apply = () => this.applyMaintenanceFilters();
+
+        if (searchEl) searchEl.addEventListener('input', apply);
+        if (statusEl) statusEl.addEventListener('change', apply);
+        if (priorityEl) priorityEl.addEventListener('change', apply);
+        if (typeEl) typeEl.addEventListener('change', apply);
+
+        // Reset filters button
+        const resetBtn = document.getElementById('resetMaintenanceFilters');
+        if (resetBtn) resetBtn.addEventListener('click', () => {
+            this.resetMaintenanceFilters();
         });
-        
-        // Filter functionality
-        document.getElementById('statusFilter')?.addEventListener('change', (e) => {
-            this.filterMaintenanceByStatus(e.target.value);
-        });
-        
-        document.getElementById('priorityFilter')?.addEventListener('change', (e) => {
-            this.filterMaintenanceByPriority(e.target.value);
-        });
-        
-        document.getElementById('typeFilter')?.addEventListener('change', (e) => {
-            this.filterMaintenanceByType(e.target.value);
-        });
-        
+
         // Row click handlers
         this.setupMaintenanceRowClickHandlers();
     }
@@ -8124,102 +8303,6 @@ class CasaLink {
         }
     }
 
-    async loadBulkAssignmentRequests() {
-        try {
-            const maintenanceRequests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
-            const openRequests = maintenanceRequests.filter(req => 
-                req.status === 'open' && !req.assignedTo
-            );
-
-            const requestsList = document.getElementById('bulkRequestsList');
-            
-            if (openRequests.length === 0) {
-                requestsList.innerHTML = `
-                    <div style="text-align: center; padding: 20px; color: var(--dark-gray);">
-                        <i class="fas fa-check-circle"></i>
-                        <p>No open requests available for assignment.</p>
-                    </div>
-                `;
-                return;
-            }
-
-            requestsList.innerHTML = openRequests.map(request => `
-                <div style="display: flex; align-items: center; gap: 10px; padding: 8px; border-bottom: 1px solid #eee;">
-                    <input type="checkbox" id="req-${request.id}" value="${request.id}">
-                    <label for="req-${request.id}" style="flex: 1; cursor: pointer;">
-                        <div style="font-weight: 500;">${request.tenantName} - ${request.roomNumber}</div>
-                        <div style="font-size: 0.8rem; color: var(--dark-gray);">${request.title}</div>
-                    </label>
-                    <span class="status-badge ${this.getPriorityBadge(request.priority).split('"')[1]}">
-                        ${request.priority}
-                    </span>
-                </div>
-            `).join('');
-
-        } catch (error) {
-            console.error('Error loading bulk assignment requests:', error);
-            const requestsList = document.getElementById('bulkRequestsList');
-            requestsList.innerHTML = `
-                <div style="color: var(--danger); text-align: center;">
-                    Failed to load requests
-                </div>
-            `;
-        }
-    }
-
-    async showAssignStaffForm() {
-        const modalContent = `
-            <div class="assign-staff-modal">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <i class="fas fa-users" style="font-size: 3rem; color: var(--success); margin-bottom: 15px;"></i>
-                    <h3 style="margin-bottom: 10px;">Bulk Staff Assignment</h3>
-                    <p>Assign multiple maintenance requests to staff members</p>
-                </div>
-
-                <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <p style="margin: 0; color: var(--dark-gray);">
-                        <i class="fas fa-info-circle"></i> 
-                        This feature allows you to assign multiple open maintenance requests to staff members at once.
-                    </p>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Select Staff Member *</label>
-                    <select id="bulkStaff" class="form-input" required>
-                        <option value="">Select staff member</option>
-                        <option value="staff1">Juan Dela Cruz - Maintenance Technician</option>
-                        <option value="staff2">Maria Santos - Plumbing Specialist</option>
-                        <option value="staff3">Roberto Garcia - Electrician</option>
-                        <option value="staff4">Anna Reyes - General Maintenance</option>
-                    </select>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label">Select Requests to Assign</label>
-                    <div id="bulkRequestsList" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px; padding: 10px;">
-                        <div class="data-loading">
-                            <i class="fas fa-spinner fa-spin"></i> Loading open requests...
-                        </div>
-                    </div>
-                </div>
-
-                <div id="bulkAssignError" style="color: var(--danger); display: none; margin-bottom: 15px;"></div>
-            </div>
-        `;
-
-        const modal = ModalManager.openModal(modalContent, {
-            title: 'Bulk Staff Assignment',
-            submitText: 'Assign Selected',
-            onSubmit: () => this.processBulkAssignment()
-        });
-
-        // Load open requests
-        setTimeout(async () => {
-            await this.loadBulkAssignmentRequests();
-        }, 100);
-
-        this.bulkAssignModal = modal;
-    }
 
     async saveMaintenanceSettings() {
         try {
@@ -8303,46 +8386,54 @@ class CasaLink {
 
     async exportMaintenance() {
         try {
-            const maintenanceRequests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
-            
-            // Create CSV content
-            let csvContent = "Maintenance Report\n\n";
-            csvContent += "ID,Tenant,Room,Type,Priority,Status,Title,Actual Cost,Created Date,Completed Date,Assigned To\n";
-            
-            maintenanceRequests.forEach(request => {
-                const row = [
-                    request.id.substring(0, 8),
-                    `"${request.tenantName}"`,
-                    request.roomNumber,
-                    request.type,
-                    request.priority,
-                    request.status,
-                    `"${request.title}"`,
-                    request.actualCost || 0,
-                    new Date(request.createdAt).toLocaleDateString(),
-                    request.completedDate ? new Date(request.completedDate).toLocaleDateString() : 'N/A',
-                    request.assignedName || 'N/A'
-                ].join(',');
-                
-                csvContent += row + '\n';
+            this.showNotification('Generating maintenance report...', 'info');
+
+            let maintenanceRequests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
+            // ensure newest first by date
+            maintenanceRequests = this.sortByDateDesc(maintenanceRequests);
+
+            const reportHTML = this.generateMaintenancePrintableReport(maintenanceRequests);
+            window.currentReportHTML = reportHTML;
+
+            const modal = ModalManager.openModal(reportHTML, {
+                title: 'Maintenance Report - Print Preview',
+                showFooter: true,
+                width: '95%',
+                maxWidth: '1200px'
             });
 
-            // Create and download file
-            const blob = new Blob([csvContent], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `maintenance-report-${new Date().toISOString().split('T')[0]}.csv`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
+            const modalFooter = modal.querySelector('.modal-footer');
+            if (modalFooter) {
+                const downloadButton = document.createElement('button');
+                downloadButton.id = 'downloadReportBtn';
+                downloadButton.className = 'btn btn-success';
+                downloadButton.style.print = 'none';
+                downloadButton.innerHTML = '<i class="fas fa-download"></i> Download as PDF';
+                downloadButton.addEventListener('click', () => {
+                    this.downloadReportAsPDF();
+                });
 
-            this.showNotification('Maintenance report exported successfully!', 'success');
+                modalFooter.innerHTML = '';
+                modalFooter.appendChild(downloadButton);
+            }
 
+            // cleanup when modal closes
+            const modalOverlay = modal.closest('.modal-overflow');
+            if (modalOverlay) {
+                const checkClosed = setInterval(() => {
+                    if (!document.body.contains(modalOverlay)) {
+                        const pc = document.getElementById('printReportContainer');
+                        if (pc) pc.remove();
+                        window.currentReportHTML = null;
+                        clearInterval(checkClosed);
+                    }
+                }, 500);
+            }
+
+            this.showNotification('Maintenance report ready for printing!', 'success');
         } catch (error) {
-            console.error('Error exporting maintenance:', error);
-            this.showNotification('Failed to export maintenance report', 'error');
+            console.error('Error exporting maintenance report:', error);
+            this.showNotification('Failed to generate maintenance report', 'error');
         }
     }
 
@@ -8491,7 +8582,11 @@ class CasaLink {
 
             await DataManager.updateMaintenanceRequest(requestId, updates);
             
+            // close the assignment modal first
             ModalManager.closeModal(this.assignMaintenanceModal);
+            // if the details modal remains open underneath, close it as well
+            ModalManager.closeModal(document.querySelector('.modal-overlay'));
+
             this.showNotification('Maintenance request assigned successfully!', 'success');
 
             // Refresh maintenance data
@@ -8651,6 +8746,11 @@ class CasaLink {
                         <small style="color: var(--dark-gray);">You may attach one or more images as proof of work.</small>
                     </div>
 
+                    <div class="form-group">
+                        <label class="form-label">Remarks (optional)</label>
+                        <textarea id="completionRemarks" class="form-input" rows="3" placeholder="Add any remarks or notes about the completed work..."></textarea>
+                    </div>
+
                     <div id="completionError" style="color: var(--danger); display: none; margin-bottom: 15px;"></div>
                 </div>
             `;
@@ -8696,6 +8796,7 @@ class CasaLink {
                     const updates = {
                         actualCost: costVal,
                         completionPhotos: completionPhotos,
+                        remarks: document.getElementById('completionRemarks')?.value || '',
                         status: 'completed',
                         completedDate: new Date().toISOString(),
                         updatedAt: new Date().toISOString()
@@ -8705,8 +8806,10 @@ class CasaLink {
                         await DataManager.updateMaintenanceRequest(requestId, updates);
                         this.showNotification('Maintenance request marked as complete', 'success');
 
-                        // close modal and refresh
+                        // close the completion modal
                         ModalManager.closeModal(modal);
+                        // also close underlying details modal if still open
+                        ModalManager.closeModal(document.querySelector('.modal-overlay'));
                         setTimeout(() => {
                             this.loadMaintenanceData();
                             this.loadMaintenanceStats();
@@ -8998,22 +9101,22 @@ class CasaLink {
 
                 <!-- Assignment & Scheduling -->
                 <div style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-                    <h4 style="color: var(--royal-blue); margin-bottom: 15px; border-bottom: 2px solid var(--royal-blue); padding-bottom: 8px;">
+                    <h4 style="color: var(--royal-blue); margin-bottom: 15px; border-bottom: 2px solid var(--royal-blue); padding-bottom: 8px; display:flex; align-items:center; gap:8px;">
                         <i class="fas fa-calendar-alt"></i> Assignment & Scheduling
+                        ${!request.assignedName && request.status === 'open' ? `<span class="status-badge danger" style="margin-left:auto;">Unassigned</span>` : ''}
                     </h4>
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                        ${request.assignedName ? `
-                            <div>
-                                <strong>Assigned To:</strong><br>
-                                ${request.assignedName}
-                                ${assignedDate ? `<br><small style="color: var(--dark-gray);">Assigned on ${assignedDate.toLocaleDateString()}</small>` : ''}
-                            </div>
-                        ` : ''}
+                        <div>
+                            <strong>Assigned To:</strong><br>
+                            ${request.assignedName ? request.assignedName : (request.status === 'open' ? '<span style="color: var(--danger); font-style:italic;">No staff assigned yet</span>' : 'N/A')}
+                            ${assignedDate ? `<br><small style="color: var(--dark-gray);">Assigned on ${assignedDate.toLocaleDateString()}</small>` : ''}
+                        </div>
                         
                         ${preferredDate ? `
                             <div>
                                 <strong>Preferred Date:</strong><br>
                                 ${preferredDate.toLocaleDateString()}
+                                ${preferredDate && preferredDate < new Date() && request.status !== 'completed' ? '<br><span class="status-badge warning" style="margin-top:4px; display:inline-block;">Past Preferred</span>' : ''}
                             </div>
                         ` : ''}
                         
@@ -9021,6 +9124,7 @@ class CasaLink {
                             <div>
                                 <strong>Estimated Completion:</strong><br>
                                 ${new Date(request.estimatedCompletion).toLocaleDateString()}
+                                ${request.estimatedCompletion && new Date(request.estimatedCompletion) < new Date() && request.status !== 'completed' ? '<br><span class="status-badge danger" style="margin-top:4px; display:inline-block;">Overdue</span>' : ''}
                             </div>
                         ` : ''}
                         
@@ -9036,6 +9140,12 @@ class CasaLink {
                         <div style="margin-top: 15px;">
                             <strong>Assignment Notes:</strong><br>
                             <p style="margin: 10px 0; line-height: 1.6; background: #f8f9fa; padding: 10px; border-radius: 6px;">${request.assignmentNotes}</p>
+                        </div>
+                    ` : ''}
+                ${request.remarks ? `
+                        <div style="margin-top: 15px;">
+                            <strong>Completion Remarks:</strong><br>
+                            <p style="margin: 10px 0; line-height: 1.6; background: #eef7e9; padding: 10px; border-radius: 6px;">${request.remarks}</p>
                         </div>
                     ` : ''}
                 </div>
@@ -9215,24 +9325,12 @@ class CasaLink {
 
                 if (request.status === 'open') {
                     buttonsHtml = `
-                        <button class="btn btn-danger" onclick="casaLink.closeMaintenanceRequest('${request.id}')">
-                            <i class="fas fa-times-circle"></i> Close Request
-                        </button>
-                        <button class="btn btn-warning" onclick="casaLink.updateMaintenanceRequest('${request.id}')">
-                            <i class="fas fa-edit"></i> Update
-                        </button>
                         <button class="btn btn-success" onclick="casaLink.assignMaintenance('${request.id}')">
                             <i class="fas fa-user-check"></i> Assign Staff
                         </button>
                     `;
                 } else if (request.status === 'in-progress') {
                     buttonsHtml = `
-                        <button class="btn btn-danger" onclick="casaLink.closeMaintenanceRequest('${request.id}')">
-                            <i class="fas fa-times-circle"></i> Close Request
-                        </button>
-                        <button class="btn btn-warning" onclick="casaLink.updateMaintenanceRequest('${request.id}')">
-                            <i class="fas fa-edit"></i> Update
-                        </button>
                         <button class="btn btn-success" onclick="casaLink.markMaintenanceComplete('${request.id}')">
                             <i class="fas fa-check-circle"></i> Mark as Complete
                         </button>
@@ -9385,6 +9483,61 @@ class CasaLink {
 
 
     // Maintenance filtering and search methods
+    applyMaintenanceFilters() {
+        let data = [...this.maintenanceAllData];
+        const searchTerm = document.getElementById('maintenanceSearch')?.value.toLowerCase() || '';
+        const status = document.getElementById('statusFilter')?.value || 'all';
+        const priority = document.getElementById('priorityFilter')?.value || 'all';
+        const type = document.getElementById('typeFilter')?.value || 'all';
+
+        if (status !== 'all') {
+            data = data.filter(r => (r.status || '').toLowerCase() === status.toLowerCase());
+        }
+        if (priority !== 'all') {
+            data = data.filter(r => (r.priority || '').toLowerCase() === priority.toLowerCase());
+        }
+        if (type !== 'all') {
+            data = data.filter(r => (r.type || '').toLowerCase() === type.toLowerCase());
+        }
+        if (searchTerm) {
+            data = data.filter(r => {
+                const text = (`${r.title} ${r.description} ${r.propertyName || ''} ${r.tenantName || ''}`).toLowerCase();
+                return text.includes(searchTerm);
+            });
+        }
+
+        // ensure sorted newest first after filtering (use updatedAt when available)
+        data.sort((a, b) => {
+            const da = new Date(b.updatedAt || b.createdAt || 0);
+            const db = new Date(a.updatedAt || a.createdAt || 0);
+            return da - db;
+        });
+        this.maintenanceFilteredData = data;
+        this.maintenanceTotalPages = Math.ceil(data.length / this.maintenanceItemsPerPage);
+        this.maintenanceCurrentPage = 1;
+        this.updateMaintenanceTable(this.getCurrentMaintenancePage());
+        this.setupMaintenancePagination();
+    }
+
+    /**
+     * Reset all maintenance filters back to default values
+     */
+    resetMaintenanceFilters() {
+        console.log('🔄 Resetting maintenance filters');
+        const searchEl = document.getElementById('maintenanceSearch');
+        const statusEl = document.getElementById('statusFilter');
+        const priorityEl = document.getElementById('priorityFilter');
+        const typeEl = document.getElementById('typeFilter');
+
+        if (searchEl) searchEl.value = '';
+        if (statusEl) statusEl.value = 'all';
+        if (priorityEl) priorityEl.value = 'all';
+        if (typeEl) typeEl.value = 'all';
+
+        // apply filters which now show all data
+        this.applyMaintenanceFilters();
+    }
+    // legacy search method (no longer used)
     searchMaintenance(searchTerm) {
         const rows = document.querySelectorAll('.maintenance-row');
         rows.forEach(row => {
@@ -9395,57 +9548,21 @@ class CasaLink {
 
     filterMaintenance(filter) {
         console.log('Filtering maintenance by:', filter);
+        // this method is now mostly legacy; use applyMaintenanceFilters instead
+        this.applyMaintenanceFilters();
     }
 
     filterMaintenanceByStatus(status) {
-        const rows = document.querySelectorAll('.maintenance-row');
-        rows.forEach(row => {
-            if (status === 'all') {
-                row.style.display = '';
-                return;
-            }
-            
-            const statusBadge = row.querySelector('.status-badge');
-            if (statusBadge && statusBadge.textContent.toLowerCase().includes(status.toLowerCase())) {
-                row.style.display = '';
-            } else {
-                row.style.display = 'none';
-            }
-        });
+        // legacy, replaced by applyMaintenanceFilters
+        this.applyMaintenanceFilters();
     }
 
     filterMaintenanceByPriority(priority) {
-        const rows = document.querySelectorAll('.maintenance-row');
-        rows.forEach(row => {
-            if (priority === 'all') {
-                row.style.display = '';
-                return;
-            }
-            
-            const priorityBadge = row.querySelector('.status-badge');
-            if (priorityBadge && priorityBadge.textContent.toLowerCase().includes(priority.toLowerCase())) {
-                row.style.display = '';
-            } else {
-                row.style.display = 'none';
-            }
-        });
+        this.applyMaintenanceFilters();
     }
 
     filterMaintenanceByType(type) {
-        const rows = document.querySelectorAll('.maintenance-row');
-        rows.forEach(row => {
-            if (type === 'all') {
-                row.style.display = '';
-                return;
-            }
-            
-            const typeCell = row.querySelector('td:nth-child(4)');
-            if (typeCell && typeCell.textContent.toLowerCase().includes(type.toLowerCase())) {
-                row.style.display = '';
-            } else {
-                row.style.display = 'none';
-            }
-        });
+        this.applyMaintenanceFilters();
     }
 
     // Maintenance row event handlers
@@ -9457,7 +9574,12 @@ class CasaLink {
             if (maintenanceRow) {
                 const requestId = maintenanceRow.getAttribute('data-request-id');
                 if (requestId) {
-                    this.viewMaintenanceRequest(requestId);
+                    // tenant users should open the tenant-specific viewer
+                    if (this.currentRole === 'tenant') {
+                        this.viewTenantMaintenanceRequest(requestId);
+                    } else {
+                        this.viewMaintenanceRequest(requestId);
+                    }
                 }
             }
         };
@@ -9539,11 +9661,6 @@ class CasaLink {
                                             <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.viewMaintenanceRequest('${request.id}')">
                                                 <i class="fas fa-eye"></i>
                                             </button>
-                                            ${request.status !== 'completed' ? `
-                                                <button class="btn btn-sm btn-warning" onclick="event.stopPropagation(); casaLink.updateMaintenanceRequest('${request.id}')">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                            ` : ''}
                                             ${request.status === 'open' ? `
                                                 <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); casaLink.assignMaintenance('${request.id}')">
                                                     <i class="fas fa-user-check"></i>
@@ -10167,9 +10284,62 @@ class CasaLink {
         return reportHTML;
     }
 
+    // maintenance-specific printable report generator
+    generateMaintenancePrintableReport(requests) {
+        const currentDateTime = new Date().toLocaleString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+
+        let html = `
+            <div class="printable-report" style="padding:40px;background:white;font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;">
+                <div style="text-align:center; margin-bottom:45px; border-bottom:3px solid #1e3a8a; padding-bottom:30px;">
+                    <h1 style="margin:0;color:#1e3a8a;font-size:32px;font-weight:900;letter-spacing:-0.5px;">MAINTENANCE REPORT</h1>
+                    <p style="margin:5px 0 0 0;color:#64748b;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:1.5px;">Generated ${currentDateTime}</p>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                    <thead>
+                        <tr>
+                            <th style="border:1px solid #ccc;padding:6px;">ID</th>
+                            <th style="border:1px solid #ccc;padding:6px;">Title / Type</th>
+                            <th style="border:1px solid #ccc;padding:6px;">Tenant</th>
+                            <th style="border:1px solid #ccc;padding:6px;">Unit</th>
+                            <th style="border:1px solid #ccc;padding:6px;">Priority</th>
+                            <th style="border:1px solid #ccc;padding:6px;">Status</th>
+                            <th style="border:1px solid #ccc;padding:6px;">Created</th>
+                            <th style="border:1px solid #ccc;padding:6px;">Completed</th>
+                            <th style="border:1px solid #ccc;padding:6px;">Assigned To</th>
+                        </tr>
+                    </thead>
+                    <tbody>`;
+        requests.forEach(r => {
+            html += `
+                        <tr>
+                            <td style="border:1px solid #ccc;padding:6px;">${r.id || ''}</td>
+                            <td style="border:1px solid #ccc;padding:6px;">${r.title || r.type || ''}</td>
+                            <td style="border:1px solid #ccc;padding:6px;">${r.tenantName || ''}</td>
+                            <td style="border:1px solid #ccc;padding:6px;">${r.roomNumber || ''}</td>
+                            <td style="border:1px solid #ccc;padding:6px;">${r.priority || ''}</td>
+                            <td style="border:1px solid #ccc;padding:6px;">${r.status || ''}</td>
+                            <td style="border:1px solid #ccc;padding:6px;">${r.createdAt ? new Date(r.createdAt).toLocaleString() : ''}</td>
+                            <td style="border:1px solid #ccc;padding:6px;">${r.completedDate ? new Date(r.completedDate).toLocaleString() : ''}</td>
+                            <td style="border:1px solid #ccc;padding:6px;">${r.assignedName || ''}</td>
+                        </tr>`;
+        });
+        html += `
+                    </tbody>
+                </table>
+            </div>`;
+        return html;
+    }
+
     generatePrintableReport(tenants, leases, rooms, bills, maintenance, apartments) {
         const currentDate = new Date().toLocaleDateString('en-US', { 
-            year: 'numeric', 
+            year: 'numeric',
             month: 'long', 
             day: 'numeric' 
         });
@@ -11328,6 +11498,9 @@ class CasaLink {
             document.getElementById('paymentsPagination').style.display = 'none';
             return;
         }
+        
+        // sort page of payments by date
+        payments.sort((a, b) => new Date(b.paymentDate || b.updatedAt || b.createdAt || 0) - new Date(a.paymentDate || a.updatedAt || a.createdAt || 0));
         
         // Enrich payments with apartment information before rendering
         this.enrichPaymentsWithApartment(payments).then(enrichedPayments => {
@@ -15888,7 +16061,21 @@ class CasaLink {
         if (!requestId) return;
 
         try {
-            // try to fetch document directly
+            console.log('🔍 Tenant loading maintenance request:', requestId);
+
+            // show temporary loading modal
+            const loadingContent = `
+                <div style="text-align:center;padding:40px;">
+                    <i class="fas fa-spinner fa-spin" style="font-size:2rem;color:var(--royal-blue);"></i>
+                    <p>Loading maintenance request details...</p>
+                </div>
+            `;
+            const modal = ModalManager.openModal(loadingContent, {
+                title: 'Maintenance Request',
+                showFooter: false
+            });
+
+            // fetch the request record
             let docData = null;
             try {
                 const doc = await firebaseDb.collection('maintenance').doc(requestId).get();
@@ -15897,7 +16084,6 @@ class CasaLink {
                 console.warn('Could not fetch maintenance doc directly:', err);
             }
 
-            // fallback: search in recently loaded list
             if (!docData && window.DataManager && typeof DataManager.getMaintenanceRequest === 'function') {
                 try {
                     docData = await DataManager.getMaintenanceRequest(requestId);
@@ -15907,28 +16093,68 @@ class CasaLink {
             }
 
             if (!docData) {
-                // minimal modal if we can't fetch details
-                ModalManager.openModal(`<div style="padding:20px;"><p>Unable to load request details.</p></div>`, { title: 'Request Details', submitText: 'Close' });
+                ModalManager.closeModal(modal);
+                this.showNotification('Maintenance request not found', 'error');
                 return;
             }
 
-            const imagesHtml = docData.images && docData.images.length ? docData.images.map(url => `<img src="${url}" style="max-width:140px;border-radius:8px;margin-right:8px;border:1px solid #eee;" />`).join('') : '';
+            // attempt to resolve propertyName if missing (same logic as landlord viewer)
+            if (!docData.propertyName || docData.propertyName === 'N/A') {
+                try {
+                    let resolved = docData.propertyName || docData.apartment || null;
 
-            const content = `
-                <div style="max-width:800px;">
-                    <h3 style="margin-bottom:8px;">${docData.title}</h3>
-                    <div class="text-muted" style="margin-bottom:12px;">${docData.type || 'general'} • ${docData.priority || 'medium'} • ${docData.status || 'open'}</div>
-                    <div style="margin-bottom:12px;">${docData.description || ''}</div>
-                    ${imagesHtml ? `<div style="margin-bottom:12px;">${imagesHtml}</div>` : ''}
-                    <div class="text-muted" style="font-size:0.9rem;">Submitted: ${docData.createdAt ? new Date(docData.createdAt).toLocaleString() : '–'}</div>
-                    <div style="margin-top:12px;">${docData.notes ? `<strong>Landlord notes:</strong><div style="margin-top:6px;">${docData.notes}</div>` : ''}</div>
-                </div>
+                    if (!resolved && docData.tenantId) {
+                        const userDoc = await firebaseDb.collection('users').doc(docData.tenantId).get();
+                        if (userDoc.exists) {
+                            const u = userDoc.data();
+                            resolved = resolved || u.rentalAddress || u.apartmentAddress || u.apartmentName || u.apartment || u.roomNumber || null;
+                        }
+                    }
+
+                    if (!resolved && docData.roomNumber) {
+                        let roomsQuery = firebaseDb.collection('rooms').where('roomNumber','==',docData.roomNumber).limit(1);
+                        if (docData.landlordId) roomsQuery = roomsQuery.where('landlordId','==',docData.landlordId);
+                        const roomsSnap = await roomsQuery.get();
+                        if (!roomsSnap.empty) {
+                            const room = roomsSnap.docs[0].data();
+                            resolved = resolved || room.apartmentName || room.apartmentAddress || room.apartmentId || docData.roomNumber;
+                        }
+                    }
+
+                    if (!resolved && docData.apartmentAddress) {
+                        const aptQuery = await firebaseDb.collection('apartments')
+                            .where('apartmentAddress','==',docData.apartmentAddress).limit(1).get();
+                        if (!aptQuery.empty) {
+                            const apt = aptQuery.docs[0].data();
+                            resolved = resolved || apt.apartmentName || apt.apartmentAddress || null;
+                        }
+                    }
+
+                    docData.propertyName = resolved || docData.roomNumber || 'N/A';
+                } catch (err) {
+                    console.warn('Error resolving propertyName for tenant view:', err);
+                    docData.propertyName = docData.roomNumber || 'N/A';
+                }
+            }
+
+            // generate details HTML using shared helper
+            const detailsHtml = this.generateMaintenanceRequestDetails(docData);
+
+            const modalBody = modal.querySelector('.modal-body');
+            if (modalBody) modalBody.innerHTML = detailsHtml;
+
+            // add simple close footer
+            const footer = document.createElement('div');
+            footer.className = 'modal-footer';
+            footer.innerHTML = `
+                <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                    Close
+                </button>
             `;
-
-            ModalManager.openModal(content, { title: 'Request Details', submitText: 'Close', showFooter: true });
+            modal.querySelector('.modal-content').appendChild(footer);
 
         } catch (error) {
-            console.error('Error viewing maintenance request:', error);
+            console.error('Error viewing tenant maintenance request:', error);
             ModalManager.openModal(`<div style="padding:20px;"><p>Unable to show request details.</p></div>`, { title: 'Request Details', submitText: 'Close' });
         }
     }
@@ -16444,7 +16670,9 @@ class CasaLink {
     async loadPaymentsData() {
         try {
             console.log('🔄 Loading payments data...');
-            const payments = await DataManager.getPayments(this.currentUser.uid);
+            let payments = await DataManager.getPayments(this.currentUser.uid);
+            // DataManager orders by paymentDate desc but ensure fallback sort
+            payments = payments.sort((a, b) => new Date(b.paymentDate || b.updatedAt || b.createdAt || 0) - new Date(a.paymentDate || a.updatedAt || a.createdAt || 0));
             this.paymentsAllData = payments;
             this.paymentsFilteredData = [...payments];
             this.paymentsCurrentPage = 1;
@@ -17919,6 +18147,68 @@ class CasaLink {
         return this.billsFilteredData.slice(startIndex, endIndex);
     }
 
+    // ---------- Maintenance pagination helpers ----------
+    getCurrentMaintenancePage() {
+        const startIndex = (this.maintenanceCurrentPage - 1) * this.maintenanceItemsPerPage;
+        const endIndex = startIndex + this.maintenanceItemsPerPage;
+        return this.maintenanceFilteredData.slice(startIndex, endIndex);
+    }
+
+    updateMaintenancePaginationControls() {
+        const pageNumbers = document.getElementById('maintenancePageNumbers');
+        if (!pageNumbers) return;
+        pageNumbers.innerHTML = '';
+        const startPage = Math.max(1, this.maintenanceCurrentPage - 2);
+        const endPage = Math.min(this.maintenanceTotalPages, startPage + 4);
+        for (let i = startPage; i <= endPage; i++) {
+            const pageButton = document.createElement('button');
+            pageButton.className = `btn btn-sm ${i === this.maintenanceCurrentPage ? 'btn-primary' : 'btn-secondary'}`;
+            pageButton.textContent = i;
+            pageButton.onclick = () => {
+                this.maintenanceCurrentPage = i;
+                this.updateMaintenanceTable(this.getCurrentMaintenancePage());
+                this.updateMaintenancePaginationControls();
+            };
+            pageNumbers.appendChild(pageButton);
+        }
+        document.getElementById('maintenancePrevPage').disabled = this.maintenanceCurrentPage === 1;
+        document.getElementById('maintenanceNextPage').disabled = this.maintenanceCurrentPage === this.maintenanceTotalPages;
+    }
+
+    setupMaintenancePagination() {
+        const paginationContainer = document.getElementById('maintenancePagination');
+        if (!paginationContainer) return;
+        if (this.maintenanceTotalPages > 1) {
+            paginationContainer.style.display = 'flex';
+            this.updateMaintenancePaginationControls();
+        } else {
+            paginationContainer.style.display = 'none';
+        }
+        document.getElementById('maintenancePrevPage')?.addEventListener('click', () => {
+            if (this.maintenanceCurrentPage > 1) {
+                this.maintenanceCurrentPage--;
+                this.updateMaintenanceTable(this.getCurrentMaintenancePage());
+                this.updateMaintenancePaginationControls();
+            }
+        });
+        document.getElementById('maintenanceNextPage')?.addEventListener('click', () => {
+            if (this.maintenanceCurrentPage < this.maintenanceTotalPages) {
+                this.maintenanceCurrentPage++;
+                this.updateMaintenanceTable(this.getCurrentMaintenancePage());
+                this.updateMaintenancePaginationControls();
+            }
+        });
+    }
+
+    updateMaintenancePaginationInfo() {
+        const infoElement = document.getElementById('maintenancePaginationInfo');
+        if (infoElement) {
+            const startItem = (this.maintenanceCurrentPage - 1) * this.maintenanceItemsPerPage + 1;
+            const endItem = Math.min(this.maintenanceCurrentPage * this.maintenanceItemsPerPage, this.maintenanceFilteredData.length);
+            infoElement.textContent = `Showing ${startItem}-${endItem} of ${this.maintenanceFilteredData.length} requests`;
+        }
+    }
+
     async loadBillsData() {
         try {
             console.log('🔄 Loading bills data...');
@@ -18077,17 +18367,20 @@ class CasaLink {
                     </div>
 
                     <div class="search-filters-container" style="flex-direction: column; align-items: flex-start; gap: 0; padding: 0;">
-                        <!-- Filter Controls (Linear Layout) -->
-                        <div style="padding: 20px 25px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; align-items: center; width: 100%;">
-                            <div style="min-width: 0;">
-                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Apartment</label>
+                        <!-- Search Box & Filters Row -->
+                        <div style="padding: 20px 25px; display: flex; align-items: flex-end; gap: 12px; width: 100%; flex-wrap: wrap;">
+                            <div style="flex: 1; min-width: 250px;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Search</label>
+                                <input type="text" id="billSearch" class="form-input" placeholder="Search by tenant, property, or apartment..." style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px;">
+                            </div>
+                            <div style="min-width: 200px;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Apartment</label>
                                 <select id="billApartmentFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
                                     <option value="">All Apartments</option>
                                 </select>
                             </div>
-                            
-                            <div style="min-width: 0;">
-                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Bill Status</label>
+                            <div style="min-width: 200px;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Status</label>
                                 <select id="billStatusFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
                                     <option value="">All Status</option>
                                     <option value="pending">Pending</option>
@@ -18096,9 +18389,8 @@ class CasaLink {
                                     <option value="awaiting_payment_verification">Awaiting Payment Verification</option>
                                 </select>
                             </div>
-                            
-                            <div style="min-width: 0;">
-                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Payment Verification</label>
+                            <div style="min-width: 200px;">
+                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Verification</label>
                                 <select id="billPaymentVerificationFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
                                     <option value="">All Payment Status</option>
                                     <option value="verified">Payment Verified</option>
@@ -18106,15 +18398,7 @@ class CasaLink {
                                     <option value="awaiting-verification">Awaiting Payment Verification</option>
                                 </select>
                             </div>
-                        </div>
-                        
-                        <!-- Search Box & Reset Filters Row -->
-                        <div style="padding: 15px 25px 20px; display: flex; align-items: flex-end; gap: 12px; width: 100%; flex-wrap: wrap;">
-                            <div style="flex: 1; min-width: 250px;">
-                                <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Search</label>
-                                <input type="text" id="billSearch" class="form-input" placeholder="Search by tenant, property, or apartment..." style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px;">
-                            </div>
-                            <button id="resetBillFilters" class="reset-filters-button" style="margin-bottom: 0;">
+                            <button id="resetBillFilters" class="reset-filters-button" style="margin-bottom: 0;" title="Reset all filters">
                                 <i class="fas fa-redo"></i> Reset Filters
                             </button>
                         </div>
@@ -18820,6 +19104,8 @@ class CasaLink {
             el.innerHTML = `<div class="empty-state"><i class="fas fa-file-contract"></i><h3>No leases found</h3></div>`;
             return;
         }
+        // sort leases newest first
+        leases.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
 
         el.innerHTML = `
             <div class="table-container">
@@ -18895,9 +19181,13 @@ class CasaLink {
     async loadLeaseManagementData() {
         try {
             const landlordId = this.currentUser?.uid;
-            const leases = (window.DataManager && typeof DataManager.getLandlordLeases === 'function')
+            let leases = (window.DataManager && typeof DataManager.getLandlordLeases === 'function')
                 ? await DataManager.getLandlordLeases(landlordId)
                 : await DataManager.getActiveLeases();
+            // sort leases newest first by createdAt
+            if (Array.isArray(leases)) {
+                leases = leases.sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
+            }
             this.leasesAllData = leases || [];
             this.leasesFilteredData = [...this.leasesAllData];
             this.renderLeasesList(this.leasesFilteredData);
@@ -18973,15 +19263,26 @@ class CasaLink {
     async getMaintenancePage() {
         return `
         <div class="page-content">
-            <div class="page-header">
+            <div class="page-header maintenance">
                     <h1 class="page-title">Maintenance Management</h1>
-                    <div>
+                    <div style="display:flex; align-items:center; gap:12px; flex-wrap: wrap;">
+                        <div class="quick-actions-bar" style="margin-bottom:0;padding:0;">
+                            ${this.currentUser && this.currentUser.role === 'tenant' ? `
+                                <button class="btn btn-primary" onclick="casaLink.showCreateMaintenanceForm()">
+                                    <i class="fas fa-plus"></i> Create Request
+                                </button>
+                            ` : `
+                                <button class="btn btn-secondary" onclick="casaLink.exportMaintenance()">
+                                    <i class="fas fa-download"></i> Export Report
+                                </button>
+                                <button class="btn btn-warning" onclick="casaLink.showMaintenanceSchedule()">
+                                    <i class="fas fa-calendar"></i> View Schedule
+                                </button>
+                            `}
+                        </div>
+                        ${this.currentUser && this.currentUser.role === 'tenant' ? `
                         <button class="btn btn-secondary" onclick="casaLink.showMaintenanceSettings()">
                             <i class="fas fa-cog"></i> Settings
-                        </button>
-                        ${this.currentUser && this.currentUser.role === 'tenant' ? `
-                        <button class="btn btn-primary" onclick="casaLink.showCreateMaintenanceForm()">
-                            <i class="fas fa-plus"></i> Create Request
                         </button>
                         ` : ''}
                     </div>
@@ -19026,73 +19327,87 @@ class CasaLink {
                 </div>
             </div>
 
-            <!-- Quick Actions -->
-            <div class="quick-actions-bar">
-                ${this.currentUser && this.currentUser.role === 'tenant' ? `
-                <button class="btn btn-primary" onclick="casaLink.showCreateMaintenanceForm()">
-                    <i class="fas fa-plus"></i> Create New Request
-                </button>
-                ` : ''}
-                <button class="btn btn-secondary" onclick="casaLink.showAssignStaffForm()">
-                    <i class="fas fa-user-plus"></i> Assign Staff
-                </button>
-                <button class="btn btn-secondary" onclick="casaLink.exportMaintenance()">
-                    <i class="fas fa-download"></i> Export Reports
-                </button>
-                <button class="btn btn-warning" onclick="casaLink.showMaintenanceSchedule()">
-                    <i class="fas fa-calendar"></i> View Schedule
-                </button>
-            </div>
-
             <!-- Filters and Search -->
-            <div class="search-filters-container">
-                <div class="search-box">
-                    <input type="text" id="maintenanceSearch" class="form-input" placeholder="Search maintenance requests...">
-                </div>
-                <div class="filter-controls">
-                    <select id="statusFilter" class="form-input">
-                        <option value="all">All Status</option>
-                        <option value="open">Open</option>
-                        <option value="in-progress">In Progress</option>
-                        <option value="pending_parts">Pending Parts</option>
-                        <option value="completed">Completed</option>
-                        <option value="cancelled">Cancelled</option>
-                    </select>
-                    <select id="priorityFilter" class="form-input">
-                        <option value="all">All Priorities</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                        <option value="emergency">Emergency</option>
-                    </select>
-                    <select id="typeFilter" class="form-input">
-                        <option value="all">All Types</option>
-                        <option value="general">General</option>
-                        <option value="plumbing">Plumbing</option>
-                        <option value="electrical">Electrical</option>
-                        <option value="hvac">HVAC</option>
-                        <option value="appliance">Appliance</option>
-                        <option value="structural">Structural</option>
-                        <option value="pest_control">Pest Control</option>
-                        <option value="other">Other</option>
-                    </select>
+            <div class="search-filters-container" style="flex-direction: column; align-items: flex-start; gap: 0; padding: 0; margin-bottom: 20px;">
+                <!-- Search Box & Filters Row -->
+                <div style="padding: 20px 25px; display: flex; align-items: flex-end; gap: 12px; width: 100%; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 250px;">
+                        <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Search</label>
+                        <input type="text" id="maintenanceSearch" class="form-input" placeholder="Search maintenance requests..." style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px;">
+                    </div>
+                    <div style="min-width: 200px;">
+                        <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Status</label>
+                        <select id="statusFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                            <option value="all">All Status</option>
+                            <option value="open">Open</option>
+                            <option value="in-progress">In Progress</option>
+                            <option value="pending_parts">Pending Parts</option>
+                            <option value="completed">Completed</option>
+                            <option value="cancelled">Cancelled</option>
+                        </select>
+                    </div>
+                    <div style="min-width: 200px;">
+                        <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Priority</label>
+                        <select id="priorityFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                            <option value="all">All Priorities</option>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="emergency">Emergency</option>
+                        </select>
+                    </div>
+                    <div style="min-width: 200px;">
+                        <label style="display: block; font-size: 12px; font-weight: 600; color: #64748b; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">Filter By Type</label>
+                        <select id="typeFilter" class="form-input" style="width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: white; cursor: pointer;">
+                            <option value="all">All Types</option>
+                            <option value="general">General</option>
+                            <option value="plumbing">Plumbing</option>
+                            <option value="electrical">Electrical</option>
+                            <option value="hvac">HVAC</option>
+                            <option value="appliance">Appliance</option>
+                            <option value="structural">Structural</option>
+                            <option value="pest_control">Pest Control</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <button id="resetMaintenanceFilters" class="reset-filters-button" style="margin-bottom: 0;" title="Reset all filters">
+                        <i class="fas fa-redo"></i> Reset Filters
+                    </button>
                 </div>
             </div>
 
-            <!-- Quick Filter Buttons -->
-            <div class="quick-filter-buttons">
-                <button class="btn btn-sm btn-secondary" onclick="casaLink.filterMaintenance('all')">All Requests</button>
-                <button class="btn btn-sm btn-secondary" onclick="casaLink.filterMaintenance('open')">Open</button>
-                <button class="btn btn-sm btn-secondary" onclick="casaLink.filterMaintenance('high')">High Priority</button>
-                <button class="btn btn-sm btn-secondary" onclick="casaLink.filterMaintenance('today')">Today</button>
-                <button class="btn btn-sm btn-secondary" onclick="casaLink.filterMaintenance('week')">This Week</button>
-            </div>
+            <style>
+                #resetMaintenanceFilters {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 8px;
+                }
+                @media (max-width: 640px) {
+                    #resetMaintenanceFilters {
+                        width: 100%;
+                        justify-content: center;
+                    }
+                }
+            </style>
 
             <!-- Maintenance Requests Table -->
             <div class="table-section">
                 <div id="maintenanceList">
                     <div class="data-loading">
                         <i class="fas fa-spinner fa-spin"></i> Loading maintenance requests...
+                    </div>
+                </div>
+                <!-- Pagination Controls for Maintenance -->
+                <div class="pagination-container" id="maintenancePagination" style="display: none; margin-top: auto;">
+                    <div class="pagination-info" id="maintenancePaginationInfo"></div>
+                    <div class="pagination-controls">
+                        <button class="btn btn-sm btn-secondary" id="maintenancePrevPage">
+                            <i class="fas fa-chevron-left"></i> Previous
+                        </button>
+                        <div class="pagination-numbers" id="maintenancePageNumbers"></div>
+                        <button class="btn btn-sm btn-secondary" id="maintenanceNextPage">
+                            Next <i class="fas fa-chevron-right"></i>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -22062,7 +22377,7 @@ class CasaLink {
                                     <i class="fas fa-hourglass-start"></i>
                                 </div>
                                 <div class="stat-content">
-                                    <h3>${maintenanceRequests.filter(r => r.status === 'open' || r.status === 'in-progress').length}</h3>
+                                    <h3>${maintenanceRequests.filter(r => r.status === 'in-progress').length}</h3>
                                     <p>In Progress</p>
                                 </div>
                             </div>
@@ -22124,7 +22439,8 @@ class CasaLink {
                         : 'N/A';
 
                     pageHTML += `
-                                            <tr class="maintenance-row" data-request-id="${request.id}">
+                                            <tr class="maintenance-row" data-request-id="${request.id}" data-created-at="${request.createdAt || ''}"
+                                                style="cursor:pointer;">
                                                 <td>
                                                     <strong>${request.type || 'N/A'}</strong>
                                                 </td>
@@ -22134,7 +22450,7 @@ class CasaLink {
                                                 <td>${createdDate}</td>
                                                 <td>
                                                     <button class="btn btn-sm btn-secondary" 
-                                                        onclick="casaLink.viewTenantMaintenanceRequest('${request.id}')">
+                                                        onclick="event.stopPropagation(); casaLink.viewTenantMaintenanceRequest('${request.id}')">
                                                         <i class="fas fa-eye"></i> View
                                                     </button>
                                                 </td>

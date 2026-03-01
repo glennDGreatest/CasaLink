@@ -344,6 +344,10 @@
             const container = document.getElementById('propertiesList');
             if (!container) return;
 
+            if (Array.isArray(properties)) {
+                properties.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+            }
+
             if (!properties || properties.length === 0) {
                 container.innerHTML = '<div class="empty-state"><p>No properties yet</p></div>';
                 return;
@@ -384,6 +388,11 @@
                 return;
             }
 
+            // default newest first
+            if (Array.isArray(requests)) {
+                requests.sort((a,b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+            }
+
             let html = '';
             requests.forEach(req => {
                 const priorityClass = req.priority === 'urgent' ? 'urgent' : '';
@@ -418,6 +427,11 @@
             if (!leases || leases.length === 0) {
                 container.innerHTML = '<div class="empty-state"><p>No upcoming expirations</p></div>';
                 return;
+            }
+
+            // default sort by creation date (most recent first)
+            if (Array.isArray(leases)) {
+                leases.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
             }
 
             let html = '';
