@@ -14087,6 +14087,8 @@ class CasaLink {
             this.clearStoredPage();
             localStorage.removeItem('casalink_user');
             localStorage.removeItem('casalink_pending_actions');
+            // remove landing flag so login screen will start at landing next time
+            localStorage.removeItem('casalink_landing_visited');
             
             // Sign out from Firebase
             await AuthManager.logout();
@@ -14098,8 +14100,8 @@ class CasaLink {
             
             console.log('✅ User logged out successfully');
             
-            // MANUALLY show login page
-            this.showLogin();
+            // MANUALLY show login form (skip landing) after logout
+            this.showLogin(true);
             
             // Re-enable auth listener after a short delay
             setTimeout(() => {
@@ -14113,7 +14115,8 @@ class CasaLink {
             this.currentUser = null;
             this.currentRole = null;
             this.currentPage = 'dashboard';
-            this.showLogin();
+            // even on error, go straight to login form
+            this.showLogin(true);
         }
     }
 
@@ -14296,11 +14299,13 @@ class CasaLink {
         
         this.authUnsubscribe = AuthManager.onAuthChange(async (user) => {
             // Skip if auth listener is disabled OR during tenant creation OR app not initialized
-            if (!this.authListenerEnabled || this.creatingTenant || !this.appInitialized) {
+            // also ignore changes while we're performing a manual logout to avoid racing redirects
+            if (!this.authListenerEnabled || this.creatingTenant || !this.appInitialized || this.manualLogoutInProgress) {
                 console.log('🔒 Auth listener conditions not met:', {
                     authListenerEnabled: this.authListenerEnabled,
                     creatingTenant: this.creatingTenant,
-                    appInitialized: this.appInitialized
+                    appInitialized: this.appInitialized,
+                    manualLogoutInProgress: this.manualLogoutInProgress
                 });
                 return;
             }
@@ -14412,9 +14417,11 @@ class CasaLink {
                 this.currentRole = null;
                 this.clearStoredPage(); // Clear page storage on logout
                 
+                // If we weren't already handling a manual logout, show login form directly
+                const skipLanding = this.manualLogoutInProgress || false;
                 // Small delay to ensure DOM is ready
                 setTimeout(() => {
-                    this.showLogin();
+                    this.showLogin(skipLanding);
                 }, 300);
             }
         });
@@ -15621,12 +15628,13 @@ class CasaLink {
             return;
         }
 
-        // Check if this is first visit and landing should be shown
-        const hasVisitedLanding = localStorage.getItem('casalink_landing_visited');
-        if (!hasVisitedLanding && !skipLanding) {
-            console.log('🎯 First visit detected, showing landing page');
+        // Always show the landing page when navigating to login unless explicitly asked to skip it.
+        // This ensures a fresh visitor experience every time the app is opened or after logout.
+        if (!skipLanding) {
+            console.log('🎯 Showing landing page (skipLanding=false)');
+            // clear any old flag just in case (no longer used)
+            localStorage.removeItem('casalink_landing_visited');
             this.showLandingPage();
-            localStorage.setItem('casalink_landing_visited', 'true');
             return;
         }
 
