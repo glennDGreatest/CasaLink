@@ -327,8 +327,14 @@
    Modal Styles
    ============================================ */
 
+/* The global modal manager may add an "active" class,
+   but we also want overlays to be visible by default so that
+   any code which doesn't set the class still works.  This
+   rule used to hide overlays entirely which broke the
+   custom modal manager in app.js.
+*/
 .modal-overlay {
-    display: none;
+    display: flex;
     position: fixed;
     top: 0;
     left: 0;
@@ -342,6 +348,7 @@
     overflow-y: auto;
 }
 
+/* keep active rule for extra specificity if needed */
 .modal-overlay.active {
     display: flex;
 }

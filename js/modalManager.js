@@ -1,7 +1,8 @@
 class ModalManager {
     static openModal(content, options = {}) {
         const modal = document.createElement('div');
-        modal.className = 'modal-overlay';
+        // include "active" class for CSS rules that hide by default (e.g. properties.css)
+        modal.className = 'modal-overlay active';
         
         // Build footer
         let footerContent = '';
@@ -334,4 +335,6 @@ getBillById(billId) {
         }
     }
 }
+// expose both capitalized and lowercase for backwards compatibility
 window.ModalManager = ModalManager;
+window.modalManager = ModalManager;

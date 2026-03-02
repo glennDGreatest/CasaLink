@@ -8422,7 +8422,7 @@ class CasaLink {
             }
 
             // cleanup when modal closes
-            const modalOverlay = modal.closest('.modal-overflow');
+            const modalOverlay = modal.closest('.modal-overlay');
             if (modalOverlay) {
                 const checkClosed = setInterval(() => {
                     if (!document.body.contains(modalOverlay)) {
@@ -9788,7 +9788,7 @@ class CasaLink {
             }
             
             // Watch for modal close and cleanup if needed
-            const modalOverlay = modal.closest('.modal-overflow');
+            const modalOverlay = modal.closest('.modal-overlay');
             if (modalOverlay) {
                 const checkClosed = setInterval(() => {
                     if (!document.body.contains(modalOverlay)) {
