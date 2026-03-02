@@ -6,20 +6,24 @@ class Property {
   constructor(data = {}) {
     this.id = data.id || null;
     this.landlordId = data.landlordId || data.ownerID || '';
-    this.name = data.name || '';
-    this.address = data.address || '';
+    // Handle both standard and apartments collection field names
+    this.name = data.name || data.apartmentName || '';
+    this.address = data.address || data.apartmentAddress || '';
     this.city = data.city || '';
     this.state = data.state || '';
     this.zipCode = data.zipCode || '';
     this.country = data.country || '';
-    this.propertyType = data.propertyType || 'apartment'; // apartment, house, condo, etc
-    this.totalUnits = data.totalUnits || 0;
+    this.propertyType = data.propertyType || 'apartment';
+    this.totalUnits = data.totalUnits || data.numberOfRooms || 0;
+    this.numberOfFloors = data.numberOfFloors || 0;
     this.bedrooms = data.bedrooms || 0;
     this.bathrooms = data.bathrooms || 0;
     this.monthlyRate = data.monthlyRate || 0;
     this.description = data.description || '';
     this.amenities = data.amenities || [];
     this.images = data.images || [];
+    this.isActive = data.isActive !== undefined ? data.isActive : true;
+    this.landlordName = data.landlordName || '';
     this.createdAt = data.createdAt || new Date();
     this.updatedAt = data.updatedAt || new Date();
   }
@@ -29,12 +33,12 @@ class Property {
    * @returns {boolean}
    */
   isValid() {
-    // Relaxed validation to accept properties created with minimal fields
+    // Relaxed validation - accept properties with minimal required fields
+    // For apartments collection, we may not have all fields
+    const hasLocation = !!(this.address || this.name); // At least address or name
     const hasOwner = !!this.landlordId;
-    const hasLocation = !!(this.address && this.city && this.state);
-    const hasUnitsOrRate = (this.totalUnits > 0) || (this.bedrooms > 0) || (this.monthlyRate > 0);
 
-    return hasLocation && hasUnitsOrRate;
+    return hasLocation && hasOwner;
   }
 
   /**

@@ -7,6 +7,7 @@
 class PropertiesController {
     constructor(dataService) {
         this.service = dataService;
+        this.currentUser = window.currentUser || null;
         this.currentFilter = '';
         this.currentPage = 1;
         this.itemsPerPage = 10;
@@ -20,22 +21,39 @@ class PropertiesController {
     async init() {
         try {
             window.setPropertiesLoading(true);
+
+            // Update current user reference
+            if (window.currentUser) {
+                this.currentUser = window.currentUser;
+            }
+
             await this.loadProperties();
             window.hidePropertiesError();
         } catch (error) {
             console.error('Error initializing properties:', error);
-            window.showPropertiesError('Failed to load properties');
+            window.showPropertiesError('Failed to load properties: ' + error.message);
         } finally {
             window.setPropertiesLoading(false);
         }
     }
 
     /**
-     * Load all properties from service
+     * Load all properties from service for current landlord
      */
     async loadProperties() {
         try {
-            this.allProperties = await this.service.getProperties();
+            if (!this.currentUser || !this.currentUser.uid) {
+                throw new Error('User not authenticated');
+            }
+
+            // Only load properties for landlords
+            if (this.currentUser.role !== 'landlord') {
+                this.allProperties = [];
+                this.displayFilteredProperties();
+                return;
+            }
+
+            this.allProperties = await this.service.getLandlordProperties(this.currentUser.uid);
             this.displayFilteredProperties();
         } catch (error) {
             throw new Error(`Failed to load properties: ${error.message}`);

@@ -47,9 +47,9 @@ class CasaLink {
         
         // 🔥 ADD BILLING VIEW TRACKING
         this.currentBillingView = 'bills'; // Default to Bills Management
-        
+
         this.setupBillingAutomation();
-        
+
         // Bind methods
         this.boundLoginClickHandler = this.loginClickHandler.bind(this);
         this.boundLoginKeypressHandler = this.loginKeypressHandler.bind(this);
@@ -569,10 +569,14 @@ class CasaLink {
                     pageContent = await this.getTenantProfilePage();
                     break;
 
-                case 'lease-management':  
+                case 'lease-management':
                     this.setupLeaseManagementPage?.();
-                    pageContent = await this.getLeaseManagementPage();              
-            
+                    pageContent = await this.getLeaseManagementPage();
+
+                    break;
+
+                case 'properties':
+                    pageContent = this.getPropertiesPageHTML();
                     break;
 
                 default:
@@ -15610,16 +15614,25 @@ class CasaLink {
         );
     }
 
-    showLogin() {
+    showLogin(skipLanding = false) {
         // Prevent multiple simultaneous calls
         if (this.showingLogin) {
             console.log('🛑 Login page already being shown, skipping...');
             return;
         }
-        
+
+        // Check if this is first visit and landing should be shown
+        const hasVisitedLanding = localStorage.getItem('casalink_landing_visited');
+        if (!hasVisitedLanding && !skipLanding) {
+            console.log('🎯 First visit detected, showing landing page');
+            this.showLandingPage();
+            localStorage.setItem('casalink_landing_visited', 'true');
+            return;
+        }
+
         this.showingLogin = true;
         console.log('🔄 Showing login page...');
-        
+
         const appElement = document.getElementById('app');
         if (appElement) {
             // Prevent duplicate login page rendering
@@ -15628,9 +15641,9 @@ class CasaLink {
                 this.showingLogin = false;
                 return;
             }
-            
+
             appElement.innerHTML = this.getLoginHTML();
-            
+
             // Small delay to ensure DOM is ready
             setTimeout(() => {
                 try {
@@ -15644,6 +15657,41 @@ class CasaLink {
             }, 50);
         } else {
             this.showingLogin = false;
+        }
+    }
+
+    async showLandingPage() {
+        console.log('🎨 Loading landing page...');
+        const appElement = document.getElementById('app');
+        if (appElement) {
+            try {
+                const response = await fetch('views/landing.html');
+                const landingHTML = await response.text();
+                appElement.innerHTML = landingHTML;
+
+                // Load landing page styles
+                const styleLink = document.createElement('link');
+                styleLink.rel = 'stylesheet';
+                styleLink.href = 'css/landing.css';
+                document.head.appendChild(styleLink);
+
+                // Load landing page scripts
+                const script = document.createElement('script');
+                script.src = 'js/landing.js';
+                script.onload = () => {
+                    console.log('✅ Landing page loaded successfully');
+                };
+                script.onerror = () => {
+                    console.error('❌ Failed to load landing page scripts');
+                    // Fallback to login
+                    this.showLogin(true);
+                };
+                document.body.appendChild(script);
+            } catch (error) {
+                console.error('❌ Error loading landing page:', error);
+                // Fallback to login
+                this.showLogin(true);
+            }
         }
     }
 
@@ -15705,10 +15753,11 @@ class CasaLink {
                         <nav class="nav-links ${isLandlord ? 'landlord-nav' : 'tenant-nav'}">
                             ${isLandlord ? `
                                 <a href="#" class="active" data-page="dashboard">Dashboard</a>
+                                <a href="#" data-page="properties">Properties</a>
                                 <a href="#" data-page="billing">Billing & Payments</a>
                                 <a href="#" data-page="maintenance">Maintenance</a>
                                 <a href="#" data-page="tenants">Tenant Management</a>
-                                <a href="#" data-page="lease-management">Lease Management</a> 
+                                <a href="#" data-page="lease-management">Lease Management</a>
                                 <a href="#" data-page="reports">Reports</a>
                             ` : `
                                 <a href="#" class="active" data-page="dashboard">Dashboard</a>
@@ -15738,6 +15787,7 @@ class CasaLink {
                     <ul class="sidebar-menu ${isLandlord ? 'landlord-nav' : 'tenant-nav'}">
                         ${isLandlord ? `
                             <li><a href="#" class="active" data-page="dashboard"><i class="fas fa-th-large"></i> <span>Dashboard</span></a></li>
+                            <li><a href="#" data-page="properties"><i class="fas fa-building"></i> <span>Properties</span></a></li>
                             <li><a href="#" data-page="billing"><i class="fas fa-file-invoice-dollar"></i> <span>Billing & Payments</span></a></li>
                             <li><a href="#" data-page="maintenance"><i class="fas fa-tools"></i> <span>Maintenance</span></a></li>
                             <li><a href="#" data-page="tenants"><i class="fas fa-users"></i> <span>Tenant Management</span></a></li>
@@ -15832,6 +15882,9 @@ class CasaLink {
                 </div>
             </div>
             <div class="login-right">
+                <button id="backToLandingBtn" class="back-button" title="Back to Landing Page">
+                    <i class="fas fa-arrow-left"></i>
+                </button>
                 <div class="login-form" id="loginForm">
                     <h2 class="form-title">Welcome Back</h2>
                     <p class="form-subtitle">Sign in to your account</p>
@@ -15908,14 +15961,23 @@ class CasaLink {
     }
 
     loginClickHandler(e) {
+        // Handle back button click
+        if (e.target.id === 'backToLandingBtn' || e.target.closest('#backToLandingBtn')) {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('🔙 Back button clicked');
+            this.showLandingPage();
+            return;
+        }
+
         // Handle role selection
         if (e.target.closest('.role-option')) {
             const roleOption = e.target.closest('.role-option');
             const allOptions = document.querySelectorAll('.role-option');
-            
+
             // Remove active class from all options
             allOptions.forEach(option => option.classList.remove('active'));
-            
+
             // Add active class to clicked option
             roleOption.classList.add('active');
             return;
@@ -15926,7 +15988,7 @@ class CasaLink {
             e.preventDefault();
             e.stopPropagation();
             e.stopImmediatePropagation(); // Prevent other listeners
-            
+
             console.log('🖱️ Login button clicked');
             this.boundHandleLogin();
         }
@@ -18272,6 +18334,29 @@ class CasaLink {
             revenue: monthlyRevenue,
             total: bills.length
         });
+    }
+
+    getPropertiesPageHTML() {
+        console.log('🏠 Rendering properties page...');
+
+        // Initialize properties controller
+        if (window.propertiesController) {
+            window.propertiesController.currentUser = this.currentUser;
+            window.propertiesController.init();
+        }
+
+        // Return the properties section which is in index.html
+        const propertiesSection = document.getElementById('propertiesSection');
+        if (propertiesSection) {
+            return propertiesSection.innerHTML;
+        }
+
+        return `
+            <div class="page-content">
+                <h1>Property Management</h1>
+                <p>Properties feature is loading...</p>
+            </div>
+        `;
     }
 
     async getBillingPage() {

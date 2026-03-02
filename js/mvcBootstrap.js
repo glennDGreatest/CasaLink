@@ -225,10 +225,10 @@
                 window.setPropertiesLoading = window.setPropertiesLoading || function(isLoading) {
                     try {
                         console.log(`View helper setPropertiesLoading called:`, isLoading);
-                        const loadingEl = document.getElementById('propertiesLoading') || 
+                        const loadingEl = document.getElementById('propertiesLoading') ||
                                          document.getElementById('properties-section-loading');
                         if (loadingEl) {
-                            loadingEl.style.display = isLoading ? 'block' : 'none';
+                            loadingEl.style.display = isLoading ? 'grid' : 'none';
                         }
                     } catch (e) {
                         console.warn('setPropertiesLoading shim error:', e);
@@ -280,10 +280,79 @@
                     }
                 };
 
+                // Escape HTML helper
+                window.escapeHtml = window.escapeHtml || function(text) {
+                    const div = document.createElement('div');
+                    div.textContent = text;
+                    return div.innerHTML;
+                };
+
                 // Properties display helper (already exists but ensure it's robust)
                 window.displayProperties = window.displayProperties || function(properties) {
                     console.log('View helper displayProperties called with', properties?.length || 0, 'properties');
-                    // This would normally update the properties list in the UI
+                    const container = document.getElementById('propertiesContainer');
+                    if (!container) return;
+
+                    if (!properties || properties.length === 0) {
+                        // Hide empty state here - it's handled by the controller
+                        container.innerHTML = '';
+                        return;
+                    }
+
+                    // Render properties as cards
+                    let html = '';
+                    properties.forEach(prop => {
+                        const address = prop.address || prop.apartmentAddress || 'Unknown Address';
+                        const name = prop.name || prop.apartmentName || 'Unnamed Property';
+                        const floors = prop.numberOfFloors || 0;
+                        const rooms = prop.totalUnits || prop.numberOfRooms || 0;
+                        const isActive = prop.isActive !== false;
+                        const statusClass = isActive ? 'status-active' : 'status-inactive';
+                        const statusText = isActive ? 'Active' : 'Inactive';
+
+                        html += `
+                            <div class="property-card" data-property-id="${prop.id}">
+                                <div class="property-image">
+                                    <div class="property-placeholder">
+                                        <i class="fas fa-building"></i>
+                                    </div>
+                                    <span class="property-type-badge">Apartment</span>
+                                    <span class="status-badge ${statusClass}">${statusText}</span>
+                                </div>
+                                <div class="property-content">
+                                    <h3 class="property-name">${window.escapeHtml(name)}</h3>
+                                    <p class="property-address">
+                                        <i class="fas fa-map-marker-alt"></i>
+                                        ${window.escapeHtml(address)}
+                                    </p>
+                                    <div class="property-stats">
+                                        <div class="stat">
+                                            <span class="stat-label">Floors</span>
+                                            <span class="stat-value">${floors}</span>
+                                        </div>
+                                        <div class="stat">
+                                            <span class="stat-label">Rooms</span>
+                                            <span class="stat-value">${rooms}</span>
+                                        </div>
+                                        <div class="stat">
+                                            <span class="stat-label">Created</span>
+                                            <span class="stat-value">${new Date(prop.createdAt).getFullYear()}</span>
+                                        </div>
+                                    </div>
+                                    <div class="property-actions">
+                                        <button class="btn btn-sm btn-primary" onclick="if(window.propertiesController) window.propertiesController.viewProperty('${prop.id}')">
+                                            <i class="fas fa-eye"></i> View
+                                        </button>
+                                        <button class="btn btn-sm btn-secondary" onclick="if(window.propertiesController) window.propertiesController.editProperty('${prop.id}')">
+                                            <i class="fas fa-edit"></i> Edit
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+
+                    container.innerHTML = html;
                 };
 
                 // Tenants display helper

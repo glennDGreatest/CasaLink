@@ -117,8 +117,21 @@ class DataService {
   async getLandlordProperties(landlordId) {
     try {
       const conditions = [['landlordId', '==', landlordId]];
-      const snapshot = await this.firebaseService.query('properties', conditions);
-      return snapshot.docs.map(doc => new Property(doc.data()));
+      const snapshot = await this.firebaseService.query('rooms', conditions);
+
+      // Deduplicate by apartmentId to get unique apartments
+      const apartmentMap = {};
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const apartmentId = data.apartmentId || data.id;
+
+        // Keep only the first room's data for each apartment
+        if (!apartmentMap[apartmentId]) {
+          apartmentMap[apartmentId] = data;
+        }
+      });
+
+      return Object.values(apartmentMap).map(data => new Property(data));
     } catch (error) {
       console.error('Error getting properties:', error);
       throw error;
@@ -132,7 +145,7 @@ class DataService {
    */
   async getProperty(propertyId) {
     try {
-      const doc = await this.firebaseService.read('properties', propertyId);
+      const doc = await this.firebaseService.read('rooms', propertyId);
       if (!doc) return null;
       return new Property(doc.data());
     } catch (error) {
@@ -151,7 +164,7 @@ class DataService {
       if (!property.isValid()) {
         throw new Error('Invalid property: ' + property.getValidationErrors().join(', '));
       }
-      return await this.firebaseService.create('properties', property.toJSON());
+      return await this.firebaseService.create('rooms', property.toJSON());
     } catch (error) {
       console.error('Error creating property:', error);
       throw error;
@@ -166,7 +179,7 @@ class DataService {
    */
   async updateProperty(propertyId, updates) {
     try {
-      await this.firebaseService.update('properties', propertyId, updates);
+      await this.firebaseService.update('rooms', propertyId, updates);
     } catch (error) {
       console.error('Error updating property:', error);
       throw error;
