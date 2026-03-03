@@ -15,6 +15,12 @@ class CasaLink {
         this.currentPage = this.getStoredPage() || 'dashboard';
         this.appInitialized = false;
         this.billsCurrentPage = 1;
+        
+        // track whether we already rendered a unit layout for the current apartment
+        this._layoutAlreadyLoaded = false;                 // toggled after successful display
+        this._lastLoadedLayoutApartmentId = null;          // apartment id of last layout
+        this._lastLoadedLayoutApartmentAddress = null;     // address fallback
+        this._layoutLoadingInProgress = false;             // prevent concurrent loads
         this.billsItemsPerPage = 5;
         this.billsTotalPages = 1;
         this.billsAllData = [];
@@ -48,17 +54,14 @@ class CasaLink {
         // 🔥 ADD BILLING VIEW TRACKING
         this.currentBillingView = 'bills'; // Default to Bills Management
 
-        this.setupBillingAutomation();
+        // cache for the properties template - used by getPropertiesPageHTML
+        this._propertiesTemplate = null;
 
-        // Bind methods
+        // bind login delegation helpers (must exist before setupLoginEvents runs)
         this.boundLoginClickHandler = this.loginClickHandler.bind(this);
         this.boundLoginKeypressHandler = this.loginKeypressHandler.bind(this);
         this.boundHandleLogin = this.handleLogin.bind(this);
-        
-        // Set up global event listeners
-        this.setupGlobalEventListeners();
-        
-        console.log('🔄 Initializing CasaLink...');
+
         this.init();
         this.registerImageModalHelper();
     }
@@ -2548,6 +2551,10 @@ class CasaLink {
                         this.currentApartmentId = null;
                         this.currentApartmentAddress = null;
                         this.shouldAutoLoadUnitLayout = false;
+                        // also forget the layout so it can load again when user picks an apartment
+                        this._layoutAlreadyLoaded = false;
+                        this._lastLoadedLayoutApartmentId = null;
+                        this._lastLoadedLayoutApartmentAddress = null;
                         console.log('🔄 Apartment selection cleared');
 
                         // Refresh dashboard to aggregated (all-apartments) view
@@ -2626,6 +2633,10 @@ class CasaLink {
                         this.currentApartmentId = null;
                         this.currentApartmentAddress = null;
                         this.shouldAutoLoadUnitLayout = false;
+                        // clear layout memo
+                        this._layoutAlreadyLoaded = false;
+                        this._lastLoadedLayoutApartmentId = null;
+                        this._lastLoadedLayoutApartmentAddress = null;
                         console.log('🔄 Apartment selection cleared (derived)');
 
                         // Refresh dashboard to aggregated (all-apartments) view
@@ -2707,6 +2718,7 @@ class CasaLink {
 
     
     async showAddPropertyForm() {
+        console.log('CasaLink.showAddPropertyForm() invoked');
         try {
             // STEP 1: Basic Apartment Information
             const step1HTML = `
@@ -2977,6 +2989,19 @@ class CasaLink {
                     window.notificationManager.success(`Apartment created with ${result.roomsCreated} rooms!`);
                 }
                 ModalManager.closeModal(modal);
+
+                // dispatch event so other components (eg. property management page) can refresh
+                try {
+                    document.dispatchEvent(new CustomEvent('propertyAdded', {
+                        detail: {
+                            apartmentId: result.apartmentId,
+                            address: data.address,
+                            roomsCreated: result.roomsCreated
+                        }
+                    }));
+                } catch (e) {
+                    console.warn('Unable to dispatch propertyAdded event:', e);
+                }
 
                 // Refresh selector and select new apartment
                 await this.setupApartmentSelector();
@@ -3314,11 +3339,29 @@ class CasaLink {
                 console.warn('⚠️ No apartment selected - aborting unit layout load');
                 return;
             }
+
+            // Avoid starting a second load while one is already in progress
+            if (this._layoutLoadingInProgress) {
+                console.log('ℹ️ Unit layout load already in progress, skipping duplicate request');
+                return;
+            }
+
+            // if we already loaded this apartment's layout previously, bail
+            if (this._layoutAlreadyLoaded &&
+                this._lastLoadedLayoutApartmentId === this.currentApartmentId &&
+                this._lastLoadedLayoutApartmentAddress === this.currentApartmentAddress) {
+                console.log('ℹ️ Inline layout already rendered for this apartment; skipping redundant load');
+                return;
+            }
             
+            // mark we are now loading
+            this._layoutLoadingInProgress = true;
+
             // Get the container element
             const container = document.querySelector('.unit-grid-container');
             if (!container) {
                 console.warn('⚠️ Unit grid container not found');
+                this._layoutLoadingInProgress = false;
                 return;
             }
             
@@ -3402,6 +3445,12 @@ class CasaLink {
             
             console.log('✅ Unit layout loaded and displayed in dashboard');
 
+            // remember that we have a fresh layout for the current apartment so
+            // subsequent dashboard refreshes do not trigger another load
+            this._layoutAlreadyLoaded = true;
+            this._lastLoadedLayoutApartmentId = this.currentApartmentId;
+            this._lastLoadedLayoutApartmentAddress = this.currentApartmentAddress;
+
         } catch (error) {
             console.error('❌ Error loading inline unit layout:', error);
             const container = document.querySelector('.unit-grid-container');
@@ -3419,6 +3468,9 @@ class CasaLink {
                     </div>
                 `;
             }
+        } finally {
+            // clear the loading flag regardless of outcome
+            this._layoutLoadingInProgress = false;
         }
     }
 
@@ -6720,6 +6772,18 @@ class CasaLink {
         switch (page) {
             case 'dashboard':
                 await this.setupDashboardEvents();
+                break;
+            case 'properties':
+                // special case: ensure the landlord properties controller
+                // is initialized on the freshly injected DOM.  Pass the
+                // content area element as the root scope so that query
+                // selectors do not accidentally hit other parts of the
+                // layout (e.g. the dashboard add button in the header).
+                if (window.propertiesController) {
+                    window.propertiesController.currentUser = this.currentUser;
+                    const area = document.getElementById('contentArea');
+                    await window.propertiesController.init(area);
+                }
                 break;
             case 'billing':
                 this.setupBillingPage();
@@ -14447,15 +14511,26 @@ class CasaLink {
             
             // Auto-load unit layout for landlords ONLY if appropriate
             if (this.currentRole === 'landlord' && this.shouldAutoLoadUnitLayout !== false) {
-                // Check current state - only load if:
-                // 1. Single apartment (shouldAutoLoadUnitLayout = true), OR
-                // 2. User has selected a specific apartment from dropdown
-                if (this.shouldAutoLoadUnitLayout === true) {
-                    console.log('✅ Auto-loading unit layout (single apartment)');
-                    await this.loadAndDisplayUnitLayoutInDashboard();
-                } else if (this.currentApartmentAddress && this.currentApartmentAddress !== '') {
-                    console.log('✅ Loading selected apartment unit layout');
-                    await this.loadAndDisplayUnitLayoutInDashboard();
+                // determine whether the apartment has changed since last layout load
+                const apartmentChanged = (
+                    this._lastLoadedLayoutApartmentId !== this.currentApartmentId ||
+                    this._lastLoadedLayoutApartmentAddress !== this.currentApartmentAddress
+                );
+
+                if (!apartmentChanged) {
+                    console.log('ℹ️ Unit layout already loaded for current apartment, skipping reload');
+                } else {
+                    // We haven't loaded the layout, or selection changed
+                    // Check current state - only load if:
+                    // 1. Single apartment (shouldAutoLoadUnitLayout = true), OR
+                    // 2. User has selected a specific apartment from dropdown
+                    if (this.shouldAutoLoadUnitLayout === true) {
+                        console.log('✅ Auto-loading unit layout (single apartment)');
+                        await this.loadAndDisplayUnitLayoutInDashboard();
+                    } else if (this.currentApartmentAddress && this.currentApartmentAddress !== '') {
+                        console.log('✅ Loading selected apartment unit layout');
+                        await this.loadAndDisplayUnitLayoutInDashboard();
+                    }
                 }
                 // Otherwise: shouldAutoLoadUnitLayout = false (multiple apartments), don't load
             }
@@ -18344,21 +18419,32 @@ class CasaLink {
         });
     }
 
+    // cache for the properties template HTML so we don't rely on
+    // the original DOM element after its id gets removed by previous
+    // versions of the code. this avoids the "feature is loading" fallback
+    // message when the user navigates repeatedly.
     getPropertiesPageHTML() {
         console.log('🏠 Rendering properties page...');
 
-        // Initialize properties controller
-        if (window.propertiesController) {
-            window.propertiesController.currentUser = this.currentUser;
-            window.propertiesController.init();
+        // if we've cached it already, return it directly
+        if (this._propertiesTemplate) {
+            return this._propertiesTemplate;
         }
 
-        // Return the properties section which is in index.html
         const propertiesSection = document.getElementById('propertiesSection');
         if (propertiesSection) {
-            return propertiesSection.innerHTML;
+            // store the innerHTML so future calls do not depend on the
+            // element still being present or having an id
+            this._propertiesTemplate = propertiesSection.innerHTML;
+
+            // keep the original section around hidden; we no longer clear its
+            // id because doing so prevented subsequent lookups and produced
+            // the "loading" fallback. duplicate IDs are harmless while the
+            // section remains hidden, and we only inject one copy at a time.
+            return this._propertiesTemplate;
         }
 
+        // fallback if neither cache nor element is available
         return `
             <div class="page-content">
                 <h1>Property Management</h1>

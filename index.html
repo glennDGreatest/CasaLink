@@ -259,7 +259,7 @@
                     <i class="fas fa-search"></i>
                     <input type="text" id="propertySearch" class="search-input" placeholder="Search properties...">
                 </div>
-                <button class="btn btn-primary" id="addPropertyBtn">
+                <button class="btn btn-primary" id="addPropertyBtn" onclick="if(window.casaLink && typeof window.casaLink.showAddPropertyForm==='function'){window.casaLink.showAddPropertyForm();}">
                     <i class="fas fa-plus"></i> Add New Property
                 </button>
             </div>
@@ -303,7 +303,7 @@
             <div class="empty-icon"><i class="fas fa-home"></i></div>
             <h3>No Properties Yet</h3>
             <p>Start managing your portfolio by adding your first property</p>
-            <button class="btn btn-primary" id="addPropertyBtnEmpty"><i class="fas fa-plus"></i> Add First Property</button>
+            <button class="btn btn-primary" id="addPropertyBtnEmpty" onclick="if(window.casaLink && typeof window.casaLink.showAddPropertyForm==='function'){window.casaLink.showAddPropertyForm();}"><i class="fas fa-plus"></i> Add First Property</button>
         </div>
 
         <!-- Error State -->
@@ -439,6 +439,168 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="deletePropertyCancel" onclick="if(window.propertiesController) window.propertiesController.closeDeleteModal();">Cancel</button>
                 <button class="btn btn-danger" id="deletePropertyConfirm">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Property Details Modal -->
+    <div id="propertyDetailsModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content modal-large property-details-modal">
+            <div class="modal-header property-details-header">
+                <div class="property-header-info">
+                    <h3 id="propertyDetailsName">Property Name</h3>
+                    <p id="propertyDetailsAddress" class="property-details-address">Address</p>
+                </div>
+                <button class="modal-close" id="propertyDetailsClose" onclick="if(window.propertiesController) window.propertiesController.closePropertyDetailsModal();">&times;</button>
+            </div>
+            <div class="modal-body property-details-body">
+                <div id="propertyDetailsLoading" class="property-details-loading">
+                    <i class="fas fa-spinner fa-spin"></i> Loading property details...
+                </div>
+
+                <div id="propertyDetailsContent" style="display: none;">
+                    <!-- Key Metrics Section -->
+                    <div class="property-metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-building"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Total Units</div>
+                                <div class="metric-value" id="detailsMetricUnits">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-user-check"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Occupancy Rate</div>
+                                <div class="metric-value" id="detailsMetricOccupancy">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-dollar-sign"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Monthly Revenue</div>
+                                <div class="metric-value" id="detailsMetricRevenue">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-exclamation-circle"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Open Maintenance</div>
+                                <div class="metric-value" id="detailsMetricMaintenance">-</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Property Details Grid -->
+                    <div class="property-info-grid">
+                        <div class="info-group">
+                            <label>Property Type</label>
+                            <span id="detailsPropertyType">-</span>
+                        </div>
+                        <div class="info-group">
+                            <label>Status</label>
+                            <span id="detailsPropertyStatus" class="status-badge">-</span>
+                        </div>
+                        <div class="info-group">
+                            <label>Year Built</label>
+                            <span id="detailsPropertyYearBuilt">-</span>
+                        </div>
+                        <div class="info-group">
+                            <label>Square Footage</label>
+                            <span id="detailsPropertySqft">-</span>
+                        </div>
+                    </div>
+
+                    <!-- Tabs Navigation -->
+                    <div class="property-tabs">
+                        <button class="tab-button active" data-tab="overview">
+                            <i class="fas fa-info-circle"></i> Overview
+                        </button>
+                        <button class="tab-button" data-tab="units">
+                            <i class="fas fa-door-open"></i> Units
+                        </button>
+                        <button class="tab-button" data-tab="maintenance">
+                            <i class="fas fa-wrench"></i> Maintenance
+                        </button>
+                        <button class="tab-button" data-tab="tenants">
+                            <i class="fas fa-users"></i> Tenants
+                        </button>
+                        <button class="tab-button" data-tab="activity">
+                            <i class="fas fa-history"></i> Activity
+                        </button>
+                    </div>
+
+                    <!-- Tab Content -->
+                    <div class="property-tab-content">
+                        <!-- Overview Tab -->
+                        <div id="tab-overview" class="tab-pane active">
+                            <div class="section-content">
+                                <h4>Property Details</h4>
+                                <div class="details-section">
+                                    <div class="detail-row">
+                                        <span class="detail-label">Address:</span>
+                                        <span id="detailsFullAddress">-</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="detail-label">Description:</span>
+                                        <span id="detailsDescription" style="font-style: italic; color: #6b7280;">No description</span>
+                                    </div>
+                                </div>
+
+                                <h4 style="margin-top: 1.5rem;">Amenities</h4>
+                                <div id="detailsAmenities" class="amenities-list">
+                                    <span style="color: #9ca3af;">None listed</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Units Tab -->
+                        <div id="tab-units" class="tab-pane" style="display: none;">
+                            <div class="section-content">
+                                <h4>Property Units</h4>
+                                <div id="unitsList" class="units-list">
+                                    <p style="text-align: center; color: #9ca3af;">Loading units...</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Maintenance Tab -->
+                        <div id="tab-maintenance" class="tab-pane" style="display: none;">
+                            <div class="section-content">
+                                <h4>Maintenance Requests (Last 5)</h4>
+                                <div id="maintenanceList" class="maintenance-list">
+                                    <p style="text-align: center; color: #9ca3af;">Loading maintenance requests...</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tenants Tab -->
+                        <div id="tab-tenants" class="tab-pane" style="display: none;">
+                            <div class="section-content">
+                                <h4>Current Tenants</h4>
+                                <div id="tenantsList" class="tenants-list">
+                                    <p style="text-align: center; color: #9ca3af;">Loading tenants...</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Activity Tab -->
+                        <div id="tab-activity" class="tab-pane" style="display: none;">
+                            <div class="section-content">
+                                <h4>Recent Activity</h4>
+                                <div id="activityList" class="activity-list">
+                                    <p style="text-align: center; color: #9ca3af;">Loading activity...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer property-details-footer">
+                <button class="btn btn-secondary" onclick="if(window.propertiesController) window.propertiesController.closePropertyDetailsModal();">Close</button>
+                <button class="btn btn-primary" onclick="if(window.propertiesController) window.propertiesController.editPropertyFromDetails();">
+                    <i class="fas fa-edit"></i> Edit Property
+                </button>
             </div>
         </div>
     </div>

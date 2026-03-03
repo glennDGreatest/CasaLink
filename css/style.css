@@ -1197,11 +1197,26 @@ header {
     backdrop-filter: blur(10px);
 }
 
+/* allow header to use the full viewport width rather than being constrained by
+   the standard .container max-width.  still keep horizontal padding for spacing */
+header > .container {
+    max-width: 100%;
+    padding: 0 20px;
+}
+
 .header-content {
     display: flex;
     justify-content: space-between;
     align-items: center;
     padding: 15px 0;
+    width: 100%;            /* ensure it stretches the full width of its parent */
+}
+
+/* add extra padding for large viewports so header items don't hug the edges */
+@media (min-width: 1200px) {
+    header > .container {
+        padding: 0 40px;
+    }
 }
 
 .logo {

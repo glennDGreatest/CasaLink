@@ -127,6 +127,8 @@ class DataService {
 
         // Keep only the first room's data for each apartment
         if (!apartmentMap[apartmentId]) {
+          // Ensure the data has an id field for the Property model
+          data.id = apartmentId || data.id || doc.id;
           apartmentMap[apartmentId] = data;
         }
       });

@@ -301,7 +301,10 @@
 
                     // Render properties as cards
                     let html = '';
-                    properties.forEach(prop => {
+                    properties.forEach((prop, idx) => {
+                        if (!prop.id) {
+                            console.warn(`⚠️ Property at index ${idx} has no id:`, prop);
+                        }
                         const address = prop.address || prop.apartmentAddress || 'Unknown Address';
                         const name = prop.name || prop.apartmentName || 'Unnamed Property';
                         const floors = prop.numberOfFloors || 0;
@@ -353,6 +356,46 @@
                     });
 
                     container.innerHTML = html;
+
+                    // attach interaction handlers so clicks anywhere on a card
+                    // open the view/edit modal.  This ensures dashboard cards work
+                    // as expected even when the PropertiesController isn't
+                    // initialized for that page.
+                    container.querySelectorAll('.property-card').forEach(card => {
+                        const propId = card.getAttribute('data-property-id');
+                        if (!propId) {
+                            console.warn('⚠️ Property card found but has no data-property-id attribute:', card);
+                            return;
+                        }
+
+                        // view when card itself clicked (excluding buttons)
+                        card.addEventListener('click', (e) => {
+                            // ignore clicks on any button inside the card
+                            if (e.target.closest('button')) return;
+                            console.log('dashboard/property card clicked', propId);
+                            if (window.propertiesController) {
+                                window.propertiesController.viewProperty(propId);
+                            }
+                        });
+
+                        // view button
+                        card.querySelector('.btn-primary')?.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            console.log('dashboard view button clicked', propId);
+                            if (window.propertiesController) {
+                                window.propertiesController.viewProperty(propId);
+                            }
+                        });
+
+                        // edit button
+                        card.querySelector('.btn-secondary')?.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            console.log('dashboard edit button clicked', propId);
+                            if (window.propertiesController) {
+                                window.propertiesController.editProperty(propId);
+                            }
+                        });
+                    });
                 };
 
                 // Tenants display helper

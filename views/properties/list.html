@@ -265,10 +265,15 @@
             window.propertiesController.init();
         }
 
-        // Add property button
+        // Add property button – use shared trigger so behaviour matches dashboard
         document.getElementById('addPropertyBtn')?.addEventListener('click', () => {
             if (window.propertiesController) {
-                window.propertiesController.openAddPropertyModal();
+                if (typeof window.propertiesController.triggerAddProperty === 'function') {
+                    window.propertiesController.triggerAddProperty();
+                } else {
+                    // fallback for older builds
+                    window.propertiesController.openAddPropertyModal();
+                }
             }
         });
 
@@ -331,6 +336,7 @@
                 const propertyId = card.getAttribute('data-property-id');
                 
                 card.querySelector('.view-btn')?.addEventListener('click', () => {
+                    console.log('list.html view button clicked', propertyId);
                     if (window.propertiesController) {
                         window.propertiesController.viewProperty(propertyId);
                     }
@@ -338,12 +344,14 @@
 
                 card.querySelector('.edit-btn')?.addEventListener('click', (e) => {
                     e.stopPropagation();
+                    console.log('list.html edit button clicked', propertyId);
                     if (window.propertiesController) {
                         window.propertiesController.openEditPropertyModal(propertyId);
                     }
                 });
 
                 card.addEventListener('click', () => {
+                    console.log('list.html card clicked', propertyId);
                     if (window.propertiesController) {
                         window.propertiesController.viewProperty(propertyId);
                     }

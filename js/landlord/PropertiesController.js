@@ -25,8 +25,13 @@ class PropertiesController {
     /**
      * Initialize controller and load properties
      */
-    async init() {
-        console.log('🏠 Initializing Properties View...');
+    /**
+     * Initialize controller and load properties
+     * @param {HTMLElement} root Optional root element to scope DOM queries
+     */
+    async init(root = document) {
+        console.log('🏠 Initializing Properties View with root:', root);
+        this.root = root;
 
         try {
             // Set loading state
@@ -141,7 +146,11 @@ class PropertiesController {
      * Render properties grid based on current page
      */
     renderProperties() {
-        const container = document.getElementById('propertiesContainer');
+        // Try both possible container IDs
+        let container = (this.root || document).querySelector('#propertiesContainer');
+        if (!container) {
+            container = (this.root || document).querySelector('#propertiesGrid');
+        }
         if (!container) return;
 
         // Check empty state
@@ -232,18 +241,28 @@ class PropertiesController {
      * Setup event listeners for the view
      */
     setupEventListeners() {
+        const root = this.root || document;
+
         // Add property button
-        const addBtn = document.getElementById('addPropertyBtn');
-        const addBtnEmpty = document.getElementById('addPropertyBtnEmpty');
+        const addBtn = root.querySelector('#addPropertyBtn');
+        const addBtnEmpty = root.querySelector('#addPropertyBtnEmpty');
+        console.log('PropertiesController.setupEventListeners() found addBtn, addBtnEmpty:', addBtn, addBtnEmpty);
+        // use a dedicated method that matches dashboard behaviour
         if (addBtn) {
-            addBtn.addEventListener('click', () => this.openAddPropertyModal());
+            addBtn.addEventListener('click', () => this.triggerAddProperty());
         }
         if (addBtnEmpty) {
-            addBtnEmpty.addEventListener('click', () => this.openAddPropertyModal());
+            addBtnEmpty.addEventListener('click', () => this.triggerAddProperty());
         }
 
+        // listen for any property additions elsewhere so list stays up to date
+        document.addEventListener('propertyAdded', () => {
+            // reload properties when event fires
+            this.loadProperties().catch(err => console.warn('Unable to reload properties after add event:', err));
+        });
+
         // Search
-        const searchInput = document.getElementById('propertySearch');
+        const searchInput = root.querySelector('#propertySearch');
         if (searchInput) {
             searchInput.addEventListener('input', (e) => {
                 this.currentFilters.search = e.target.value;
@@ -252,9 +271,9 @@ class PropertiesController {
         }
 
         // Filters
-        const typeFilter = document.getElementById('propertyTypeFilter');
-        const statusFilter = document.getElementById('propertyStatusFilter');
-        const clearBtn = document.getElementById('clearFiltersBtn');
+        const typeFilter = root.querySelector('#propertyTypeFilter');
+        const statusFilter = root.querySelector('#propertyStatusFilter');
+        const clearBtn = root.querySelector('#clearFiltersBtn');
 
         if (typeFilter) {
             typeFilter.addEventListener('change', (e) => {
@@ -273,18 +292,18 @@ class PropertiesController {
         if (clearBtn) {
             clearBtn.addEventListener('click', () => {
                 this.currentFilters = { search: '', type: '', status: '' };
-                document.getElementById('propertySearch').value = '';
-                document.getElementById('propertyTypeFilter').value = '';
-                document.getElementById('propertyStatusFilter').value = '';
+                root.querySelector('#propertySearch').value = '';
+                root.querySelector('#propertyTypeFilter').value = '';
+                root.querySelector('#propertyStatusFilter').value = '';
                 this.applyFilters();
             });
         }
 
         // Modal events
-        const modal = document.getElementById('propertyModal');
-        const form = document.getElementById('propertyForm');
-        const closeBtn = document.getElementById('propertyModalClose');
-        const cancelBtn = document.getElementById('propertyModalCancel');
+        const modal = root.querySelector('#propertyModal');
+        const form = root.querySelector('#propertyForm');
+        const closeBtn = root.querySelector('#propertyModalClose');
+        const cancelBtn = root.querySelector('#propertyModalCancel');
 
         if (form) {
             form.addEventListener('submit', (e) => {
@@ -302,10 +321,10 @@ class PropertiesController {
         }
 
         // Delete modal
-        const deleteModal = document.getElementById('deletePropertyModal');
-        const deleteCloseBtn = document.getElementById('deletePropertyModalClose');
-        const deleteCancelBtn = document.getElementById('deletePropertyCancel');
-        const deleteConfirmBtn = document.getElementById('deletePropertyConfirm');
+        const deleteModal = root.querySelector('#deletePropertyModal');
+        const deleteCloseBtn = root.querySelector('#deletePropertyModalClose');
+        const deleteCancelBtn = root.querySelector('#deletePropertyCancel');
+        const deleteConfirmBtn = root.querySelector('#deletePropertyConfirm');
 
         if (deleteCloseBtn) {
             deleteCloseBtn.addEventListener('click', () => this.closeDeleteModal());
@@ -319,9 +338,27 @@ class PropertiesController {
             deleteConfirmBtn.addEventListener('click', () => this.confirmDelete());
         }
 
+        // Property Details Modal
+        const propertyDetailsModal = document.querySelector('#propertyDetailsModal');
+        if (propertyDetailsModal) {
+            // Close when clicking outside modal
+            propertyDetailsModal.addEventListener('click', (e) => {
+                if (e.target === propertyDetailsModal) {
+                    this.closePropertyDetailsModal();
+                }
+            });
+
+            // Close with ESC key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && propertyDetailsModal.style.display === 'flex') {
+                    this.closePropertyDetailsModal();
+                }
+            });
+        }
+
         // Pagination
-        const prevBtn = document.getElementById('prevPageBtn');
-        const nextBtn = document.getElementById('nextPageBtn');
+        const prevBtn = root.querySelector('#prevPageBtn');
+        const nextBtn = root.querySelector('#nextPageBtn');
 
         if (prevBtn) {
             prevBtn.addEventListener('click', () => {
@@ -340,16 +377,86 @@ class PropertiesController {
                 }
             });
         }
+
+        // clickable cards: open view (edit) modal when card or view button clicked
+        const containers = [
+            root.querySelector('#propertiesContainer'),
+            root.querySelector('#propertiesGrid')
+        ].filter(Boolean);
+
+        containers.forEach(container => {
+            container.addEventListener('click', (e) => {
+                const card = e.target.closest('.property-card');
+                if (!card) return;
+
+                const id = card.getAttribute('data-property-id');
+                if (!id) return;
+                console.log('property card clicked', id);
+
+                // if click came from edit button we let its own handler run
+                if (e.target.closest('.btn-secondary') || e.target.classList.contains('fa-edit')) {
+                    // explicit edit request
+                    console.log('edit button detected in card click');
+                    this.editProperty(id);
+                    e.stopPropagation();
+                    return;
+                }
+
+                // otherwise treat as view
+                this.viewProperty(id);
+            });
+        });
+    }
+
+    /**
+     * Trigger the add‑property flow.
+     * This mirrors the dashboard "Add Property" button, opening the
+     * multi‑step apartment modal when the CASA link helper is available
+     * and otherwise falling back to the legacy inline modal.
+     */
+    triggerAddProperty() {
+        console.log('triggerAddProperty() invoked');
+        if (window.casaLink && typeof window.casaLink.showAddPropertyForm === 'function') {
+            console.log('Calling casaLink.showAddPropertyForm() from PropertiesController');
+            try {
+                window.casaLink.showAddPropertyForm();
+            } catch (err) {
+                console.error('Error while calling showAddPropertyForm:', err);
+                // fallback to legacy modal if possible
+                this.openAddPropertyModal();
+            }
+        } else {
+            console.warn('casaLink or showAddPropertyForm unavailable, using fallback
+ to inline modal');
+            this.openAddPropertyModal();
+        }
     }
 
     /**
      * Open add property modal
      */
     openAddPropertyModal() {
+        // prefer the dashboard multi‑step form when available
+        if (window.casaLink && typeof window.casaLink.showAddPropertyForm === 'function') {
+            window.casaLink.showAddPropertyForm();
+            return;
+        }
+
+        // fallback to legacy inline modal
+        // always query from document so we can find the shared modal element
+        const root = document;
+        console.log('openAddPropertyModal() fallback using document root');
         this.editingPropertyId = null;
-        document.getElementById('propertyModalTitle').textContent = 'Add New Property';
-        document.getElementById('propertyForm').reset();
-        document.getElementById('propertyModal').style.display = 'flex';
+        const titleEl = root.querySelector('#propertyModalTitle');
+        const formEl = root.querySelector('#propertyForm');
+        const modalEl = root.querySelector('#propertyModal');
+        if (!modalEl) {
+            console.warn('openAddPropertyModal: propertyModal element not found');
+            return;
+        }
+        if (titleEl) titleEl.textContent = 'Add New Property';
+        if (formEl) formEl.reset();
+        modalEl.style.display = 'flex';
     }
 
     /**
@@ -359,28 +466,43 @@ class PropertiesController {
         const property = this.allProperties.find(p => p.id === propertyId);
         if (!property) return;
 
+        console.log('editProperty() loading data for', propertyId);
+        // use document as root for modal access; when page content is injected
+        // the inline modal lives outside the scoped area
+        const root = document;
         this.editingPropertyId = propertyId;
-        document.getElementById('propertyModalTitle').textContent = 'Edit Property';
+        const titleEl = root.querySelector('#propertyModalTitle');
+        if (titleEl) titleEl.textContent = 'Edit Property';
 
         // Populate form
-        document.getElementById('propertyName').value = property.name || '';
-        document.getElementById('propertyType').value = property.propertyType || '';
-        document.getElementById('propertyStatus').value = property.status || 'active';
-        document.getElementById('totalUnits').value = property.totalUnits || '';
-        document.getElementById('propertyAddress').value = property.address || '';
-        document.getElementById('propertyCity').value = property.city || '';
-        document.getElementById('propertyState').value = property.state || '';
-        document.getElementById('propertyZipCode').value = property.zipCode || '';
-        document.getElementById('yearBuilt').value = property.yearBuilt || '';
-        document.getElementById('squareFootage').value = property.squareFootage || '';
-        document.getElementById('propertyDescription').value = property.description || '';
+        const setVal = (selector, value) => {
+            const el = root.querySelector(selector);
+            if (el) el.value = value || '';
+        };
+
+        setVal('#propertyName', property.name);
+        setVal('#propertyType', property.propertyType);
+        setVal('#propertyStatus', property.status || 'active');
+        setVal('#totalUnits', property.totalUnits);
+        setVal('#propertyAddress', property.address);
+        setVal('#propertyCity', property.city);
+        setVal('#propertyState', property.state);
+        setVal('#propertyZipCode', property.zipCode);
+        setVal('#yearBuilt', property.yearBuilt);
+        setVal('#squareFootage', property.squareFootage);
+        setVal('#propertyDescription', property.description);
 
         // Set amenities checkboxes
-        document.querySelectorAll('input[name="amenities"]').forEach(checkbox => {
+        root.querySelectorAll('input[name="amenities"]').forEach(checkbox => {
             checkbox.checked = (property.amenities || []).includes(checkbox.value);
         });
 
-        document.getElementById('propertyModal').style.display = 'flex';
+        const modalEl = root.querySelector('#propertyModal');
+        if (modalEl) {
+            modalEl.style.display = 'flex';
+        } else {
+            console.warn('editProperty: propertyModal element not found');
+        }
     }
 
     /**
@@ -392,19 +514,20 @@ class PropertiesController {
             await this.waitForFirebase();
 
             // Collect form data
+            const root = this.root || document;
             const propertyData = {
-                name: document.getElementById('propertyName').value,
-                propertyType: document.getElementById('propertyType').value,
-                status: document.getElementById('propertyStatus').value,
-                totalUnits: parseInt(document.getElementById('totalUnits').value),
-                address: document.getElementById('propertyAddress').value,
-                city: document.getElementById('propertyCity').value,
-                state: document.getElementById('propertyState').value,
-                zipCode: document.getElementById('propertyZipCode').value,
-                yearBuilt: document.getElementById('yearBuilt').value || null,
-                squareFootage: parseFloat(document.getElementById('squareFootage').value) || 0,
-                description: document.getElementById('propertyDescription').value,
-                amenities: Array.from(document.querySelectorAll('input[name="amenities"]:checked')).map(cb => cb.value),
+                name: root.querySelector('#propertyName').value,
+                propertyType: root.querySelector('#propertyType').value,
+                status: root.querySelector('#propertyStatus').value,
+                totalUnits: parseInt(root.querySelector('#totalUnits').value),
+                address: root.querySelector('#propertyAddress').value,
+                city: root.querySelector('#propertyCity').value,
+                state: root.querySelector('#propertyState').value,
+                zipCode: root.querySelector('#propertyZipCode').value,
+                yearBuilt: root.querySelector('#yearBuilt').value || null,
+                squareFootage: parseFloat(root.querySelector('#squareFootage').value) || 0,
+                description: root.querySelector('#propertyDescription').value,
+                amenities: Array.from(root.querySelectorAll('input[name="amenities"]:checked')).map(cb => cb.value),
                 landlordId: this.currentUser.uid,
                 updatedAt: new Date(),
                 monthlyRevenue: 0 // Will be calculated from units/leases
@@ -453,12 +576,372 @@ class PropertiesController {
     }
 
     /**
-     * View property details
+     * View property details in a dedicated details modal
      */
     viewProperty(propertyId) {
-        if (window.casaLink) {
-            window.casaLink.showPage('property-detail', propertyId);
+        this.openPropertyDetailsModal(propertyId);
+    }
+
+    /**
+     * Open property details modal with comprehensive information
+     */
+    async openPropertyDetailsModal(propertyId) {
+        try {
+            // Find property data
+            const property = this.allProperties.find(p => p.id === propertyId);
+            if (!property) {
+                this.showToast('Property not found', 'error');
+                return;
+            }
+
+            // Show modal with loading state
+            const modal = document.getElementById('propertyDetailsModal');
+            const content = document.getElementById('propertyDetailsContent');
+            const loading = document.getElementById('propertyDetailsLoading');
+
+            if (!modal) {
+                console.error('Property details modal not found');
+                return;
+            }
+
+            // Reset to loading state
+            content.style.display = 'none';
+            loading.style.display = 'flex';
+            modal.style.display = 'flex';
+
+            // Populate header information
+            document.getElementById('propertyDetailsName').textContent = this.escapeHtml(property.name);
+            const addressStr = `${property.address}, ${property.city}, ${property.state} ${property.zipCode || ''}`;
+            document.getElementById('propertyDetailsAddress').textContent = addressStr;
+
+            // Populate basic info grid
+            document.getElementById('detailsPropertyType').textContent = this.formatPropertyType(property.propertyType);
+            const statusBadge = document.getElementById('detailsPropertyStatus');
+            statusBadge.textContent = property.status;
+            statusBadge.className = property.status === 'active' ? 'status-badge status-active' : 'status-badge status-inactive';
+            document.getElementById('detailsPropertyYearBuilt').textContent = property.yearBuilt || '-';
+            document.getElementById('detailsPropertySqft').textContent = property.squareFootage ? `${property.squareFootage.toLocaleString()} sq ft` : '-';
+
+            // Calculate and populate metrics
+            const units = await this.fetchPropertyUnits(propertyId);
+            const occupiedUnits = (units || []).filter(u => u.isOccupied).length;
+            const occupancyRate = units && units.length > 0 ? Math.round((occupiedUnits / units.length) * 100) : 0;
+
+            document.getElementById('detailsMetricUnits').textContent = (units || []).length;
+            document.getElementById('detailsMetricOccupancy').textContent = `${occupancyRate}%`;
+            document.getElementById('detailsMetricRevenue').textContent = `₱${(property.monthlyRevenue || 0).toLocaleString()}`;
+
+            // Get maintenance count
+            const maintenanceRequests = await this.fetchPropertyMaintenance(propertyId);
+            const openMaintenance = (maintenanceRequests || []).filter(m => m.status !== 'completed').length;
+            document.getElementById('detailsMetricMaintenance').textContent = openMaintenance;
+
+            // Populate overview tab
+            document.getElementById('detailsFullAddress').textContent = addressStr;
+            const descEl = document.getElementById('detailsDescription');
+            if (property.description) {
+                descEl.textContent = property.description;
+                descEl.style.fontStyle = 'normal';
+                descEl.style.color = '#1f2937';
+            }
+
+            // Populate amenities
+            const amenitiesEl = document.getElementById('detailsAmenities');
+            if (property.amenities && property.amenities.length > 0) {
+                amenitiesEl.innerHTML = property.amenities.map(a =>
+                    `<span><i class="fas fa-check-circle"></i> ${this.formatPropertyType(a)}</span>`
+                ).join('');
+            }
+
+            // Populate units tab
+            await this.populateUnitsTab(units);
+
+            // Populate maintenance tab
+            await this.populateMaintenanceTab(maintenanceRequests);
+
+            // Populate tenants tab
+            const tenants = await this.fetchPropertyTenants(propertyId);
+            await this.populateTenantsTab(tenants);
+
+            // Populate activity tab
+            const activities = await this.fetchPropertyActivity(propertyId);
+            await this.populateActivityTab(activities);
+
+            // Setup tab switching
+            this.setupPropertyDetailsTabs();
+
+            // Hide loading and show content
+            loading.style.display = 'none';
+            content.style.display = 'block';
+
+        } catch (error) {
+            console.error('Error opening property details modal:', error);
+            this.showToast('Error loading property details: ' + error.message, 'error');
+            document.getElementById('propertyDetailsModal').style.display = 'none';
         }
+    }
+
+    /**
+     * Fetch property units from Firestore
+     */
+    async fetchPropertyUnits(propertyId) {
+        try {
+            await this.waitForFirebase();
+            const snapshot = await window.firebaseDb
+                .collection('units')
+                .where('propertyId', '==', propertyId)
+                .get();
+
+            return snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+        } catch (error) {
+            console.error('Error fetching units:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Fetch property maintenance requests
+     */
+    async fetchPropertyMaintenance(propertyId) {
+        try {
+            await this.waitForFirebase();
+            const snapshot = await window.firebaseDb
+                .collection('maintenance')
+                .where('propertyId', '==', propertyId)
+                .orderBy('createdAt', 'desc')
+                .limit(5)
+                .get();
+
+            return snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+        } catch (error) {
+            console.error('Error fetching maintenance:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Fetch property tenants
+     */
+    async fetchPropertyTenants(propertyId) {
+        try {
+            await this.waitForFirebase();
+            // Get active leases for this property
+            const snapshot = await window.firebaseDb
+                .collection('leases')
+                .where('propertyId', '==', propertyId)
+                .where('status', '==', 'active')
+                .get();
+
+            const tenantIds = [...new Set(snapshot.docs.map(doc => doc.data().tenantId))];
+
+            // Get tenant details
+            const tenants = [];
+            for (const tenantId of tenantIds) {
+                try {
+                    const tenantDoc = await window.firebaseDb.collection('users').doc(tenantId).get();
+                    if (tenantDoc.exists) {
+                        tenants.push({
+                            id: tenantId,
+                            ...tenantDoc.data()
+                        });
+                    }
+                } catch (e) {
+                    console.warn('Error fetching tenant:', e);
+                }
+            }
+
+            return tenants;
+        } catch (error) {
+            console.error('Error fetching tenants:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Fetch property activity/history
+     */
+    async fetchPropertyActivity(propertyId) {
+        try {
+            await this.waitForFirebase();
+            // For now, return recent changes to the property
+            // This could be enhanced with an activity log collection
+            const snapshot = await window.firebaseDb
+                .collection('properties')
+                .doc(propertyId)
+                .collection('activity')
+                .orderBy('timestamp', 'desc')
+                .limit(10)
+                .get();
+
+            return snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+        } catch (error) {
+            console.warn('Activity history not available:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Populate units tab content
+     */
+    async populateUnitsTab(units) {
+        const unitsList = document.getElementById('unitsList');
+        if (!units || units.length === 0) {
+            unitsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No units found</p>';
+            return;
+        }
+
+        unitsList.innerHTML = units.map(unit => `
+            <div class="unit-item">
+                <div class="unit-header">
+                    <div class="unit-name">${this.escapeHtml(unit.unitNumber || 'Unit ' + unit.id.substring(0, 5))}</div>
+                    <div class="unit-status">${unit.isOccupied ? 'Occupied' : 'Vacant'}</div>
+                </div>
+                <span class="status-badge ${unit.isOccupied ? 'status-active' : 'status-inactive'}">
+                    ${unit.isOccupied ? 'Occupied' : 'Vacant'}
+                </span>
+            </div>
+        `).join('');
+    }
+
+    /**
+     * Populate maintenance tab content
+     */
+    async populateMaintenanceTab(requests) {
+        const maintenanceList = document.getElementById('maintenanceList');
+        if (!requests || requests.length === 0) {
+            maintenanceList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No maintenance requests</p>';
+            return;
+        }
+
+        maintenanceList.innerHTML = requests.map(req => {
+            const date = req.createdAt ? new Date(req.createdAt.toDate?.() || req.createdAt).toLocaleDateString() : '';
+            return `
+                <div class="maintenance-item">
+                    <div class="maintenance-header">
+                        <div>
+                            <div class="maintenance-title">${this.escapeHtml(req.title || 'Maintenance Request')}</div>
+                            <div class="maintenance-description">${this.escapeHtml(req.description || '')}</div>
+                        </div>
+                        <span class="maintenance-status ${(req.status || 'pending').toLowerCase()}">
+                            ${req.status || 'Pending'}
+                        </span>
+                    </div>
+                    <div class="maintenance-date">${date}</div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    /**
+     * Populate tenants tab content
+     */
+    async populateTenantsTab(tenants) {
+        const tenantsList = document.getElementById('tenantsList');
+        if (!tenants || tenants.length === 0) {
+            tenantsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No active tenants</p>';
+            return;
+        }
+
+        tenantsList.innerHTML = tenants.map(tenant => `
+            <div class="tenant-item">
+                <div class="tenant-info">
+                    <div class="tenant-name">${this.escapeHtml(tenant.firstName || '')} ${this.escapeHtml(tenant.lastName || '')}</div>
+                    <div class="tenant-unit">${this.escapeHtml(tenant.email || '')}</div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    /**
+     * Populate activity tab content
+     */
+    async populateActivityTab(activities) {
+        const activityList = document.getElementById('activityList');
+        if (!activities || activities.length === 0) {
+            activityList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No activity recorded</p>';
+            return;
+        }
+
+        activityList.innerHTML = activities.map(activity => {
+            const date = activity.timestamp ? new Date(activity.timestamp.toDate?.() || activity.timestamp).toLocaleDateString() : '';
+            return `
+                <div class="activity-item">
+                    <div class="activity-icon"><i class="fas fa-circle"></i></div>
+                    <div class="activity-content">
+                        <div class="activity-title">${this.escapeHtml(activity.action || 'Activity')}</div>
+                        <div class="activity-time">${date}</div>
+                        ${activity.description ? `<div class="activity-description">${this.escapeHtml(activity.description)}</div>` : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    /**
+     * Setup tab switching in property details modal
+     */
+    setupPropertyDetailsTabs() {
+        const tabButtons = document.querySelectorAll('.property-tabs .tab-button');
+        const tabPanes = document.querySelectorAll('.property-tab-content .tab-pane');
+
+        tabButtons.forEach(button => {
+            button.addEventListener('click', (e) => {
+                e.preventDefault();
+                const tabName = button.getAttribute('data-tab');
+
+                // Remove active class from all buttons and panes
+                tabButtons.forEach(b => b.classList.remove('active'));
+                tabPanes.forEach(p => p.style.display = 'none');
+
+                // Add active class to clicked button
+                button.classList.add('active');
+
+                // Show corresponding pane
+                const pane = document.getElementById(`tab-${tabName}`);
+                if (pane) {
+                    pane.style.display = 'block';
+                }
+            });
+        });
+    }
+
+    /**
+     * Close property details modal
+     */
+    closePropertyDetailsModal() {
+        const modal = document.getElementById('propertyDetailsModal');
+        if (modal) {
+            modal.style.display = 'none';
+        }
+    }
+
+    /**
+     * Open edit property modal from details view
+     */
+    editPropertyFromDetails() {
+        const propertyName = document.getElementById('propertyDetailsName').textContent;
+        // Find the property by name
+        const property = this.allProperties.find(p => p.name === propertyName);
+        if (property) {
+            this.closePropertyDetailsModal();
+            this.editProperty(property.id);
+        }
+    }
+
+    /**
+     * Open edit property modal (called from list view)
+     */
+    openEditPropertyModal(propertyId) {
+        this.editProperty(propertyId);
     }
 
     /**
@@ -468,10 +951,11 @@ class PropertiesController {
         const property = this.allProperties.find(p => p.id === propertyId);
         if (!property) return;
 
+        const root = this.root || document;
         this.deleteConfirmPropertyId = propertyId;
         const message = `Are you sure you want to delete "${property.name}"? This will also delete all associated units and data.`;
-        document.getElementById('deletePropertyMessage').textContent = message;
-        document.getElementById('deletePropertyModal').style.display = 'flex';
+        root.querySelector('#deletePropertyMessage').textContent = message;
+        root.querySelector('#deletePropertyModal').style.display = 'flex';
     }
 
     /**
@@ -484,7 +968,8 @@ class PropertiesController {
             // Wait for Firebase
             await this.waitForFirebase();
 
-            const deleteBtn = document.getElementById('deletePropertyConfirm');
+            const root = this.root || document;
+            const deleteBtn = root.querySelector('#deletePropertyConfirm');
             deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
             deleteBtn.disabled = true;
 
@@ -516,7 +1001,7 @@ class PropertiesController {
         } catch (error) {
             console.error('❌ Error deleting property:', error);
             this.showToast('Error deleting property: ' + error.message, 'error');
-            const deleteBtn = document.getElementById('deletePropertyConfirm');
+            const deleteBtn = (this.root || document).querySelector('#deletePropertyConfirm');
             deleteBtn.innerHTML = '<i class="fas fa-trash"></i> Delete Property';
             deleteBtn.disabled = false;
         }
@@ -526,12 +1011,16 @@ class PropertiesController {
      * Close modals
      */
     closePropertyModal() {
-        document.getElementById('propertyModal').style.display = 'none';
+        const root = this.root || document;
+        const modal = root.querySelector('#propertyModal');
+        if (modal) modal.style.display = 'none';
         this.editingPropertyId = null;
     }
 
     closeDeleteModal() {
-        document.getElementById('deletePropertyModal').style.display = 'none';
+        const root = this.root || document;
+        const modal = root.querySelector('#deletePropertyModal');
+        if (modal) modal.style.display = 'none';
         this.deleteConfirmPropertyId = null;
     }
 
@@ -539,8 +1028,9 @@ class PropertiesController {
      * Update pagination UI
      */
     updatePagination() {
-        const pagination = document.getElementById('propertiesPagination');
-        const pageInfo = document.getElementById('pageInfo');
+        const root = this.root || document;
+        const pagination = root.querySelector('#propertiesPagination');
+        const pageInfo = root.querySelector('#pageInfo');
         const prevBtn = document.getElementById('prevPageBtn');
         const nextBtn = document.getElementById('nextPageBtn');
 
@@ -561,18 +1051,21 @@ class PropertiesController {
      * UI Helper Methods
      */
     showLoading(show = true) {
-        const loading = document.getElementById('propertiesLoading');
+        const root = this.root || document;
+        const loading = root.querySelector('#propertiesLoading');
         if (loading) loading.style.display = show ? 'grid' : 'none';
     }
 
     showEmpty(show = true) {
-        const empty = document.getElementById('propertiesEmpty');
+        const root = this.root || document;
+        const empty = root.querySelector('#propertiesEmpty');
         if (empty) empty.style.display = show ? 'flex' : 'none';
     }
 
     showError(message) {
-        const error = document.getElementById('propertiesError');
-        const errorMsg = document.getElementById('propertiesErrorMessage');
+        const root = this.root || document;
+        const error = root.querySelector('#propertiesError');
+        const errorMsg = root.querySelector('#propertiesErrorMessage');
         if (error) {
             errorMsg.textContent = message;
             error.style.display = 'flex';
@@ -580,12 +1073,14 @@ class PropertiesController {
     }
 
     hideError() {
-        const error = document.getElementById('propertiesError');
+        const root = this.root || document;
+        const error = root.querySelector('#propertiesError');
         if (error) error.style.display = 'none';
     }
 
     hideEmpty() {
-        const empty = document.getElementById('propertiesEmpty');
+        const root = this.root || document;
+        const empty = root.querySelector('#propertiesEmpty');
         if (empty) empty.style.display = 'none';
     }
 
