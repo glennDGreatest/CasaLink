@@ -7841,8 +7841,8 @@ class CasaLink {
                 let rows = '';
                 requests.forEach(r => {
                     const created = r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'N/A';
-                    const priorityBadge = this.getPriorityBadge(r.priority);
-                    const statusBadge = this.getStatusBadge(r.status);
+                    const priorityBadge = this.getPriorityBadge(r.priority || 'medium');
+                    const statusBadge = this.getStatusBadge(r.status || 'open');
                     rows += `
                         <tr class="maintenance-row" data-request-id="${r.id}" data-created-at="${r.createdAt || ''}" style="cursor:pointer;">
                             <td><strong>${r.type || 'N/A'}</strong></td>
@@ -8035,6 +8035,13 @@ class CasaLink {
         try {
             console.log('🔄 Loading maintenance data...');
             let requests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
+            // make sure priority/status fields are always present and lowercase
+            requests = requests.map(r => ({
+                ...r,
+                priority: (r.priority || 'medium').toString().toLowerCase(),
+                status: (r.status || 'open').toString().toLowerCase()
+            }));
+
             // ensure newest first by date before resolving
             requests = requests.sort((a, b) => {
                 const da = new Date(a.updatedAt || a.createdAt || 0);
@@ -8167,7 +8174,8 @@ class CasaLink {
         };
         
         const config = priorityConfig[priority] || priorityConfig.medium;
-        return `<span class="status-badge ${config.class}">${config.text}</span>`;
+        // add extra class to help differentiate badges used in maintenance tables
+        return `<span class="status-badge maintenance-badge ${config.class}">${config.text}</span>`;
     }
 
     getStatusBadge(status) {
@@ -8180,7 +8188,7 @@ class CasaLink {
         };
         
         const config = statusConfig[status] || statusConfig.open;
-        return `<span class="status-badge ${config.class}">${config.text}</span>`;
+        return `<span class="status-badge maintenance-badge ${config.class}">${config.text}</span>`;
     }
 
     setupMaintenanceEventListeners() {
@@ -9090,20 +9098,18 @@ class CasaLink {
     setupMaintenanceRowStyles() {
         const maintenanceRows = document.querySelectorAll('.maintenance-row');
         maintenanceRows.forEach(row => {
-            // Add hover effects
+            // Add hover indication, but avoid transforms/stacking contexts
             row.style.cursor = 'pointer';
-            row.style.transition = 'all 0.3s ease';
-            
+            row.style.transition = 'background-color 0.3s ease';
+            // allow badges to overflow without being clipped
+            row.style.overflow = 'visible';
+
             row.addEventListener('mouseenter', () => {
                 row.style.backgroundColor = 'rgba(22, 38, 96, 0.08)';
-                row.style.transform = 'translateY(-1px)';
-                row.style.boxShadow = '0 2px 8px rgba(22, 38, 96, 0.15)';
             });
-            
+
             row.addEventListener('mouseleave', () => {
                 row.style.backgroundColor = '';
-                row.style.transform = '';
-                row.style.boxShadow = '';
             });
         });
     }
@@ -9774,6 +9780,11 @@ class CasaLink {
     }
 
     renderMaintenanceTable(requests) {
+        // debug: verify that every request has priority and status (helps track
+        // down any cases where the values are undefined/empty causing blank
+        // cells).  This log will show up in console when the landlord page
+        // loads.
+        console.log('Rendering maintenance table, priorities/statuses:', requests.map(r => ({ id: r.id, priority: r.priority, status: r.status })));
         return `
             <div class="table-container">
                 <table class="tenants-table">
@@ -9818,11 +9829,11 @@ class CasaLink {
                                     <td>
                                         <span style="text-transform: capitalize;">${request.type.replace('_', ' ')}</span>
                                     </td>
-                                    <td>
-                                        ${this.getPriorityBadge(request.priority)}
+                                    <td style="white-space: nowrap;">
+                                        ${this.getPriorityBadge(request.priority || 'medium')}
                                     </td>
-                                    <td>
-                                        ${this.getStatusBadge(request.status)}
+                                    <td style="white-space: nowrap;">
+                                        ${this.getStatusBadge(request.status || 'open')}
                                         ${isOverdue ? '<br><small style="color: var(--danger);">Overdue</small>' : ''}
                                     </td>
                                     <td>
@@ -22735,8 +22746,8 @@ class CasaLink {
                                                     <strong>${request.type || 'N/A'}</strong>
                                                 </td>
                                                 <td>${request.title || request.description || 'No title'}</td>
-                                                <td>${priorityBadge}</td>
-                                                <td>${statusBadge}</td>
+                                                <td style="white-space: nowrap;">${priorityBadge}</td>
+                                                <td style="white-space: nowrap;">${statusBadge}</td>
                                                 <td>${createdDate}</td>
                                                 <td>
                                                     <button class="btn btn-sm btn-secondary" 

@@ -2765,14 +2765,44 @@ table tbody tr:hover {
     color: var(--dark-gray);
 }
 
+/* Maintenance table rows (landlord view) */
 .maintenance-row {
     transition: var(--transition);
+    /* make sure overflow is visible so badges never get clipped */
+    overflow: visible;
 }
 
 .maintenance-row:hover {
     background-color: rgba(22, 38, 96, 0.03);
+    /* remove transform/box-shadow that created a new stacking context and
+       caused overflowing badge elements to be painted behind neighbouring
+       cells; simple background change is enough for emphasis */
+    transform: none !important;
+    box-shadow: none !important;
 }
 
+/* ensure priority and status columns always give enough room for the
+   colored badges and do not collapse to zero width; also allow their
+   contents to overflow if necessary rather than being hidden */
+.maintenance-row td:nth-child(6),
+.maintenance-row td:nth-child(7) {
+    white-space: nowrap;
+    min-width: 110px;
+    overflow: visible;
+}
+
+/* ensure badges remain visible even if global table styles change */
+.maintenance-row td .status-badge,
+.maintenance-row td .priority-badge,
+.maintenance-row td .maintenance-badge {
+    display: inline-block !important;
+    color: inherit !important;      /* keep text legible */
+    opacity: 1 !important;
+    /* badges should participate in table layout rather than being
+       removed by `position:absolute` rules defined elsewhere (e.g. in
+       landlord/properties.css).  Override it so they sit inside cells. */
+    position: static !important;
+}
 .maintenance-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

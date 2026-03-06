@@ -678,44 +678,13 @@ class DataManager {
         }
     }
 
-    static async getMaintenanceRequests(landlordId, filters = {}) {
-        try {
-            let query = firebaseDb.collection('maintenance')
-                .where('landlordId', '==', landlordId)
-                // Order by updatedAt if available, fallback to createdAt
-                .orderBy('updatedAt', 'desc')
-                .orderBy('createdAt', 'desc');
+    // NOTE: this method was intentionally removed when the code was
+    // refactored.  The definitive implementation now appears later in the
+    // file (after line 2080) and includes the same normalization logic plus
+    // support for filters.  Keep the later version as the single source of
+    // truth; callers will always hit that one because JS uses the last
+    // definition when duplicate method names exist.
 
-            // Apply filters
-            if (filters.status) {
-                query = query.where('status', '==', filters.status);
-            }
-            if (filters.priority) {
-                query = query.where('priority', '==', filters.priority);
-            }
-            if (filters.type) {
-                query = query.where('type', '==', filters.type);
-            }
-
-            const snapshot = await query.get();
-            return snapshot.docs.map(doc => {
-                const raw = doc.data();
-                ['createdAt','updatedAt','completedDate','preferredDate','estimatedCompletion'].forEach(field => {
-                    if (raw[field] && typeof raw[field].toDate === 'function') {
-                        try {
-                            raw[field] = raw[field].toDate().toISOString();
-                        } catch (e) {
-                            console.warn('❗Could not normalize timestamp for', field, e);
-                        }
-                    }
-                });
-                return { id: doc.id, ...raw };
-            });
-        } catch (error) {
-            console.error('Error getting maintenance requests:', error);
-            return [];
-        }
-    }
 
     static async getMaintenanceRequest(requestId) {
         try {
@@ -2086,16 +2055,49 @@ class DataManager {
         }
     }
 
-    static async getMaintenanceRequests(landlordId) {
+    // older method was unintentionally duplicated later in the file.  We
+    // keep a single implementation (the one at the top of the file with
+    // support for filters and normalization) and ensure callers always get a
+    // priority/status value so the landlord table can render badges.  This
+    // helper simply forwards to the more feature‑rich version above (which is
+    // guaranteed to be defined first) by reusing the exact same logic.
+    static async getMaintenanceRequests(landlordId, filters = {}) {
         try {
-            const querySnapshot = await firebaseDb.collection('maintenance')
-                .where('landlordId', '==', landlordId)
-                .get();
-            
-            return querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            // build query with optional filters
+            let query = firebaseDb.collection('maintenance')
+                .where('landlordId', '==', landlordId);
+
+            if (filters.status) {
+                query = query.where('status', '==', filters.status);
+            }
+            if (filters.priority) {
+                query = query.where('priority', '==', filters.priority);
+            }
+            if (filters.type) {
+                query = query.where('type', '==', filters.type);
+            }
+
+            const snapshot = await query.get();
+            return snapshot.docs.map(doc => {
+                const raw = doc.data();
+                // make sure timestamp fields are converted to strings
+                ['createdAt','updatedAt','completedDate','preferredDate','estimatedCompletion'].forEach(field => {
+                    if (raw[field] && typeof raw[field].toDate === 'function') {
+                        try {
+                            raw[field] = raw[field].toDate().toISOString();
+                        } catch (e) {
+                            console.warn('❗Could not normalize timestamp for', field, e);
+                        }
+                    }
+                });
+
+                // ensure priority/status exist and are normalized
+                const normalized = {
+                    priority: (raw.priority || 'medium').toString().toLowerCase(),
+                    status: (raw.status || 'open').toString().toLowerCase(),
+                };
+                return { id: doc.id, ...raw, ...normalized };
+            });
         } catch (error) {
             console.error('Error getting maintenance requests:', error);
             return [];

@@ -37,6 +37,7 @@ class MaintenanceController {
     async loadRequests() {
         try {
             this.allRequests = await this.service.getMaintenanceRequests();
+            console.log('MaintenanceController loaded requests', this.allRequests.map(r => ({ id: r.id, priority: r.priority, status: r.status })));
             this.displayFilteredRequests();
         } catch (error) {
             throw new Error(`Failed to load requests: ${error.message}`);
@@ -95,6 +96,9 @@ class MaintenanceController {
         if (this.statusFilter) {
             filtered = filtered.filter(req => req.status === this.statusFilter);
         }
+
+        // debug: show what will be rendered so we can verify priority/status values
+        console.log('MaintenanceController filtered requests', filtered.map(r => ({ id: r.id, priority: r.priority, status: r.status })));
 
         window.displayMaintenanceRequests(filtered);
     }
