@@ -242,9 +242,19 @@
         </div>
 
         <div id="propertiesGrid" class="properties-grid">
-            <div class="empty-state">
-                <h2>No properties yet</h2>
-                <p>Click "Add Property" to get started</p>
+            <div class="empty-state" style="grid-column: 1 / -1;">
+                <div style="padding: 60px 40px; text-align: center; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); border-radius: 12px; min-height: 400px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                    <div style="margin-bottom: 30px;">
+                        <i class="fas fa-building" style="font-size: 4rem; color: #1A73E8; opacity: 0.7;"></i>
+                    </div>
+                    <h3 style="color: var(--royal-blue); margin-bottom: 15px; font-weight: 600;">No Apartments Yet</h3>
+                    <p style="color: var(--gray-700); font-size: 1rem; margin-bottom: 25px; max-width: 500px;">
+                        You don't have any apartments added yet. Start by creating your first property to manage units and tenants.
+                    </p>
+                    <button class="btn btn-primary" style="padding: 12px 30px; font-weight: 600;" onclick="casaLink.showAddPropertyForm()">
+                        <i class="fas fa-plus" style="margin-right: 8px;"></i> Add Your First Property
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -296,8 +306,18 @@
             if (!properties || properties.length === 0) {
                 grid.innerHTML = `
                     <div class="empty-state" style="grid-column: 1 / -1;">
-                        <h2>No properties found</h2>
-                        <p>Click "Add Property" to get started</p>
+                        <div style="padding: 60px 40px; text-align: center; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); border-radius: 12px; min-height: 400px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                            <div style="margin-bottom: 30px;">
+                                <i class="fas fa-building" style="font-size: 4rem; color: #1A73E8; opacity: 0.7;"></i>
+                            </div>
+                            <h3 style="color: var(--royal-blue); margin-bottom: 15px; font-weight: 600;">No Apartments Yet</h3>
+                            <p style="color: var(--gray-700); font-size: 1rem; margin-bottom: 25px; max-width: 500px;">
+                                You don't have any apartments added yet. Start by creating your first property to manage units and tenants.
+                            </p>
+                            <button class="btn btn-primary" style="padding: 12px 30px; font-weight: 600;" onclick="casaLink.showAddPropertyForm()">
+                                <i class="fas fa-plus" style="margin-right: 8px;"></i> Add Your First Property
+                            </button>
+                        </div>
                     </div>
                 `;
                 return;
@@ -346,7 +366,7 @@
                     e.stopPropagation();
                     console.log('list.html edit button clicked', propertyId);
                     if (window.propertiesController) {
-                        window.propertiesController.openEditPropertyModal(propertyId);
+                        window.propertiesController.editProperty(propertyId);
                     }
                 });
 

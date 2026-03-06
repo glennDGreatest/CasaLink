@@ -2291,17 +2291,14 @@ class CasaLink {
                             if (doc.exists) fetched = { id: doc.id, ...doc.data() };
                         }
                         if (!fetched && activityData && activityData.propertyId) {
-                            const doc = await firebaseDb.collection('properties').doc(activityData.propertyId).get();
+                            // propertyId field may still be used inside activity but collection is apartments
+                            const doc = await firebaseDb.collection('apartments').doc(activityData.propertyId).get();
                             if (doc.exists) fetched = { id: doc.id, ...doc.data() };
                         }
-                        // If no activityData fetched, try entityId against apartments then properties
+                        // If no activityData fetched, try entityId against apartments (ignore old properties collection)
                         if (!fetched && entityId) {
-                            let doc = await firebaseDb.collection('apartments').doc(entityId).get();
+                            const doc = await firebaseDb.collection('apartments').doc(entityId).get();
                             if (doc.exists) fetched = { id: doc.id, ...doc.data() };
-                            else {
-                                doc = await firebaseDb.collection('properties').doc(entityId).get();
-                                if (doc.exists) fetched = { id: doc.id, ...doc.data() };
-                            }
                         }
                     } catch (err) {
                         console.warn('⚠️ Error fetching property/apartment document for activity:', err);
@@ -2416,6 +2413,18 @@ class CasaLink {
     async setupDashboardEvents() {
         console.log('🔄 Setting up dashboard events with fresh data...');
 
+        // Reset layout caching state whenever the dashboard DOM is newly injected.  When
+        // the user navigates away and then returns the container element is recreated,
+        // so any previously-rendered layout is no longer present.  The flags are used to
+        // prevent redundant network calls while staying on the dashboard, but they must be
+        // cleared when the page is reloaded.
+        if (this.currentRole === 'landlord') {
+            this._layoutAlreadyLoaded = false;
+            this._lastLoadedLayoutApartmentId = null;
+            this._lastLoadedLayoutApartmentAddress = null;
+            console.log('ℹ️ Cleared cached layout state for new dashboard load');
+        }
+
         // tenant users don't have apartments, so bypass landlord-only logic
         if (this.currentRole === 'tenant') {
             console.log('👤 Tenant detected - skipping apartment selector and loading stats directly');
@@ -2515,11 +2524,16 @@ class CasaLink {
                     optionsHTML = '<option value="">Select an Apartment To view</option>';
                 }
                 
-                const apartmentOptions = apartments.map((apt, index) => `
-                    <option value="${apt.id}" data-address="${apt.apartmentAddress || ''}" data-rooms="${apt.numberOfRooms || 0}">
-                        ${apt.apartmentAddress || 'Apartment'} (${apt.numberOfRooms || 0} units)
+                const apartmentOptions = apartments.map((apt, index) => {
+                    // some documents use apartmentName/name/address interchangeably
+                    const displayName = apt.apartmentName || apt.name || apt.apartmentAddress || 'Apartment';
+                    const roomCount = apt.totalUnits || apt.numberOfRooms || apt.numberOfUnits || 0;
+                    return `
+                    <option value="${apt.id}" data-name="${displayName}" data-address="${apt.apartmentAddress || ''}" data-rooms="${roomCount}">
+                        ${displayName} (${roomCount} units)
                     </option>
-                `).join('');
+                `;
+                }).join('');
                 
                 optionsHTML += apartmentOptions;
                 selector.innerHTML = optionsHTML;
@@ -2533,12 +2547,14 @@ class CasaLink {
                     selector.value = apartments[0].id;
                     this.currentApartmentId = apartments[0].id;
                     this.currentApartmentAddress = apartments[0].apartmentAddress || null;
-                    console.log('✅ Single apartment auto-selected:', apartments[0].apartmentAddress);
+                    this.currentApartmentName = apartments[0].apartmentName || apartments[0].name || apartments[0].apartmentAddress || null;
+                    console.log('✅ Single apartment auto-selected:', this.currentApartmentName);
                 } else {
                     // Multiple apartments: don't select by default
                     selector.value = '';
                     this.currentApartmentId = null;
                     this.currentApartmentAddress = null;
+                    this.currentApartmentName = null;
                     console.log('ℹ️ Multiple apartments available - waiting for user selection');
                 }
                 
@@ -2550,6 +2566,7 @@ class CasaLink {
                         // User cleared selection
                         this.currentApartmentId = null;
                         this.currentApartmentAddress = null;
+                        this.currentApartmentName = null;
                         this.shouldAutoLoadUnitLayout = false;
                         // also forget the layout so it can load again when user picks an apartment
                         this._layoutAlreadyLoaded = false;
@@ -2570,8 +2587,11 @@ class CasaLink {
                     if (selectedApartment) {
                         this.currentApartmentId = selectedApartment.id;
                         this.currentApartmentAddress = selectedApartment.apartmentAddress || null;
+                        this.currentApartmentName = selectedApartment.apartmentName || selectedApartment.name || selectedApartment.apartmentAddress || null;
                         this.shouldAutoLoadUnitLayout = true; // User manually selected, load it
-                        console.log('🔄 Switched to apartment:', selectedApartment.apartmentAddress);
+                        // Clear cached layout so we always refresh when apartment changes
+                        this._layoutAlreadyLoaded = false;
+                        console.log('🔄 Switched to apartment:', this.currentApartmentName);
 
                         // Reload unit layout and stats for selected apartment
                         // IMPORTANT: Await both to ensure they complete and prevent race conditions with Firestore listeners
@@ -2617,11 +2637,13 @@ class CasaLink {
                     selector.value = addresses[0];
                     this.currentApartmentId = null;
                     this.currentApartmentAddress = addresses[0];
+                    this.currentApartmentName = addresses[0];
                     console.log('✅ Single apartment auto-selected (derived):', addresses[0]);
                 } else {
                     selector.value = '';
                     this.currentApartmentId = null;
                     this.currentApartmentAddress = null;
+                    this.currentApartmentName = null;
                     console.log('ℹ️ Multiple apartments available (derived) - waiting for user selection');
                 }
                 
@@ -2650,6 +2672,7 @@ class CasaLink {
                     
                     this.currentApartmentId = null;
                     this.currentApartmentAddress = e.target.value || null;
+                    this.currentApartmentName = this.currentApartmentAddress;
                     this.shouldAutoLoadUnitLayout = true; // User manually selected, load it
                     console.log('🔄 Switched to apartment (derived):', this.currentApartmentAddress);
                     await this.loadAndDisplayUnitLayoutInDashboard();
@@ -2990,11 +3013,21 @@ class CasaLink {
                 }
                 ModalManager.closeModal(modal);
 
+                // Immediately refresh landlord properties section if it's active
+                try {
+                    if (window.propertiesController && typeof window.propertiesController.loadProperties === 'function') {
+                        window.propertiesController.loadProperties().catch(err => console.warn('Error auto-refreshing properties after add:', err));
+                    }
+                } catch (err) {
+                    console.warn('Error invoking propertiesController refresh:', err);
+                }
+
                 // dispatch event so other components (eg. property management page) can refresh
                 try {
                     document.dispatchEvent(new CustomEvent('propertyAdded', {
                         detail: {
                             apartmentId: result.apartmentId,
+                            apartment: result.apartmentData || null,
                             address: data.address,
                             roomsCreated: result.roomsCreated
                         }
@@ -3390,17 +3423,60 @@ class CasaLink {
             const enrichedUnits = this.enrichUnitsWithTenantData(units, tenants, leases);
 
             // Filter by selected apartment (REQUIRED - only show rooms from the selected apartment)
-            let displayUnits = [];
+            // We used to run id-filter then fall back to address-only. when there
+            // are multiple apartments with identical room numbers the fallback
+            // could accidentally bring in units from other buildings if the
+            // apartmentId was missing or the propertyId/rentalPropertyId matched.
+            //
+            // To be more robust we now apply BOTH filters when possible: first
+            // start with the full set and narrow it by id *and* address. This
+            // guarantees that even if two apartments share a property identifier
+            // or a room document is missing a field we won't mix them together.
+            let displayUnits = enrichedUnits.slice(); // start with copy
+
+            const filterById = id => displayUnits.filter(u =>
+                u.apartmentId === id ||
+                u.propertyId === id ||
+                u.rentalPropertyId === id
+            );
+            const filterByAddress = addr => displayUnits.filter(u =>
+                u.apartmentAddress === addr ||
+                u.rentalAddress === addr
+            );
+
+            // apply id filter if we have one
             if (this.currentApartmentId) {
                 console.log(`🏢 Filtering units by apartment ID: ${this.currentApartmentId}`);
-                displayUnits = enrichedUnits.filter(u => u.apartmentId === this.currentApartmentId);
-            } else if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering units by apartment address: ${this.currentApartmentAddress}`);
-                displayUnits = enrichedUnits.filter(u => u.apartmentAddress === this.currentApartmentAddress);
+                displayUnits = filterById(this.currentApartmentId);
+            }
+
+            // additionally constrain by address if available; this makes the
+            // selection deterministic and protects against stale/incorrect ids
+            if (this.currentApartmentAddress) {
+                console.log(`🏢 Further filtering units by apartment address: ${this.currentApartmentAddress}`);
+                displayUnits = displayUnits.length > 0
+                    ? displayUnits.filter(u =>
+                        u.apartmentAddress === this.currentApartmentAddress ||
+                        u.rentalAddress === this.currentApartmentAddress
+                    )
+                    : filterByAddress(this.currentApartmentAddress);
+            }
+
+            // diagnostics: warn if our final set still looks like the entire
+            // loaded buffer, which usually indicates a problem with the
+            // apartment identifiers stored on rooms.
+            if (displayUnits.length === enrichedUnits.length && enrichedUnits.length > 0) {
+                console.warn('⚠️ Filter produced all units! possible missing/incorrect apartmentId or address on rooms');
+            }
+
+            // diagnostic: if still nothing or if we accidentally got everything, log for debugging
+            if (displayUnits.length === 0) {
+                console.log('ℹ️ No units found for selected apartment after filtering');
+            } else if (displayUnits.length === enrichedUnits.length) {
+                console.warn('⚠️ Filter produced all units! possible missing apartmentId/propertyId on rooms');
             }
 
             if (!displayUnits || displayUnits.length === 0) {
-                console.log('ℹ️ No units found for selected apartment');
                 container.innerHTML = `
                     <div style="padding: 40px; text-align: center;">
                         <i class="fas fa-inbox" style="font-size: 2rem; color: var(--gray-400); margin-bottom: 20px;"></i>
@@ -3501,12 +3577,32 @@ class CasaLink {
                 DataManager.getLandlordLeases(landlordId)
             ]);
 
-            // Filter by selected apartment (support apartmentId/propertyId/rentalPropertyId and address aliases)
-            let filteredUnits = units;
+            // Filter by selected apartment (require both id and address when
+            // possible).  this avoids showing rooms from another building that
+            // happen to share the same roomNumber when the id alone is
+            // ambiguous or missing.
+            let filteredUnits = units.slice();
             if (this.currentApartmentId) {
-                filteredUnits = units.filter(u => u.apartmentId === this.currentApartmentId || u.propertyId === this.currentApartmentId || u.rentalPropertyId === this.currentApartmentId);
-            } else if (this.currentApartmentAddress) {
-                filteredUnits = units.filter(u => u.apartmentAddress === this.currentApartmentAddress || u.rentalAddress === this.currentApartmentAddress);
+                filteredUnits = filteredUnits.filter(u =>
+                    u.apartmentId === this.currentApartmentId ||
+                    u.propertyId === this.currentApartmentId ||
+                    u.rentalPropertyId === this.currentApartmentId
+                );
+            }
+            if (this.currentApartmentAddress) {
+                filteredUnits = filteredUnits.length > 0
+                    ? filteredUnits.filter(u =>
+                        u.apartmentAddress === this.currentApartmentAddress ||
+                        u.rentalAddress === this.currentApartmentAddress
+                    )
+                    : units.filter(u =>
+                        u.apartmentAddress === this.currentApartmentAddress ||
+                        u.rentalAddress === this.currentApartmentAddress
+                    );
+            }
+            // log diagnostic if the result still equals the full set
+            if (filteredUnits.length === units.length && units.length > 0) {
+                console.warn('⚠️ Apartment units modal filter returned all units - check room documents for missing identifiers');
             }
 
             if (!filteredUnits || filteredUnits.length === 0) {
@@ -3912,17 +4008,32 @@ class CasaLink {
                     // Only update if container is still in the DOM
                     if (container && document.body.contains(container)) {
                         try {
-                            // FILTER units by selected apartment FIRST
-                            let filteredUnits = updatedUnits;
+                            // FILTER units by selected apartment FIRST.  the previous
+                            // implementation only checked the address which meant
+                            // two buildings with identical room numbers could leak
+                            // into each other if the address field was wrong.  we
+                            // now enforce both id/address when available.
+                            let filteredUnits = updatedUnits.slice();
+
+                            if (this.currentApartmentId) {
+                                console.log(`🏢 Real-time filtering by apartment ID: ${this.currentApartmentId}`);
+                                filteredUnits = filteredUnits.filter(u =>
+                                    u.apartmentId === this.currentApartmentId ||
+                                    u.propertyId === this.currentApartmentId ||
+                                    u.rentalPropertyId === this.currentApartmentId
+                                );
+                            }
                             if (this.currentApartmentAddress) {
-                                console.log(`🏢 Filtering real-time units by apartment: ${this.currentApartmentAddress}`);
-                                filteredUnits = updatedUnits.filter(u => u.apartmentAddress === this.currentApartmentAddress);
-                            } else if (this.currentApartmentId && this.apartmentsList && Array.isArray(this.apartmentsList)) {
-                                const apt = this.apartmentsList.find(a => a.id === this.currentApartmentId);
-                                if (apt && apt.apartmentAddress) {
-                                    console.log(`🏢 Filtering real-time units by apartment ID: ${apt.apartmentAddress}`);
-                                    filteredUnits = updatedUnits.filter(u => u.apartmentAddress === apt.apartmentAddress);
-                                }
+                                console.log(`🏢 Real-time further filtering by address: ${this.currentApartmentAddress}`);
+                                filteredUnits = filteredUnits.length > 0
+                                    ? filteredUnits.filter(u =>
+                                        u.apartmentAddress === this.currentApartmentAddress ||
+                                        u.rentalAddress === this.currentApartmentAddress
+                                    )
+                                    : updatedUnits.filter(u =>
+                                        u.apartmentAddress === this.currentApartmentAddress ||
+                                        u.rentalAddress === this.currentApartmentAddress
+                                    );
                             }
                             
                             // Fetch fresh tenant and lease data to enrich the filtered units
@@ -9981,9 +10092,9 @@ class CasaLink {
                     <p style="color: #64748b; font-size: 13px; margin: 0 0 18px 0; line-height: 1.6;">Quick overview of your property portfolio's operational performance and key performance indicators. This summary provides at-a-glance metrics to understand the current state of your real estate investments.</p>
                     
                     <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 0;">
-                        <!-- Total Properties Card -->
+                        <!-- Total Apartments Card -->
                         <div style="background: linear-gradient(135deg, #f0f7ff 0%, #e0f2fe 100%); padding: 20px; border-radius: 8px; border: 1px solid #bfdbfe; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-                            <p style="margin: 0; font-size: 11px; color: #475569; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Total Properties</p>
+                            <p style="margin: 0; font-size: 11px; color: #475569; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Total Apartments</p>
                             <p style="margin: 8px 0 0 0; font-size: 28px; font-weight: 900; color: #1e3a8a;">${apartments.length}</p>
                             <p style="margin: 5px 0 0 0; font-size: 12px; color: #64748b; font-weight: 500;">Apartment Locations</p>
                         </div>
@@ -10072,7 +10183,7 @@ class CasaLink {
                             <h4 style="color: #1e3a8a; margin: 0 0 15px 0; font-size: 1rem;">Key Metrics</h4>
                             <div style="display: flex; flex-direction: column; gap: 10px;">
                                 <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e2e8f0;">
-                                    <span style="color: #64748b;">Total Properties:</span>
+                                    <span style="color: #64748b;">Total Apartments:</span>
                                     <span style="font-weight: 700;">${apartments.length}</span>
                                 </div>
                                 <div style="display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e2e8f0;">
@@ -18447,8 +18558,8 @@ class CasaLink {
         // fallback if neither cache nor element is available
         return `
             <div class="page-content">
-                <h1>Property Management</h1>
-                <p>Properties feature is loading...</p>
+                <h1>Apartment Management</h1>
+                <p>Apartment feature is loading...</p>
             </div>
         `;
     }

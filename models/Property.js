@@ -7,7 +7,9 @@ class Property {
     this.id = data.id || null;
     this.landlordId = data.landlordId || data.ownerID || '';
     // Handle both standard and apartments collection field names
+    // keep both name and apartmentName for backwards compatibility
     this.name = data.name || data.apartmentName || '';
+    this.apartmentName = data.apartmentName || data.name || '';
     this.address = data.address || data.apartmentAddress || '';
     this.city = data.city || '';
     this.state = data.state || '';
@@ -15,6 +17,8 @@ class Property {
     this.country = data.country || '';
     this.propertyType = data.propertyType || 'apartment';
     this.totalUnits = data.totalUnits || data.numberOfRooms || 0;
+    // preserve legacy field for components that still reference it
+    this.numberOfRooms = data.numberOfRooms != null ? data.numberOfRooms : this.totalUnits;
     this.numberOfFloors = data.numberOfFloors || 0;
     this.bedrooms = data.bedrooms || 0;
     this.bathrooms = data.bathrooms || 0;

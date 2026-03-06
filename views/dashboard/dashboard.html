@@ -219,8 +219,19 @@
                     <a href="#properties" class="btn-small">View All</a>
                 </div>
                 <div id="propertiesList">
-                    <div class="empty-state">
-                        <p>No properties yet</p>
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <div style="padding: 60px 40px; text-align: center; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); border-radius: 12px; min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                            <div style="margin-bottom: 20px;">
+                                <i class="fas fa-building" style="font-size: 3rem; color: #1A73E8; opacity: 0.7;"></i>
+                            </div>
+                            <h3 style="color: var(--royal-blue); margin-bottom: 10px; font-weight: 600;">No Apartments Yet</h3>
+                            <p style="color: var(--gray-700); font-size: 1rem; margin-bottom: 15px; max-width: 500px;">
+                                You don't have any apartments added yet. Start by creating your first property to manage units and tenants.
+                            </p>
+                            <button class="btn btn-primary" style="padding: 8px 20px; font-weight: 600;" onclick="casaLink.showAddPropertyForm()">
+                                <i class="fas fa-plus" style="margin-right: 6px;"></i> Add Your First Property
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <div class="loading" id="propertiesLoading">Loading...</div>
@@ -349,7 +360,22 @@
             }
 
             if (!properties || properties.length === 0) {
-                container.innerHTML = '<div class="empty-state"><p>No properties yet</p></div>';
+                container.innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <div style="padding: 60px 40px; text-align: center; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); border-radius: 12px; min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                            <div style="margin-bottom: 20px;">
+                                <i class="fas fa-building" style="font-size: 3rem; color: #1A73E8; opacity: 0.7;"></i>
+                            </div>
+                            <h3 style="color: var(--royal-blue); margin-bottom: 10px; font-weight: 600;">No Apartments Yet</h3>
+                            <p style="color: var(--gray-700); font-size: 1rem; margin-bottom: 15px; max-width: 500px;">
+                                You don't have any apartments added yet. Start by creating your first property to manage units and tenants.
+                            </p>
+                            <button class="btn btn-primary" style="padding: 8px 20px; font-weight: 600;" onclick="casaLink.showAddPropertyForm()">
+                                <i class="fas fa-plus" style="margin-right: 6px;"></i> Add Your First Property
+                            </button>
+                        </div>
+                    </div>
+                `;
                 return;
             }
 
@@ -475,5 +501,281 @@
             dateEl.textContent = today;
         }
     </script>
+
+    <!-- Include shared property details modal (copied from index.html) -->
+    <!-- Property Details Modal -->
+    <div id="propertyDetailsModal" class="modal-overlay" style="display: none;">
+        <div class="modal-content modal-large property-details-modal">
+            <div class="modal-header property-details-header">
+                <div class="property-header-info">
+                    <h3 id="propertyDetailsName">Property Name</h3>
+                    <p id="propertyDetailsAddress" class="property-details-address">Address</p>
+                </div>
+                <button class="modal-close" id="propertyDetailsClose" onclick="if(window.propertiesController) window.propertiesController.closePropertyDetailsModal();">&times;</button>
+            </div>
+            <div class="modal-body property-details-body">
+                <div id="propertyDetailsLoading" class="property-details-loading">
+                    <i class="fas fa-spinner fa-spin"></i> Loading property details...
+                </div>
+
+                <div id="propertyDetailsContent" style="display: none;">
+                    <div id="propertyDetailsError" class="error-box" style="display: none; margin:1rem; text-align:center;">
+                        <p id="propertyDetailsErrorMsg"></p>
+                        <button class="btn btn-secondary" id="propertyDetailsRetryBtn">Retry</button>
+                    </div>
+                    <!-- EDIT AREA (hidden by default) -->
+                    <form id="propertyDetailsEditForm" class="property-form" style="display: none;">
+                        <div class="form-section">
+                            <h4>Edit Property</h4>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Property Name <span class="required">*</span></label>
+                                    <input type="text" id="detailsEditName" class="form-input" required>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Property Type <span class="required">*</span></label>
+                                    <select id="detailsEditType" class="form-input" required>
+                                        <option value="">Select Type</option>
+                                        <option value="apartment">Apartment</option>
+                                        <option value="house">House</option>
+                                        <option value="condo">Condo</option>
+                                        <option value="commercial">Commercial</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Status</label>
+                                    <select id="detailsEditStatus" class="form-input">
+                                        <option value="active">Active</option>
+                                        <option value="inactive">Inactive</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Year Built</label>
+                                    <input type="number" id="detailsEditYearBuilt" class="form-input" min="1800" max="2100">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Square Footage</label>
+                                    <input type="number" id="detailsEditSqft" class="form-input" min="0">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Stories</label>
+                                    <input type="number" id="detailsEditStories" class="form-input" min="0">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label class="form-label">Lot Size</label>
+                                    <input type="text" id="detailsEditLotSize" class="form-input" placeholder="e.g. 0.5 acre">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Parking Spaces</label>
+                                    <input type="number" id="detailsEditParkingSpaces" class="form-input" min="0">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label">Parking Type</label>
+                                    <select id="detailsEditParkingType" class="form-input">
+                                        <option value="">Select</option>
+                                        <option value="garage">Garage</option>
+                                        <option value="carport">Carport</option>
+                                        <option value="street">Street</option>
+                                        <option value="open">Open</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="form-section">
+                            <h4>Description</h4>
+                            <textarea id="detailsEditDescription" class="form-input form-textarea" rows="3"></textarea>
+                        </div>
+
+                        <div class="form-section">
+                            <h4>Amenities</h4>
+                            <div id="detailsAmenitiesEdit" class="amenities-grid">
+                                <!-- checkboxes will be generated dynamically -->
+                            </div>
+                            <div class="form-row" style="margin-top:0.5rem;">
+                                <input type="text" id="detailsCustomAmenity" class="form-input" placeholder="Add custom amenity">
+                                <button type="button" class="btn btn-sm btn-secondary" id="addDetailsAmenityBtn">Add</button>
+                            </div>
+                        </div>
+
+                        <div class="form-section">
+                            <h4>Documents</h4>
+                            <div id="detailsDocsList" class="documents-list"></div>
+                            <input type="file" id="detailsDocsUpload" multiple>
+                        </div>
+
+                        <div class="form-actions">
+                            <button type="button" class="btn btn-secondary" id="propertyDetailsCancelEdit">Cancel</button>
+                            <button type="submit" class="btn btn-primary" id="propertyDetailsSaveBtn">Save Property</button>
+                        </div>
+                    </form>
+
+                    <!-- VIEW AREA -->
+                    <div id="propertyDetailsViewArea">
+                    <!-- Key Metrics Section -->
+                    <div class="property-metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-building"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Total Units</div>
+                                <div class="metric-value" id="detailsMetricUnits">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-user-check"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Occupancy Rate</div>
+                                <div class="metric-value" id="detailsMetricOccupancy">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-dollar-sign"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Monthly Revenue</div>
+                                <div class="metric-value" id="detailsMetricRevenue">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-exclamation-circle"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Open Maintenance</div>
+                                <div class="metric-value" id="detailsMetricMaintenance">-</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Property Details Grid -->
+                    <div class="property-info-grid">
+                        <!-- original schema had a lot of fields we no longer collect,
+                             only show rows that can be populated from Firestore or hide them below -->
+                        <div class="info-group" id="groupPropertyType">
+                            <label>Property Type</label>
+                            <span id="detailsPropertyType">-</span>
+                        </div>
+                        <div class="info-group" id="groupPropertyStatus">
+                            <label>Status</label>
+                            <span id="detailsPropertyStatus" class="status-badge">-</span>
+                        </div>
+                        <div class="info-group" id="groupPropertyStories">
+                            <label>Stories</label>
+                            <span id="detailsPropertyStories">-</span>
+                        </div>
+                        <!-- the following metadata rows are added for auditing -->
+                        <div class="info-group" id="groupPropertyCreated">
+                            <label>Created</label>
+                            <span id="detailsPropertyCreated">-</span>
+                        </div>
+                        <div class="info-group" id="groupPropertyUpdated">
+                            <label>Last Updated</label>
+                            <span id="detailsPropertyUpdated">-</span>
+                        </div>
+                    </div>
+
+                    <!-- Tabs Navigation -->
+                    <div class="property-tabs">
+                        <button class="tab-button active" data-tab="overview">
+                            <i class="fas fa-info-circle"></i> Overview
+                        </button>
+                        <button class="tab-button" data-tab="units">
+                            <i class="fas fa-door-open"></i> Units
+                        </button>
+                        <button class="tab-button" data-tab="maintenance">
+                            <i class="fas fa-wrench"></i> Maintenance
+                        </button>
+                        <button class="tab-button" data-tab="tenants">
+                            <i class="fas fa-users"></i> Tenants
+                        </button>
+                        <button class="tab-button" data-tab="activity">
+                            <i class="fas fa-history"></i> Activity
+                        </button>
+                    </div>
+
+                    <!-- Tab Content -->
+                    <div class="property-tab-content">
+                        <!-- Overview Tab -->
+                        <div id="tab-overview" class="tab-pane active">
+                            <div class="section-content">
+                                <h4>Property Details</h4>
+                                <div class="details-section">
+                                    <div class="detail-row">
+                                        <span class="detail-label">Address:</span>
+                                        <span id="detailsFullAddress">-</span>
+                                    </div>
+                                    <div class="detail-row">
+                                        <span class="detail-label">Description:</span>
+                                        <span id="detailsDescription" style="font-style: italic; color: #6b7280;">No description</span>
+                                    </div>
+                                </div>
+
+                                <h4 style="margin-top: 1.5rem;">Amenities</h4>
+                                <div id="detailsAmenities" class="amenities-list">
+                                    <span style="color: #9ca3af;">None listed</span>
+                                </div>
+
+                                <h4 style="margin-top: 1.5rem;">Documents</h4>
+                                <div id="detailsDocuments" class="documents-list">
+                                    <span style="color: #9ca3af;">No documents</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Units Tab -->
+                        <div id="tab-units" class="tab-pane" style="display: none;">
+                            <div class="section-content">
+                                <h4>Property Units</h4>
+                                <div id="unitsList" class="units-list">
+                                    <p style="text-align: center; color: #9ca3af;">Loading units...</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Maintenance Tab -->
+                        <div id="tab-maintenance" class="tab-pane" style="display: none;">
+                            <div class="section-content">
+                                <h4>Maintenance Requests (Last 5)</h4>
+                                <div id="maintenanceList" class="maintenance-list">
+                                    <p style="text-align: center; color: #9ca3af;">Loading maintenance requests...</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tenants Tab -->
+                        <div id="tab-tenants" class="tab-pane" style="display: none;">
+                            <div class="section-content">
+                                <h4>Current Tenants</h4>
+                                <div id="tenantsList" class="tenants-list">
+                                    <p style="text-align: center; color: #9ca3af;">Loading tenants...</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Activity Tab -->
+                        <div id="tab-activity" class="tab-pane" style="display: none;">
+                            <div class="section-content">
+                                <h4>Recent Activity</h4>
+                                <div id="activityList" class="activity-list">
+                                    <p style="text-align: center; color: #9ca3af;">Loading activity...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- end view area -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer property-details-footer">
+                <button class="btn btn-secondary" onclick="if(window.propertiesController) window.propertiesController.closePropertyDetailsModal();">Close</button>
+                <button class="btn btn-primary" onclick="if(window.propertiesController && typeof window.propertiesController.editPropertyFromDetails==='function') window.propertiesController.editPropertyFromDetails();">
+                    <i class="fas fa-edit"></i> Edit Property
+                </button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

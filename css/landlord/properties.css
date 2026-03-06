@@ -455,6 +455,37 @@
     gap: 1rem;
 }
 
+/* Additional elements for details modal */
+.documents-list a {
+    display: inline-block;
+    margin-right: 0.75rem;
+    color: #2563eb;
+    text-decoration: none;
+}
+.documents-list span {
+    color: #9ca3af;
+}
+
+.error-box {
+    background-color: #fee2e2;
+    color: #991b1b;
+    padding: 1rem;
+    border: 1px solid #fca5a5;
+    border-radius: 4px;
+}
+
+.unit-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+}
+.unit-summary div {
+    flex: 1 1 auto;
+}
+
 .unit-item,
 .maintenance-item,
 .tenant-item,

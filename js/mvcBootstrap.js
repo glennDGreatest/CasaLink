@@ -39,6 +39,8 @@
         'controllers/AuthController.js',
         'controllers/DashboardController.js',
         'controllers/PropertiesController.js',
+        // landlord-specific controller overrides the generic version when present
+        'js/landlord/PropertiesController.js',
         'controllers/TenantsController.js',
         'controllers/BillingController.js',
         'controllers/MaintenanceController.js'
@@ -136,9 +138,18 @@
                     window.dashboardController = new DashboardController(window.dataService);
                     console.log('✅ DashboardController instantiated');
                 }
-                if (typeof PropertiesController !== 'undefined' && !window.propertiesController) {
+                if (typeof PropertiesController !== 'undefined') {
+                    // always instantiate after all scripts have loaded; the constructor
+                    // may point to either the generic or landlord subclass depending on
+                    // which script was loaded last.  This ensures the correct object is
+                    // placed in the global namespace.
                     window.propertiesController = new PropertiesController(window.dataService);
-                    console.log('✅ PropertiesController instantiated');
+                    console.log('✅ PropertiesController instantiated (', PropertiesController.name, ')');
+                }
+                // sanity check: editProperty should exist, otherwise recreate
+                if (window.propertiesController && typeof window.propertiesController.editProperty !== 'function') {
+                    console.warn('propertiesController exists but lacks editProperty – recreating instance');
+                    window.propertiesController = new PropertiesController(window.dataService);
                 }
                 if (typeof TenantsController !== 'undefined' && !window.tenantsController) {
                     window.tenantsController = new TenantsController(window.dataService);
@@ -294,9 +305,20 @@
                     if (!container) return;
 
                     if (!properties || properties.length === 0) {
-                        // Hide empty state here - it's handled by the controller
+                        // show empty state element if present (covers generic controller case)
+                        const emptyEl = document.getElementById('propertiesEmpty');
+                        if (emptyEl) {
+                            emptyEl.style.display = 'flex';
+                        }
+                        // clear container, don't render anything
                         container.innerHTML = '';
                         return;
+                    } else {
+                        // when rendering actual properties, hide the empty placeholder
+                        const emptyEl = document.getElementById('propertiesEmpty');
+                        if (emptyEl) {
+                            emptyEl.style.display = 'none';
+                        }
                     }
 
                     // Render properties as cards
@@ -343,10 +365,10 @@
                                         </div>
                                     </div>
                                     <div class="property-actions">
-                                        <button class="btn btn-sm btn-primary" onclick="if(window.propertiesController) window.propertiesController.viewProperty('${prop.id}')">
+                                        <button class="btn btn-sm btn-primary" onclick="if(window.propertiesController && typeof window.propertiesController.viewProperty === 'function') window.propertiesController.viewProperty('${prop.id}')">
                                             <i class="fas fa-eye"></i> View
                                         </button>
-                                        <button class="btn btn-sm btn-secondary" onclick="if(window.propertiesController) window.propertiesController.editProperty('${prop.id}')">
+                                        <button class="btn btn-sm btn-secondary" onclick="if(window.propertiesController && typeof window.propertiesController.editProperty === 'function') window.propertiesController.editProperty('${prop.id}')">
                                             <i class="fas fa-edit"></i> Edit
                                         </button>
                                     </div>
@@ -391,8 +413,18 @@
                         card.querySelector('.btn-secondary')?.addEventListener('click', (e) => {
                             e.stopPropagation();
                             console.log('dashboard edit button clicked', propId);
-                            if (window.propertiesController) {
+                            if (window.propertiesController && typeof window.propertiesController.editProperty === 'function') {
                                 window.propertiesController.editProperty(propId);
+                            } else {
+                                console.warn('attempted edit but editProperty not available', window.propertiesController);
+                                // try recreating controller quickly then retry once
+                                if (typeof PropertiesController !== 'undefined' && window.dataService) {
+                                    window.propertiesController = new PropertiesController(window.dataService);
+                                    console.log('Reinstantiated propertiesController after missing method');
+                                    if (typeof window.propertiesController.editProperty === 'function') {
+                                        window.propertiesController.editProperty(propId);
+                                    }
+                                }
                             }
                         });
                     });

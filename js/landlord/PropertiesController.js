@@ -2,7 +2,10 @@
  * PropertiesController - Manages property CRUD operations for landlords
  * Follows CasaLink MVC pattern and integrates with DataService
  */
-class PropertiesController {
+// Override or replace any existing global PropertiesController by assigning
+// directly to window. Using a class expression avoids redeclaration errors
+// when both generic and landlord versions are loaded.
+window.PropertiesController = class PropertiesController {
     constructor(dataService) {
         this.service = dataService;
         this.currentUser = window.currentUser || null;
@@ -19,7 +22,18 @@ class PropertiesController {
         this.editingPropertyId = null;
         this.deleteConfirmPropertyId = null;
 
-        console.log('✅ PropertiesController initialized');
+        // which Firestore collection should we operate on?  the platform
+        // historically used `properties` but later switched landlords to a
+        // separate `apartments` collection; this value lets us point all
+        // queries/updates in one place and fall back if needed.
+        this._collection = 'apartments';
+
+        // expose and bind for global use
+        window.propertiesController = this;
+        this.editProperty = this.editProperty.bind(this);
+        this.openEditPropertyModal = this.openEditPropertyModal.bind(this);
+
+        console.log('✅ Landlord PropertiesController initialized; editProperty=', typeof this.editProperty);
     }
 
     /**
@@ -70,17 +84,28 @@ class PropertiesController {
                 throw new Error('Firebase is not initialized');
             }
 
-            // Fetch properties from service
-            const snapshot = await window.firebaseDb
-                .collection('properties')
-                .where('landlordId', '==', this.currentUser.uid)
-                .orderBy('createdAt', 'desc')
-                .get();
+            // Landlord properties are now stored in the apartments collection.
+            // Older code used the generic "properties" collection which is
+            // why nothing appeared if the tenant had only apartment records.
+            // Use DataManager helper so the logic stays in one place and the
+            // controller remains thin.
+            let apartments = [];
+            if (window.DataManager && typeof window.DataManager.getLandlordApartments === 'function') {
+                apartments = await window.DataManager.getLandlordApartments(this.currentUser.uid);
+            } else {
+                // fallback: query directly
+                const snapshot = await window.firebaseDb
+                    .collection('apartments')
+                    .where('landlordId', '==', this.currentUser.uid)
+                    .where('isActive', '==', true)
+                    .orderBy('createdAt', 'desc')
+                    .get();
+                apartments = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            }
 
-            this.allProperties = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            // store results using the same property terminology
+            this.allProperties = apartments;
+            console.log('✅ Landlord PropertiesController loaded items:', this.allProperties);
 
             // Apply filters and display
             this.applyFilters();
@@ -254,11 +279,60 @@ class PropertiesController {
         if (addBtnEmpty) {
             addBtnEmpty.addEventListener('click', () => this.triggerAddProperty());
         }
-
+        
+        // room details helpers (dynamic forms)
+        const addRoomBtn = root.querySelector('#addRoomBtn');
+        const refreshTotal = () => {
+            const total = document.querySelectorAll('#roomDetailsContainer .room-form').length;
+            const totalEl = document.querySelector('#totalUnits');
+            if (totalEl) totalEl.value = total;
+        };
+        if (addRoomBtn) {
+            addRoomBtn.addEventListener('click', () => {
+                const container = document.querySelector('#roomDetailsContainer');
+                if (container) {
+                    container.insertAdjacentHTML('beforeend', this._roomFormHTML());
+                    const newForm = container.lastElementChild;
+                    this._attachRoomFormListeners(newForm);
+                    refreshTotal();
+                }
+            });
+        }
+        // also update total when user removes a form (listener already handles removal)
+        // _attachRoomFormListeners removes the element, so we wrap that to refresh total
+        const origAttach = this._attachRoomFormListeners;
+        this._attachRoomFormListeners = (formElem) => {
+            origAttach.call(this, formElem);
+            const removeBtn = formElem.querySelector('.remove-room-btn');
+            if (removeBtn) {
+                removeBtn.addEventListener('click', () => {
+                    setTimeout(refreshTotal, 0);
+                });
+            }
+        };
         // listen for any property additions elsewhere so list stays up to date
-        document.addEventListener('propertyAdded', () => {
-            // reload properties when event fires
+        document.addEventListener('propertyAdded', (evt) => {
+            // if the event provides the full apartment, just prepend and re-render
+            try {
+                const apt = evt && evt.detail && evt.detail.apartment;
+                if (apt && apt.id) {
+                    console.log('propertyAdded event contains apartment, inserting into list');
+                    // ensure no duplicate
+                    if (!this.allProperties.find(p => p.id === apt.id)) {
+                        this.allProperties.unshift(apt);
+                    }
+                    this.applyFilters();
+                    return;
+                }
+            } catch (err) {
+                console.warn('error handling propertyAdded detail:', err);
+            }
+            // fallback: reload from backend
             this.loadProperties().catch(err => console.warn('Unable to reload properties after add event:', err));
+        });
+        // also reload when a property is updated
+        document.addEventListener('propertyUpdated', () => {
+            this.loadProperties().catch(err => console.warn('Unable to reload properties after update event:', err));
         });
 
         // Search
@@ -354,6 +428,30 @@ class PropertiesController {
                     this.closePropertyDetailsModal();
                 }
             });
+
+            // details modal edit form listeners (edit/ save handled elsewhere)
+            const detailsForm = propertyDetailsModal.querySelector('#propertyDetailsEditForm');
+            if (detailsForm) {
+                detailsForm.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.saveDetailsEdit();
+                });
+            }
+            const cancelEditBtn = propertyDetailsModal.querySelector('#propertyDetailsCancelEdit');
+            if (cancelEditBtn) {
+                cancelEditBtn.addEventListener('click', () => this.cancelDetailsEdit());
+            }
+            const addAmenityBtn = propertyDetailsModal.querySelector('#addDetailsAmenityBtn');
+            if (addAmenityBtn) {
+                addAmenityBtn.addEventListener('click', () => this.addCustomAmenity());
+            }
+            const retryBtn = propertyDetailsModal.querySelector('#propertyDetailsRetryBtn');
+            if (retryBtn) {
+                retryBtn.addEventListener('click', () => {
+                    const pid = propertyDetailsModal.dataset.propertyId;
+                    if (pid) this.openPropertyDetailsModal(pid);
+                });
+            }
         }
 
         // Pagination
@@ -426,8 +524,7 @@ class PropertiesController {
                 this.openAddPropertyModal();
             }
         } else {
-            console.warn('casaLink or showAddPropertyForm unavailable, using fallback
- to inline modal');
+            console.warn('casaLink or showAddPropertyForm unavailable, using fallback to inline modal');
             this.openAddPropertyModal();
         }
     }
@@ -450,12 +547,20 @@ class PropertiesController {
         const titleEl = root.querySelector('#propertyModalTitle');
         const formEl = root.querySelector('#propertyForm');
         const modalEl = root.querySelector('#propertyModal');
+        const roomSection = root.querySelector('#roomDetailsSection');
+        const roomContainer = root.querySelector('#roomDetailsContainer');
         if (!modalEl) {
             console.warn('openAddPropertyModal: propertyModal element not found');
             return;
         }
         if (titleEl) titleEl.textContent = 'Add New Property';
         if (formEl) formEl.reset();
+        if (roomSection) {
+            roomSection.style.display = 'none';
+        }
+        if (roomContainer) {
+            roomContainer.innerHTML = '';
+        }
         modalEl.style.display = 'flex';
     }
 
@@ -497,6 +602,14 @@ class PropertiesController {
             checkbox.checked = (property.amenities || []).includes(checkbox.value);
         });
 
+        // show room details section and populate with existing units
+        const roomSection = root.querySelector('#roomDetailsSection');
+        if (roomSection) {
+            roomSection.style.display = 'block';
+            // fetch units and populate
+            this.populateRoomDetails(propertyId);
+        }
+
         const modalEl = root.querySelector('#propertyModal');
         if (modalEl) {
             modalEl.style.display = 'flex';
@@ -508,6 +621,149 @@ class PropertiesController {
     /**
      * Handle property form submission
      */
+    /**
+     * Build HTML string for a single room/unit form entry.
+     * Accepts optional unit object to prefill values.
+     */
+    _roomFormHTML(unit = {}) {
+        return `
+            <div class="room-form" data-unit-id="${unit.id || ''}" style="border:1px solid #ddd;padding:15px;margin-bottom:10px;position:relative;">
+                <button type="button" class="btn btn-sm btn-danger remove-room-btn" style="position:absolute;top:5px;right:5px;">&times;</button>
+                <div class="form-row" style="gap:10px;flex-wrap:wrap;display:flex;">
+                    <div class="form-group" style="flex:1; min-width:150px;">
+                        <label class="form-label">Room Number *</label>
+                        <input type="text" class="room-number form-input" value="${unit.roomNumber || ''}" required />
+                    </div>
+                    <div class="form-group" style="flex:1; min-width:120px;">
+                        <label class="form-label">Floor *</label>
+                        <input type="number" class="room-floor form-input" min="1" value="${unit.floor || ''}" required />
+                    </div>
+                    <div class="form-group" style="flex:1; min-width:120px;">
+                        <label class="form-label">Monthly Rent ₱</label>
+                        <input type="number" class="room-rent form-input" min="0" value="${unit.monthlyRent || 0}" />
+                    </div>
+                    <div class="form-group" style="flex:1; min-width:120px;">
+                        <label class="form-label">Deposit ₱</label>
+                        <input type="number" class="room-deposit form-input" min="0" value="${unit.securityDeposit || 0}" />
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    /**
+     * Attach local listeners to a room form element (remove button etc).
+     */
+    _attachRoomFormListeners(formElem) {
+        const removeBtn = formElem.querySelector('.remove-room-btn');
+        if (removeBtn) {
+            removeBtn.addEventListener('click', () => {
+                const uid = formElem.getAttribute('data-unit-id');
+                if (uid) {
+                    // queue for deletion on save
+                    this._roomsToDelete = this._roomsToDelete || [];
+                    this._roomsToDelete.push(uid);
+                }
+                formElem.remove();
+            });
+        }
+    }
+
+    /**
+     * Fetch units for property and populate the room details container.
+     */
+    async populateRoomDetails(propertyId) {
+        try {
+            // clear deletion buffer
+            this._roomsToDelete = [];
+            if (!propertyId) return;
+            const container = document.querySelector('#roomDetailsContainer');
+            if (!container) return;
+            container.innerHTML = '<p>Loading units...</p>';
+            let units = [];
+            if (this.service && typeof this.service.getPropertyUnits === 'function') {
+                units = await this.service.getPropertyUnits(propertyId);
+            } else if (window.firebaseDb) {
+                // some schemas refer to propertyId, others to apartmentId
+                const query = window.firebaseDb.collection('units')
+                    .where('propertyId', '==', propertyId);
+                const snapshot1 = await query.get();
+                if (snapshot1.empty) {
+                    // try alternate field
+                    const snapshot2 = await window.firebaseDb.collection('units')
+                        .where('apartmentId', '==', propertyId)
+                        .get();
+                    units = snapshot2.docs.map(d => ({ id: d.id, ...d.data() }));
+                } else {
+                    units = snapshot1.docs.map(d => ({ id: d.id, ...d.data() }));
+                }
+            }
+            container.innerHTML = '';
+            units.forEach(u => {
+                container.insertAdjacentHTML('beforeend', this._roomFormHTML(u));
+            });
+            // append listeners to existing forms
+            container.querySelectorAll('.room-form').forEach(f => this._attachRoomFormListeners(f));
+
+            // update totalUnits field
+            const totalUnitsEl = document.querySelector('#totalUnits');
+            if (totalUnitsEl) totalUnitsEl.value = units.length;
+        } catch (err) {
+            console.error('Error populating room details:', err);
+        }
+    }
+
+    /**
+     * Save room/detail forms after property update. Creates, updates or deletes units as needed.
+     */
+    async _saveRoomDetails() {
+        const root = document;
+        const container = root.querySelector('#roomDetailsContainer');
+        if (!container) return;
+
+        // delete removed units first
+        if (Array.isArray(this._roomsToDelete) && this._roomsToDelete.length > 0) {
+            for (const uid of this._roomsToDelete) {
+                try {
+                    await window.firebaseDb.collection('units').doc(uid).delete();
+                    console.log('Deleted unit', uid);
+                } catch (e) {
+                    console.warn('Failed to delete unit', uid, e);
+                }
+            }
+            this._roomsToDelete = [];
+        }
+
+        const forms = container.querySelectorAll('.room-form');
+        for (const form of Array.from(forms)) {
+            const unitId = form.getAttribute('data-unit-id');
+            const data = {
+                roomNumber: form.querySelector('.room-number')?.value || '',
+                floor: form.querySelector('.room-floor')?.value || '',
+                monthlyRent: parseFloat(form.querySelector('.room-rent')?.value) || 0,
+                securityDeposit: parseFloat(form.querySelector('.room-deposit')?.value) || 0,
+                propertyId: this.editingPropertyId,
+                landlordId: this.currentUser.uid,
+                updatedAt: new Date()
+            };
+            if (!data.roomNumber) continue; // skip invalid
+            try {
+                if (unitId) {
+                    // update existing
+                    await window.firebaseDb.collection('units').doc(unitId).update(data);
+                    console.log('Updated unit', unitId);
+                } else {
+                    // create new
+                    data.createdAt = new Date();
+                    const ref = await window.firebaseDb.collection('units').add(data);
+                    console.log('Created unit', ref.id);
+                }
+            } catch (e) {
+                console.warn('Failed to save unit:', e);
+            }
+        }
+    }
+
     async handlePropertySubmit() {
         try {
             // Wait for Firebase
@@ -548,16 +804,19 @@ class PropertiesController {
             if (this.editingPropertyId) {
                 // Update existing
                 await window.firebaseDb
-                    .collection('properties')
+                    .collection(this._collection)
                     .doc(this.editingPropertyId)
                     .update(propertyData);
 
                 console.log('✅ Property updated:', this.editingPropertyId);
                 this.showToast('Property updated successfully', 'success');
+
+                // also persist room/unit updates if present
+                await this._saveRoomDetails();
             } else {
                 // Create new
                 propertyData.createdAt = new Date();
-                const docRef = await window.firebaseDb.collection('properties').add(propertyData);
+                const docRef = await window.firebaseDb.collection(this._collection).add(propertyData);
                 console.log('✅ Property created:', docRef.id);
                 this.showToast('Property created successfully', 'success');
             }
@@ -587,11 +846,23 @@ class PropertiesController {
      */
     async openPropertyDetailsModal(propertyId) {
         try {
-            // Find property data
-            const property = this.allProperties.find(p => p.id === propertyId);
+            // Find property data (we keep a local cache but reload from Firestore to ensure metrics are fresh)
+            let property = this.allProperties.find(p => p.id === propertyId);
             if (!property) {
                 this.showToast('Property not found', 'error');
                 return;
+            }
+            try {
+                const doc = await window.firebaseDb.collection('apartments').doc(propertyId).get();
+                if (doc.exists) {
+                    property = { id: doc.id, ...doc.data() };
+                    // update cache as well
+                    const idx = this.allProperties.findIndex(p => p.id === propertyId);
+                    if (idx !== -1) this.allProperties[idx] = property;
+                }
+            } catch (reloadErr) {
+                console.warn('Unable to reload property from Firestore:', reloadErr);
+                // continue using cached copy
             }
 
             // Show modal with loading state
@@ -603,36 +874,101 @@ class PropertiesController {
                 console.error('Property details modal not found');
                 return;
             }
+            // reset any edit state
+            this.detailsEditing = false;
+            const editForm = modal.querySelector('#propertyDetailsEditForm');
+            const viewArea = modal.querySelector('#propertyDetailsViewArea');
+            const errorBox = document.getElementById('propertyDetailsError');
+            if (editForm) editForm.style.display = 'none';
+            if (viewArea) viewArea.style.display = 'block';
+            if (errorBox) errorBox.style.display = 'none';
+            const editBtn = modal.querySelector('.property-details-footer .btn-primary');
+            if (editBtn) {
+                editBtn.innerHTML = '<i class="fas fa-edit"></i> Edit Property';
+            }
+            // remember current property id for later edits
+            modal.dataset.propertyId = propertyId;
 
             // Reset to loading state
             content.style.display = 'none';
             loading.style.display = 'flex';
             modal.style.display = 'flex';
 
-            // Populate header information
-            document.getElementById('propertyDetailsName').textContent = this.escapeHtml(property.name);
-            const addressStr = `${property.address}, ${property.city}, ${property.state} ${property.zipCode || ''}`;
+            // log the raw document for debugging mismatches
+            console.log('📝 property document', property);
+
+            // Populate header information using the apartment schema
+            document.getElementById('propertyDetailsName').textContent = this.escapeHtml(property.apartmentName || property.name || '');
+            const addressStr = property.apartmentAddress || '';
             document.getElementById('propertyDetailsAddress').textContent = addressStr;
 
             // Populate basic info grid
-            document.getElementById('detailsPropertyType').textContent = this.formatPropertyType(property.propertyType);
+            const typeEl = document.getElementById('detailsPropertyType');
+            const typeGroup = document.getElementById('groupPropertyType');
+            if (typeEl && property.propertyType) {
+                typeEl.textContent = this.formatPropertyType(property.propertyType);
+            } else if (typeGroup) {
+                typeGroup.style.display = 'none';
+            }
+
             const statusBadge = document.getElementById('detailsPropertyStatus');
-            statusBadge.textContent = property.status;
-            statusBadge.className = property.status === 'active' ? 'status-badge status-active' : 'status-badge status-inactive';
-            document.getElementById('detailsPropertyYearBuilt').textContent = property.yearBuilt || '-';
-            document.getElementById('detailsPropertySqft').textContent = property.squareFootage ? `${property.squareFootage.toLocaleString()} sq ft` : '-';
+            if (statusBadge) {
+                const isActive = property.isActive === true || property.status === 'active';
+                statusBadge.textContent = isActive ? 'Active' : 'Inactive';
+                statusBadge.className = isActive ? 'status-badge status-active' : 'status-badge status-inactive';
+            }
+
+            const storiesEl = document.getElementById('detailsPropertyStories');
+            const storiesGroup = document.getElementById('groupPropertyStories');
+            if (storiesEl && property.numberOfFloors != null) {
+                storiesEl.textContent = property.numberOfFloors;
+            } else if (storiesGroup) {
+                storiesGroup.style.display = 'none';
+            }
+
+            // created/updated timestamps
+            const createdEl = document.getElementById('detailsPropertyCreated');
+            const updatedEl = document.getElementById('detailsPropertyUpdated');
+            if (createdEl) {
+                createdEl.textContent = property.createdAt ? this.formatDate(property.createdAt) : '-';
+            }
+            if (updatedEl) {
+                updatedEl.textContent = property.updatedAt ? this.formatDate(property.updatedAt) : '-';
+            }
+
+            // hide unused rows (year built, sqft, lot, parking) since no fields exist
+            ['detailsPropertyYearBuilt','detailsPropertySqft','detailsPropertyLot','detailsPropertyParking'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.closest('.info-group').style.display = 'none';
+            });
 
             // Calculate and populate metrics
-            const units = await this.fetchPropertyUnits(propertyId);
+            const units = await this.fetchPropertyUnits(propertyId, property);
             const occupiedUnits = (units || []).filter(u => u.isOccupied).length;
             const occupancyRate = units && units.length > 0 ? Math.round((occupiedUnits / units.length) * 100) : 0;
 
-            document.getElementById('detailsMetricUnits').textContent = (units || []).length;
-            document.getElementById('detailsMetricOccupancy').textContent = `${occupancyRate}%`;
-            document.getElementById('detailsMetricRevenue').textContent = `₱${(property.monthlyRevenue || 0).toLocaleString()}`;
+            // Total units should reflect numberOfRooms (or totalUnits) if available, otherwise fall back to fetched units
+            const unitsCount = property.numberOfRooms != null ? property.numberOfRooms : (property.totalUnits != null ? property.totalUnits : ((units || []).length));
+            document.getElementById('detailsMetricUnits').textContent = unitsCount;
+            // occupancy uses property.numberOfRooms as denominator when present
+            let occupancyRateFinal = 0;
+            if (property.numberOfRooms) {
+                occupancyRateFinal = Math.round((occupiedUnits / property.numberOfRooms) * 100);
+            } else if (property.totalUnits) {
+                occupancyRateFinal = Math.round((occupiedUnits / property.totalUnits) * 100);
+            } else {
+                occupancyRateFinal = occupancyRate;
+            }
+            document.getElementById('detailsMetricOccupancy').textContent = `${occupancyRateFinal}%`;
+            // calculate rent roll: use stored monthlyRevenue or sum from units
+            let rentRoll = property.monthlyRevenue || 0;
+            if (!rentRoll && units && units.length > 0) {
+                rentRoll = units.reduce((sum,u) => sum + (u.rent || u.monthlyRent || 0), 0);
+            }
+            document.getElementById('detailsMetricRevenue').textContent = `₱${rentRoll.toLocaleString()}`;
 
             // Get maintenance count
-            const maintenanceRequests = await this.fetchPropertyMaintenance(propertyId);
+            const maintenanceRequests = await this.fetchPropertyMaintenance(propertyId, property);
             const openMaintenance = (maintenanceRequests || []).filter(m => m.status !== 'completed').length;
             document.getElementById('detailsMetricMaintenance').textContent = openMaintenance;
 
@@ -643,6 +979,10 @@ class PropertiesController {
                 descEl.textContent = property.description;
                 descEl.style.fontStyle = 'normal';
                 descEl.style.color = '#1f2937';
+            } else if (descEl) {
+                descEl.textContent = 'No description provided';
+                descEl.style.fontStyle = 'italic';
+                descEl.style.color = '#6b7280';
             }
 
             // Populate amenities
@@ -653,6 +993,18 @@ class PropertiesController {
                 ).join('');
             }
 
+            // Populate documents
+            const docsEl = document.getElementById('detailsDocuments');
+            if (docsEl) {
+                if (property.documents && property.documents.length > 0) {
+                    docsEl.innerHTML = property.documents.map(d =>
+                        `<a href="${d.url}" target="_blank" class="doc-link"><i class="fas fa-file-alt"></i> ${d.name || 'Document'}</a>`
+                    ).join('');
+                } else {
+                    docsEl.innerHTML = '<span style="color: #9ca3af;">No documents</span>';
+                }
+            }
+
             // Populate units tab
             await this.populateUnitsTab(units);
 
@@ -660,7 +1012,7 @@ class PropertiesController {
             await this.populateMaintenanceTab(maintenanceRequests);
 
             // Populate tenants tab
-            const tenants = await this.fetchPropertyTenants(propertyId);
+            const tenants = await this.fetchPropertyTenants(propertyId, property);
             await this.populateTenantsTab(tenants);
 
             // Populate activity tab
@@ -676,26 +1028,78 @@ class PropertiesController {
 
         } catch (error) {
             console.error('Error opening property details modal:', error);
+            // display error message inside modal with retry option
+            const modal = document.getElementById('propertyDetailsModal');
+            const loadingEl = document.getElementById('propertyDetailsLoading');
+            const contentEl = document.getElementById('propertyDetailsContent');
+            const errorBox = document.getElementById('propertyDetailsError');
+            const errorMsg = document.getElementById('propertyDetailsErrorMsg');
+            if (loadingEl) loadingEl.style.display = 'none';
+            if (contentEl) contentEl.style.display = 'block';
+            if (errorBox) errorBox.style.display = 'block';
+            if (errorMsg) errorMsg.textContent = 'Failed to load property details. Please try again.';
+            // hide view area so stale info doesn't show
+            const viewArea = document.getElementById('propertyDetailsViewArea');
+            if (viewArea) viewArea.style.display = 'none';
             this.showToast('Error loading property details: ' + error.message, 'error');
-            document.getElementById('propertyDetailsModal').style.display = 'none';
+            // keep modal open so user can retry
         }
     }
 
     /**
      * Fetch property units from Firestore
      */
-    async fetchPropertyUnits(propertyId) {
+    async fetchPropertyUnits(propertyId, propertyObj = {}) {
         try {
             await this.waitForFirebase();
+            let units = [];
+
+            // primary collection for new schema
             const snapshot = await window.firebaseDb
                 .collection('units')
                 .where('propertyId', '==', propertyId)
                 .get();
 
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
+            units = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            // also load legacy rooms from the rooms collection (via DataManager if available)
+            let legacyUnits = [];
+            if (window.DataManager && typeof DataManager.getLandlordUnits === 'function') {
+                const all = await DataManager.getLandlordUnits(this.currentUser.uid);
+                legacyUnits = all.filter(u =>
+                    u.apartmentId === propertyId ||
+                    u.propertyId === propertyId ||
+                    u.rentalPropertyId === propertyId ||
+                    u.apartmentAddress === propertyObj.apartmentAddress ||
+                    u.rentalAddress === propertyObj.apartmentAddress
+                );
+            } else {
+                // fallback direct query
+                const roomsSnap = await window.firebaseDb
+                    .collection('rooms')
+                    .where('apartmentId', '==', propertyId)
+                    .get();
+                legacyUnits = roomsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            }
+
+            // convert legacy rooms into unit-like shape if needed
+            legacyUnits = legacyUnits.map(u => ({
+                ...u,
+                unitNumber: u.roomNumber || u.unitNumber || u.id,
+                isOccupied: u.isAvailable === false || u.status === 'occupied',
+                rent: u.monthlyRent || u.rent || 0
             }));
+
+            units = units.concat(legacyUnits);
+            // dedupe by id
+            const seen = new Set();
+            units = units.filter(u => {
+                if (seen.has(u.id)) return false;
+                seen.add(u.id);
+                return true;
+            });
+
+            return units;
         } catch (error) {
             console.error('Error fetching units:', error);
             return [];
@@ -705,20 +1109,33 @@ class PropertiesController {
     /**
      * Fetch property maintenance requests
      */
-    async fetchPropertyMaintenance(propertyId) {
+    async fetchPropertyMaintenance(propertyId, propertyObj = {}) {
         try {
             await this.waitForFirebase();
-            const snapshot = await window.firebaseDb
-                .collection('maintenance')
-                .where('propertyId', '==', propertyId)
-                .orderBy('createdAt', 'desc')
-                .limit(5)
-                .get();
+            let requests = [];
 
-            return snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            // use DataManager if available (it handles landlordId filter)
+            if (window.DataManager && typeof DataManager.getMaintenanceRequests === 'function') {
+                requests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
+            } else {
+                const snapshot = await window.firebaseDb
+                    .collection('maintenance')
+                    .where('landlordId', '==', this.currentUser.uid)
+                    .get();
+                requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            }
+
+            // filter to only those affecting this apartment/property
+            requests = requests.filter(r =>
+                r.propertyId === propertyId ||
+                r.apartmentId === propertyId ||
+                r.apartmentId === propertyObj.id ||
+                r.apartmentAddress === propertyObj.apartmentAddress
+            );
+
+            // sort descending by createdAt and take first 5
+            requests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            return requests.slice(0, 5);
         } catch (error) {
             console.error('Error fetching maintenance:', error);
             return [];
@@ -728,28 +1145,36 @@ class PropertiesController {
     /**
      * Fetch property tenants
      */
-    async fetchPropertyTenants(propertyId) {
+    async fetchPropertyTenants(propertyId, propertyObj = {}) {
         try {
             await this.waitForFirebase();
-            // Get active leases for this property
-            const snapshot = await window.firebaseDb
-                .collection('leases')
-                .where('propertyId', '==', propertyId)
-                .where('status', '==', 'active')
-                .get();
+            let leases = [];
 
-            const tenantIds = [...new Set(snapshot.docs.map(doc => doc.data().tenantId))];
+            if (window.DataManager && typeof DataManager.getLandlordLeases === 'function') {
+                leases = await DataManager.getLandlordLeases(this.currentUser.uid);
+            } else {
+                const snap = await window.firebaseDb
+                    .collection('leases')
+                    .where('landlordId', '==', this.currentUser.uid)
+                    .get();
+                leases = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            }
 
-            // Get tenant details
+            // filter leases associated with this property/apartment
+            leases = leases.filter(l =>
+                l.propertyId === propertyId ||
+                l.apartmentId === propertyId ||
+                l.rentalPropertyId === propertyId ||
+                l.apartmentAddress === propertyObj.apartmentAddress
+            );
+
+            const tenantIds = [...new Set(leases.map(l => l.tenantId).filter(Boolean))];
             const tenants = [];
             for (const tenantId of tenantIds) {
                 try {
                     const tenantDoc = await window.firebaseDb.collection('users').doc(tenantId).get();
                     if (tenantDoc.exists) {
-                        tenants.push({
-                            id: tenantId,
-                            ...tenantDoc.data()
-                        });
+                        tenants.push({ id: tenantId, ...tenantDoc.data() });
                     }
                 } catch (e) {
                     console.warn('Error fetching tenant:', e);
@@ -772,7 +1197,7 @@ class PropertiesController {
             // For now, return recent changes to the property
             // This could be enhanced with an activity log collection
             const snapshot = await window.firebaseDb
-                .collection('properties')
+                .collection(this._collection)
                 .doc(propertyId)
                 .collection('activity')
                 .orderBy('timestamp', 'desc')
@@ -799,17 +1224,33 @@ class PropertiesController {
             return;
         }
 
-        unitsList.innerHTML = units.map(unit => `
-            <div class="unit-item">
-                <div class="unit-header">
-                    <div class="unit-name">${this.escapeHtml(unit.unitNumber || 'Unit ' + unit.id.substring(0, 5))}</div>
-                    <div class="unit-status">${unit.isOccupied ? 'Occupied' : 'Vacant'}</div>
-                </div>
-                <span class="status-badge ${unit.isOccupied ? 'status-active' : 'status-inactive'}">
-                    ${unit.isOccupied ? 'Occupied' : 'Vacant'}
-                </span>
+        const occupied = units.filter(u => u.isOccupied).length;
+        const vacant = units.length - occupied;
+
+        // build summary section and first three units
+        const shortUnits = units.slice(0, 3);
+        unitsList.innerHTML = `
+            <div class="unit-summary">
+                <div>Total units: ${units.length}</div>
+                <div>Occupied: ${occupied}</div>
+                <div>Vacant: ${vacant}</div>
+                <div><a href="#" onclick="if(window.propertiesController) window.propertiesController.navigateToUnits('${units[0]?.propertyId}');return false;">View All Units</a></div>
+                <button class="btn btn-sm btn-primary" onclick="if(window.propertiesController) window.propertiesController.addUnit('${units[0]?.propertyId}');">Add Unit</button>
             </div>
-        `).join('');
+            <div class="unit-list-short">
+                ${shortUnits.map(unit => `
+                    <div class="unit-item">
+                        <div class="unit-header">
+                            <div class="unit-name">${this.escapeHtml(unit.unitNumber || 'Unit ' + unit.id.substring(0, 5))}</div>
+                            <div class="unit-status">${unit.isOccupied ? 'Occupied' : 'Vacant'}</div>
+                        </div>
+                        <span class="status-badge ${unit.isOccupied ? 'status-active' : 'status-inactive'}">
+                            ${unit.isOccupied ? 'Occupied' : 'Vacant'}
+                        </span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
     }
 
     /**
@@ -918,6 +1359,11 @@ class PropertiesController {
      * Close property details modal
      */
     closePropertyDetailsModal() {
+        // warn if editing and unsaved
+        if (this.detailsEditing) {
+            const ok = confirm('You have unsaved changes. Discard and close?');
+            if (!ok) return;
+        }
         const modal = document.getElementById('propertyDetailsModal');
         if (modal) {
             modal.style.display = 'none';
@@ -925,16 +1371,291 @@ class PropertiesController {
     }
 
     /**
-     * Open edit property modal from details view
+     * Entry point for footer button in details modal.
+     * Toggles between view and edit mode; will call save when already editing.
      */
     editPropertyFromDetails() {
-        const propertyName = document.getElementById('propertyDetailsName').textContent;
-        // Find the property by name
-        const property = this.allProperties.find(p => p.name === propertyName);
-        if (property) {
-            this.closePropertyDetailsModal();
-            this.editProperty(property.id);
+        const modal = document.getElementById('propertyDetailsModal');
+        if (!modal) return;
+        const propId = modal.dataset.propertyId;
+        if (!propId) return;
+        const property = this.allProperties.find(p => p.id === propId);
+        if (!property) return;
+
+        if (!this.detailsEditing) {
+            this.startDetailsEdit(property);
+        } else {
+            // save is triggered by form submit but allow toolbar button too
+            this.saveDetailsEdit();
         }
+    }
+
+    /**
+     * Prepare and show the edit form inside the details modal.
+     */
+    startDetailsEdit(property) {
+        this.detailsEditing = true;
+        this.detailsOriginal = JSON.parse(JSON.stringify(property)); // deep copy
+
+        const modal = document.getElementById('propertyDetailsModal');
+        const viewArea = modal.querySelector('#propertyDetailsViewArea');
+        const editForm = modal.querySelector('#propertyDetailsEditForm');
+        const editBtn = modal.querySelector('.property-details-footer .btn-primary');
+
+        // hide view and show form
+        if (viewArea) viewArea.style.display = 'none';
+        if (editForm) editForm.style.display = 'block';
+
+        // update footer buttons
+        if (editBtn) {
+            editBtn.innerHTML = '<i class="fas fa-save"></i> Save Changes';
+        }
+        const closeBtn = modal.querySelector('.property-details-footer .btn-secondary');
+        if (closeBtn) {
+            closeBtn.innerHTML = 'Cancel';
+            closeBtn.onclick = () => this.cancelDetailsEdit();
+        }
+
+        // populate form fields
+        this.populateDetailsEditForm(property);
+    }
+
+    /**
+     * Fill the fields of the details edit form with property data.
+     */
+    populateDetailsEditForm(property) {
+        const modal = document.getElementById('propertyDetailsModal');
+        if (!modal) return;
+        const set = (selector, value) => {
+            const el = modal.querySelector(selector);
+            if (el) {
+                if (el.tagName === 'SELECT' || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                    el.value = value != null ? value : '';
+                }
+            }
+        };
+
+        set('#detailsEditName', property.name);
+        set('#detailsEditType', property.propertyType);
+        set('#detailsEditStatus', property.status || 'active');
+        set('#detailsEditYearBuilt', property.yearBuilt || '');
+        set('#detailsEditSqft', property.squareFootage || '');
+        set('#detailsEditStories', property.numberOfStories || '');
+        set('#detailsEditLotSize', property.lotSize || '');
+        set('#detailsEditParkingSpaces', property.parkingSpaces || '');
+        set('#detailsEditParkingType', property.parkingType || '');
+        set('#detailsEditDescription', property.description || '');
+
+        // amenities checkboxes
+        const amenitiesContainer = modal.querySelector('#detailsAmenitiesEdit');
+        if (amenitiesContainer) {
+            const allAmenities = ['Pool','Gym','Laundry','Elevator','Security','Pet Friendly','Furnished','Balcony/Patio','Storage','Wheelchair Access'];
+            amenitiesContainer.innerHTML = '';
+            allAmenities.forEach(a => {
+                const val = a.toLowerCase().replace(/[^a-z0-9]/g,'');
+                const checked = (property.amenities || []).includes(val);
+                const div = document.createElement('label');
+                div.className = 'checkbox-label';
+                div.innerHTML = `<input type="checkbox" name="detailsAmenities" value="${val}" ${checked ? 'checked' : ''}> ${a}`;
+                amenitiesContainer.appendChild(div);
+            });
+            // include any custom amenities
+            (property.amenities || []).forEach(a => {
+                if (!allAmenities.map(x=>x.toLowerCase().replace(/[^a-z0-9]/g,'')).includes(a)) {
+                    const div = document.createElement('label');
+                    div.className = 'checkbox-label';
+                    div.innerHTML = `<input type="checkbox" name="detailsAmenities" value="${a}" checked> ${a}`;
+                    amenitiesContainer.appendChild(div);
+                }
+            });
+        }
+
+        // documents list
+        const docsList = modal.querySelector('#detailsDocsList');
+        if (docsList) {
+            docsList.innerHTML = '';
+            (property.documents || []).forEach(doc => {
+                const link = document.createElement('a');
+                link.href = doc.url || '#';
+                link.target = '_blank';
+                link.textContent = doc.name || 'Document';
+                docsList.appendChild(link);
+            });
+        }
+    }
+
+    /**
+     * Cancel editing and revert to view mode.
+     */
+    cancelDetailsEdit() {
+        // if there are unsaved changes, confirm before discarding
+        if (this.detailsEditing) {
+            const answer = confirm('Discard unsaved changes?');
+            if (!answer) return;
+        }
+        this.detailsEditing = false;
+        const modal = document.getElementById('propertyDetailsModal');
+        if (!modal) return;
+        const viewArea = modal.querySelector('#propertyDetailsViewArea');
+        const editForm = modal.querySelector('#propertyDetailsEditForm');
+        const editBtn = modal.querySelector('.property-details-footer .btn-primary');
+
+        if (editForm) editForm.style.display = 'none';
+        if (viewArea) viewArea.style.display = 'block';
+        if (editBtn) {
+            editBtn.innerHTML = '<i class="fas fa-edit"></i> Edit Property';
+        }
+        // restore footer close button behaviour
+        const closeBtn = modal.querySelector('.property-details-footer .btn-secondary');
+        if (closeBtn) {
+            closeBtn.innerHTML = 'Close';
+            closeBtn.onclick = () => this.closePropertyDetailsModal();
+        }
+        // reset form if necessary
+        if (editForm) editForm.reset();
+    }
+
+    /**
+     * Handle submission of edit form inside details modal.
+     */
+    async saveDetailsEdit() {
+        if (!this.detailsEditing) return;
+        const modal = document.getElementById('propertyDetailsModal');
+        if (!modal) return;
+        const propId = modal.dataset.propertyId;
+        if (!propId) return;
+
+        // collect values
+        const getVal = selector => {
+            const el = modal.querySelector(selector);
+            return el ? el.value : '';
+        };
+        const updated = {
+            name: getVal('#detailsEditName'),
+            propertyType: getVal('#detailsEditType'),
+            status: getVal('#detailsEditStatus'),
+            yearBuilt: getVal('#detailsEditYearBuilt') || null,
+            squareFootage: parseFloat(getVal('#detailsEditSqft')) || 0,
+            numberOfStories: parseInt(getVal('#detailsEditStories')) || 0,
+            lotSize: getVal('#detailsEditLotSize'),
+            parkingSpaces: parseInt(getVal('#detailsEditParkingSpaces')) || 0,
+            parkingType: getVal('#detailsEditParkingType'),
+            description: getVal('#detailsEditDescription'),
+            amenities: Array.from(modal.querySelectorAll('input[name="detailsAmenities"]:checked')).map(cb => cb.value),
+            updatedAt: new Date()
+        };
+
+        // validation
+        if (!updated.name || !updated.propertyType) {
+            this.showToast('Name and type are required', 'error');
+            return;
+        }
+        if (updated.squareFootage < 0) {
+            this.showToast('Square footage must be positive', 'error');
+            return;
+        }
+        const year = parseInt(updated.yearBuilt);
+        if (year && (year < 1800 || year > new Date().getFullYear()+1)) {
+            this.showToast('Year built must be valid', 'error');
+            return;
+        }
+
+        // handle document uploads
+        const fileInput = modal.querySelector('#detailsDocsUpload');
+        if (fileInput && fileInput.files.length > 0) {
+            const newDocs = await this.uploadPropertyDocuments(fileInput.files, propId);
+            updated.documents = (this.detailsOriginal.documents || []).concat(newDocs);
+        }
+
+        // show saving state
+        const saveBtn = modal.querySelector('#propertyDetailsSaveBtn');
+        if (saveBtn) {
+            saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+            saveBtn.disabled = true;
+        }
+
+        try {
+            await this.waitForFirebase();
+            await window.firebaseDb.collection(this._collection).doc(propId).update(updated);
+            this.showToast('Property updated', 'success');
+            // update local copy
+            const idx = this.allProperties.findIndex(p => p.id === propId);
+            if (idx !== -1) {
+                this.allProperties[idx] = { ...this.allProperties[idx], ...updated };
+            }
+            // refresh both list and details view
+            await this.loadProperties();
+            document.dispatchEvent(new CustomEvent('propertyUpdated', { detail: { id: propId } }));
+            this.openPropertyDetailsModal(propId);
+            this.detailsEditing = false;
+        } catch (err) {
+            console.error('Error saving details edit:', err);
+            this.showToast('Unable to save changes: ' + err.message, 'error');
+        } finally {
+            if (saveBtn) {
+                saveBtn.innerHTML = '<i class="fas fa-save"></i> Save Property';
+                saveBtn.disabled = false;
+            }
+        }
+    }
+
+    /**
+     * Add a custom amenity checkbox when editing.
+     */
+    addCustomAmenity() {
+        const modal = document.getElementById('propertyDetailsModal');
+        if (!modal) return;
+        const input = modal.querySelector('#detailsCustomAmenity');
+        if (!input || !input.value.trim()) return;
+        const val = input.value.trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+        const label = document.createElement('label');
+        label.className = 'checkbox-label';
+        label.innerHTML = `<input type="checkbox" name="detailsAmenities" value="${val}" checked> ${input.value.trim()}`;
+        const container = modal.querySelector('#detailsAmenitiesEdit');
+        if (container) container.appendChild(label);
+        input.value = '';
+    }
+
+    /**
+     * Upload document files to Firebase Storage and return array of doc meta.
+     */
+    async uploadPropertyDocuments(files, propertyId) {
+        const docs = [];
+        const storage = firebase.storage();
+        const timestamp = new Date().getTime();
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            try {
+                const path = `property-docs/${propertyId}/${timestamp}-${file.name}`;
+                const ref = storage.ref(path);
+                await ref.put(file);
+                const url = await ref.getDownloadURL();
+                docs.push({ name: file.name, url });
+            } catch (err) {
+                console.error('Error uploading document', err);
+            }
+        }
+        return docs;
+    }
+
+    /**
+     * Navigate to the units management view for a specific property.
+     */
+    navigateToUnits(propertyId) {
+        // simple implementation: change hash so other routing logic can respond
+        if (propertyId) {
+            window.location.hash = `#units?propertyId=${propertyId}`;
+        }
+    }
+
+    /**
+     * Open interface to add a new unit under the property.
+     * Placeholder - implement real logic as needed.
+     */
+    addUnit(propertyId) {
+        console.log('addUnit called for property', propertyId);
+        // could trigger a modal or redirect to unit creation page
+        this.showToast('Add Unit feature coming soon', 'info');
     }
 
     /**
@@ -977,14 +1698,18 @@ class PropertiesController {
             const batch = window.firebaseDb.batch();
 
             // Delete property
-            batch.delete(window.firebaseDb.collection('properties').doc(this.deleteConfirmPropertyId));
+            batch.delete(window.firebaseDb.collection(this._collection).doc(this.deleteConfirmPropertyId));
 
-            // Delete associated units
-            const unitsSnapshot = await window.firebaseDb
-                .collection('units')
+            // Delete associated units (field may be propertyId or apartmentId)
+            const unitsCollection = window.firebaseDb.collection('units');
+            let unitsSnapshot = await unitsCollection
                 .where('propertyId', '==', this.deleteConfirmPropertyId)
                 .get();
-
+            if (unitsSnapshot.empty) {
+                unitsSnapshot = await unitsCollection
+                    .where('apartmentId', '==', this.deleteConfirmPropertyId)
+                    .get();
+            }
             unitsSnapshot.docs.forEach(doc => {
                 batch.delete(doc.ref);
             });
@@ -1134,7 +1859,17 @@ class PropertiesController {
     }
 }
 
-// Export for use
-if (typeof window !== 'undefined') {
-    window.PropertiesController = PropertiesController;
+// Export block removed: assignment is done when the class is defined above.
+// (keeping this section caused a second assignment but was harmless; removal
+// avoids confusion and redundant code.)
+
+// If the generic controller was instantiated earlier we want to override it.
+// Run when dataService is already available (it should be after bootstrap).
+if (window.dataService) {
+    try {
+        window.propertiesController = new PropertiesController(window.dataService);
+        console.log('✅ Landlord PropertiesController instantiated and bound globally');
+    } catch (e) {
+        console.warn('⚠️ Could not instantiate landlord PropertiesController automatically:', e);
+    }
 }

@@ -236,30 +236,13 @@ class DataManager {
         }
     }
 
+    // Legacy alias – apartments are stored in a single collection in the
+    // current schema.  Keep this method for backwards compatibility since
+    // many parts of the codebase still call getProperties().  Internally it
+    // simply forwards to getLandlordApartments which already handles
+    // normalization.
     static async getProperties(landlordId) {
-        // If no landlordId provided, check window.currentUser
-        if (!landlordId && typeof window !== 'undefined' && window.currentUser) {
-            landlordId = window.currentUser.uid;
-        }
-        if (!landlordId) throw new Error('User not authenticated');
-        
-        try {
-            const snapshot = await firebaseDb.collection('properties')
-                .where('landlordId', '==', landlordId)
-                .orderBy('createdAt', 'desc')
-                .get();
-            
-            const properties = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return { ...data, id: doc.id };
-            });
-            
-            console.log('✅ Properties loaded:', properties.length);
-            return properties;
-        } catch (error) {
-            console.error('❌ Error getting properties:', error);
-            return [];
-        }
+        return this.getLandlordApartments(landlordId);
     }
 
     static async getLandlordApartments(landlordId) {
@@ -278,9 +261,10 @@ class DataManager {
                 .orderBy('createdAt', 'desc')
                 .get();
             
+            // convert to Property model so that name/address/etc are normalized
             const apartments = snapshot.docs.map(doc => {
                 const data = doc.data();
-                return { ...data, id: doc.id };
+                return new Property(Object.assign({ id: doc.id }, data));
             });
             
             console.log('✅ Apartments loaded:', apartments.length);
@@ -300,8 +284,9 @@ class DataManager {
             const payload = {
                 landlordId,
                 landlordName: apartmentData.landlordName || '',
+                apartmentName: apartmentData.apartmentName || apartmentData.name || '',
                 apartmentAddress: apartmentData.apartmentAddress || '',
-                numberOfRooms: apartmentData.numberOfRooms || 0,
+                numberOfRooms: apartmentData.numberOfRooms || apartmentData.totalUnits || 0,
                 description: apartmentData.description || '',
                 isActive: apartmentData.isActive === undefined ? true : !!apartmentData.isActive,
                 createdAt: apartmentData.createdAt || new Date().toISOString(),
@@ -2611,8 +2596,9 @@ class DataManager {
     }
 
 
+    // still called addProperty by legacy UI but writes to apartments
     static async addProperty(propertyData) {
-        const docRef = await firebaseDb.collection('properties').add({
+        const docRef = await firebaseDb.collection('apartments').add({
             ...propertyData,
             createdAt: new Date().toISOString(),
             isActive: true
@@ -2620,8 +2606,9 @@ class DataManager {
         return docRef.id;
     }
 
+    // updateApartment but kept name for compatibility
     static async updateProperty(propertyId, updates) {
-        await firebaseDb.doc(`properties/${propertyId}`).update(updates);
+        await firebaseDb.doc(`apartments/${propertyId}`).update(updates);
     }
 
     static async getTenantBills(tenantId) {

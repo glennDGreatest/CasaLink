@@ -114,28 +114,16 @@ class DataService {
    * @param {string} landlordId
    * @returns {Promise<Property[]>}
    */
+  // backwards-compatible alias; landlords are stored in the apartments collection
   async getLandlordProperties(landlordId) {
     try {
       const conditions = [['landlordId', '==', landlordId]];
-      const snapshot = await this.firebaseService.query('rooms', conditions);
-
-      // Deduplicate by apartmentId to get unique apartments
-      const apartmentMap = {};
-      snapshot.docs.forEach(doc => {
-        const data = doc.data();
-        const apartmentId = data.apartmentId || data.id;
-
-        // Keep only the first room's data for each apartment
-        if (!apartmentMap[apartmentId]) {
-          // Ensure the data has an id field for the Property model
-          data.id = apartmentId || data.id || doc.id;
-          apartmentMap[apartmentId] = data;
-        }
-      });
-
-      return Object.values(apartmentMap).map(data => new Property(data));
+      const snapshot = await this.firebaseService.query('apartments', conditions);
+      // simply map each document to a Property model (Property constructor handles
+      // apartmentName/address normalization)
+      return snapshot.docs.map(doc => new Property(Object.assign({ id: doc.id }, doc.data())));
     } catch (error) {
-      console.error('Error getting properties:', error);
+      console.error('Error getting properties/apartments:', error);
       throw error;
     }
   }
@@ -147,11 +135,12 @@ class DataService {
    */
   async getProperty(propertyId) {
     try {
-      const doc = await this.firebaseService.read('rooms', propertyId);
+      // collection now apartments
+      const doc = await this.firebaseService.read('apartments', propertyId);
       if (!doc) return null;
-      return new Property(doc.data());
+      return new Property(Object.assign({ id: doc.id }, doc.data()));
     } catch (error) {
-      console.error('Error getting property:', error);
+      console.error('Error getting apartment:', error);
       throw error;
     }
   }
@@ -164,11 +153,11 @@ class DataService {
   async createProperty(property) {
     try {
       if (!property.isValid()) {
-        throw new Error('Invalid property: ' + property.getValidationErrors().join(', '));
+        throw new Error('Invalid apartment: ' + property.getValidationErrors().join(', '));
       }
-      return await this.firebaseService.create('rooms', property.toJSON());
+      return await this.firebaseService.create('apartments', property.toJSON());
     } catch (error) {
-      console.error('Error creating property:', error);
+      console.error('Error creating apartment:', error);
       throw error;
     }
   }
@@ -181,7 +170,12 @@ class DataService {
    */
   async updateProperty(propertyId, updates) {
     try {
-      await this.firebaseService.update('rooms', propertyId, updates);
+      // ensure we mark the update time for later sorting/inspection
+      const payload = Object.assign({}, updates, {
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp ?
+                   firebase.firestore.FieldValue.serverTimestamp() : new Date()
+      });
+      await this.firebaseService.update('apartments', propertyId, payload);
     } catch (error) {
       console.error('Error updating property:', error);
       throw error;
@@ -191,14 +185,84 @@ class DataService {
   // ===== UNIT OPERATIONS =====
 
   /**
+   * Get recent maintenance requests for a property (limit 5)
+   * @param {string} propertyId
+   * @returns {Promise<MaintenanceRequest[]>}
+   */
+  async getPropertyMaintenance(propertyId) {
+    try {
+      // support either field name
+      let snapshot = await this.firebaseService.query('maintenanceRequests', [['propertyId', '==', propertyId]], {
+        orderBy: { field: 'createdAt', direction: 'desc' },
+        limit: 5
+      });
+      if (snapshot.empty) {
+        snapshot = await this.firebaseService.query('maintenanceRequests', [['apartmentId', '==', propertyId]], {
+          orderBy: { field: 'createdAt', direction: 'desc' },
+          limit: 5
+        });
+      }
+      return snapshot.docs.map(doc => new MaintenanceRequest(doc.data()));
+    } catch (error) {
+      console.error('Error getting apartment maintenance:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get active tenants for a property
+   * @param {string} propertyId
+   * @returns {Promise<User[]>}
+   */
+  async getPropertyTenants(propertyId) {
+    try {
+      // gather tenantIds from active leases matching the property/apartment
+      let leaseSnapshot = await this.firebaseService.query('leases', [['propertyId', '==', propertyId], ['status', '==', 'active']]);
+      if (leaseSnapshot.empty) {
+        leaseSnapshot = await this.firebaseService.query('leases', [['apartmentId', '==', propertyId], ['status', '==', 'active']]);
+      }
+      const tenantIds = [...new Set(leaseSnapshot.docs.map(doc => doc.data().tenantId))];
+      const tenants = [];
+      for (const tenantId of tenantIds) {
+        const userDoc = await this.firebaseService.read('users', tenantId);
+        if (userDoc) tenants.push(new User(userDoc.data()));
+      }
+      return tenants;
+    } catch (error) {
+      console.error('Error getting apartment tenants:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get recent activity log entries for a property
+   * @param {string} propertyId
+   * @returns {Promise<Object[]>}
+   */
+  async getPropertyActivity(propertyId) {
+    try {
+      const snapshot = await this.firebaseService.query(`apartments/${propertyId}/activity`, [] , {
+        orderBy: { field: 'timestamp', direction: 'desc' },
+        limit: 10
+      });
+      return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (error) {
+      console.error('Error getting apartment activity:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get units for property
    * @param {string} propertyId
    * @returns {Promise<Unit[]>}
    */
   async getPropertyUnits(propertyId) {
     try {
-      const conditions = [['propertyId', '==', propertyId]];
-      const snapshot = await this.firebaseService.query('units', conditions);
+      let snapshot = await this.firebaseService.query('units', [['propertyId', '==', propertyId]]);
+      if (snapshot.empty) {
+        snapshot = await this.firebaseService.query('units', [['apartmentId', '==', propertyId]]);
+      }
       return snapshot.docs.map(doc => new Unit(doc.data()));
     } catch (error) {
       console.error('Error getting units:', error);
