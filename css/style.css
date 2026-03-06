@@ -520,6 +520,37 @@ body:not(.logged-in) .admin-portal-link {
     font-weight: 500;
 }
 
+.trend {
+    font-size: 0.8rem;
+    margin-left: 6px;
+}
+.trend.positive { color: #10B981; }
+.trend.negative { color: #EF4444; }
+
+.predictive-card.machine-insight {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+}
+
+.recommendation-item.high { font-weight: 700; color: #EF4444; }
+.recommendation-item.medium { color: #F59E0B; }
+.recommendation-item.low { color: #10B981; }
+
+
+.section-title { margin: 20px 0 10px; font-size: 1.2rem; font-weight: 600; }
+.metrics-grid { display: flex; flex-wrap: wrap; gap: 20px; }
+.metric-item { background: white; padding: 20px; border-radius: var(--border-radius); box-shadow: var(--box-shadow); display: flex; align-items: center; gap: 12px; }
+.metric-icon { font-size: 1.6rem; }
+.metric-content .metric-value { font-size: 1.5rem; font-weight: 700; }
+.metric-content .metric-label { font-size: 0.9rem; color: var(--dark-gray); }
+
+.benchmark-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.benchmark-table th, .benchmark-table td { border: 1px solid #e5e7eb; padding: 8px 12px; text-align: left; }
+.benchmark-table th { background: #f3f4f6; }
+
+
+}
+
 .chartjs-tooltip {
     background: rgba(0, 0, 0, 0.8) !important;
     border-radius: 6px !important;
@@ -2794,9 +2825,14 @@ table tbody tr:hover {
 /* ensure badges remain visible even if global table styles change */
 .maintenance-row td .status-badge,
 .maintenance-row td .priority-badge,
-.maintenance-row td .maintenance-badge {
+.maintenance-row td .maintenance-badge,
+.bill-row td .status-badge,
+.bill-row td .bill-badge,
+.payment-row td .status-badge,
+.payment-row td .payment-badge,
+.tenant-row td .status-badge,
+.tenant-row td .tenant-badge {
     display: inline-block !important;
-    color: inherit !important;      /* keep text legible */
     opacity: 1 !important;
     /* badges should participate in table layout rather than being
        removed by `position:absolute` rules defined elsewhere (e.g. in

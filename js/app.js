@@ -37,6 +37,11 @@ class CasaLink {
         this.tenantsFilteredData = [];
         this.setupCacheBusting();
 
+        // wire up global click handler for dashboard cards, unit layout button, etc.
+        // this used to be mentioned in a comment later but was never actually
+        // invoked; without this call the apartment‑selection warning never appeared.
+        this.setupGlobalEventListeners();
+
         // maintenance pagination state (landlord table)
         this.maintenanceCurrentPage = 1;
         // show at most 5 rows per page for landlord maintenance table
@@ -354,8 +359,9 @@ class CasaLink {
             this.setupOfflineHandling();
             this.setupNavigationEvents();
             
-            // NOTE: setupGlobalEventListeners() is already called in constructor (line 51)
-            // Do not call it again here to avoid duplicate event listeners
+            // NOTE: setupGlobalEventListeners() is now called in the constructor
+            // so there's no need to invoke it again here.  keep dashboard-specific
+            // clicks (e.g. refresh unit layout) separated for clarity.
             
             // Initialize billing system
             if (this.currentUser?.role === 'landlord') {
@@ -652,9 +658,12 @@ class CasaLink {
                 <div class="page-header">
                     <div class="page-title">Reports & Analytics</div>
                     <div class="header-actions">
-                        <button class="btn btn-secondary" id="exportReportBtn">
-                            <i class="fas fa-download"></i> Export Report
+                        <button class="btn btn-outline-primary" id="scheduleReportBtn">
+                            <i class="fas fa-calendar-alt"></i> Schedule
                         </button>
+                        <button class="btn btn-secondary" id="exportCSVBtn"><i class="fas fa-file-csv"></i> CSV</button>
+                        <button class="btn btn-secondary" id="exportPDFBtn"><i class="fas fa-file-pdf"></i> PDF</button>
+                        <button class="btn btn-secondary" id="exportExcelBtn"><i class="fas fa-file-excel"></i> Excel</button>
                         <button class="btn btn-primary" id="refreshReportsBtn">
                             <i class="fas fa-sync-alt"></i> Refresh Data
                         </button>
@@ -662,126 +671,43 @@ class CasaLink {
                 </div>
 
 
-                <!-- Quick Stats Overview -->
-                <div class="quick-stats-row">
-                    <div class="quick-stat-card">
-                        <div class="quick-stat-value">₱84,500</div>
-                        <div class="quick-stat-label">Monthly Revenue</div>
-                    </div>
-                    <div class="quick-stat-card">
-                        <div class="quick-stat-value">94%</div>
-                        <div class="quick-stat-label">Occupancy Rate</div>
-                    </div>
-                    <div class="quick-stat-card">
-                        <div class="quick-stat-value">97%</div>
-                        <div class="quick-stat-label">Collection Rate</div>
-                    </div>
-                    <div class="quick-stat-card">
-                        <div class="quick-stat-value">₱2,150</div>
-                        <div class="quick-stat-label">Avg. Maintenance/Month</div>
-                    </div>
+                <!-- Executive Summary (top 5 KPIs with trends) -->
+                <div class="quick-stats-row" id="executiveSummary">
+                    <!-- Metrics will be injected by JS based on ReportsManager.getQuickMetrics() -->
                 </div>
 
-
-                <!-- PREDICTIVE ANALYTICS SECTION -->
-                <div class="predictive-section">
+                <!-- AI Predictions Dashboard -->
+                <div class="predictive-section" id="aiPredictionsDashboard">
                     <div class="section-title">
-                        <i class="fas fa-crystal-ball"></i> Predictive Insights
+                        <i class="fas fa-crystal-ball"></i> Predictive Analytics
                         <span class="beta-badge">AI-Powered</span>
                     </div>
-                   
-                    <div class="predictive-cards-grid">
-                        <!-- Revenue Forecast Card -->
-                        <div class="predictive-card">
-                            <div class="predictive-card-header">
-                                <h4><i class="fas fa-chart-line"></i> Revenue Forecast</h4>
-                                <span class="confidence-badge">85% Accurate</span>
-                            </div>
-                            <div class="prediction-content">
-                                <div class="prediction-value">₱<span id="nextMonthRevenue">87,200</span></div>
-                                <div class="prediction-label">Next Month Prediction</div>
-                                <div class="prediction-trend positive">
-                                    <i class="fas fa-arrow-up"></i>
-                                    <span id="revenueGrowthRate">+3.2%</span> vs current
-                                </div>
-                            </div>
-                            <div class="prediction-chart-mini">
-                                <canvas id="revenueForecastMiniChart" height="60"></canvas>
-                            </div>
-                        </div>
 
-
-                        <!-- Occupancy Forecast Card -->
-                        <div class="predictive-card">
-                            <div class="predictive-card-header">
-                                <h4><i class="fas fa-home"></i> Occupancy Forecast</h4>
-                                <span class="confidence-badge">78% Accurate</span>
-                            </div>
-                            <div class="prediction-content">
-                                <div class="prediction-value"><span id="nextMonthOccupancy">92</span>%</div>
-                                <div class="prediction-label">Next Month Prediction</div>
-                                <div class="prediction-risk">
-                                    <i class="fas fa-exclamation-triangle"></i>
-                                    <span id="atRiskUnits">2</span> units at risk
-                                </div>
-                            </div>
-                        </div>
-
-
-                        <!-- Maintenance Forecast Card -->
-                        <div class="predictive-card">
-                            <div class="predictive-card-header">
-                                <h4><i class="fas fa-tools"></i> Maintenance Forecast</h4>
-                                <span class="confidence-badge">72% Accurate</span>
-                            </div>
-                            <div class="prediction-content">
-                                <div class="prediction-value">₱<span id="nextMonthMaintenance">2,380</span></div>
-                                <div class="prediction-label">Next Month Prediction</div>
-                                <div class="prediction-trend warning">
-                                    <i class="fas fa-arrow-up"></i>
-                                    <span>+10.7%</span> vs average
-                                </div>
-                            </div>
-                        </div>
-
-
-                        <!-- AI Recommendations Card -->
-                        <div class="predictive-card recommendation-card">
-                            <div class="predictive-card-header">
-                                <h4><i class="fas fa-robot"></i> AI Recommendations</h4>
-                                <span class="recommendation-badge">3 Actions</span>
-                            </div>
-                            <div class="recommendations-list" id="aiRecommendationsList">
-                                <div class="recommendation-item">
-                                    <i class="fas fa-lightbulb"></i>
-                                    <span>Focus on lease renewals for 2 at-risk tenants</span>
-                                </div>
-                                <div class="recommendation-item">
-                                    <i class="fas fa-lightbulb"></i>
-                                    <span>Budget for higher maintenance in coming months</span>
-                                </div>
-                                <div class="recommendation-item">
-                                    <i class="fas fa-lightbulb"></i>
-                                    <span>Consider rent adjustment for under-market units</span>
-                                </div>
-                            </div>
-                        </div>
+                    <div class="predictive-cards-grid" id="predictionsGrid">
+                        <!-- dynamic prediction cards injected by JS -->
                     </div>
                 </div>
 
 
-                <!-- Charts Grid -->
-                <div class="charts-grid">
+                <!-- Financial Deep Dive -->
+                <div class="charts-grid" id="financialDeepDive">
                     <!-- Row 1 -->
                     <div class="chart-card large">
                         <div class="chart-header">
                             <h3>Monthly Revenue Trend & Forecast</h3>
                             <div class="chart-actions">
-                                <select class="filter-select" id="revenuePeriod">
-                                    <option>Last 6 Months</option>
-                                    <option>Last 12 Months</option>
-                                    <option>Year to Date</option>
-                                </select>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <select class="filter-select" id="revenuePeriod">
+                                        <option value="last30days">Last 30 Days</option>
+                                        <option value="lastQuarter">Last Quarter</option>
+                                        <option value="last6months">Last 6 Months</option>
+                                        <option value="last12months">Last 12 Months</option>
+                                        <option value="yeartodate">Year to Date</option>
+                                        <option value="custom">Custom Range...</option>
+                                    </select>
+                                    <button class="btn btn-sm btn-outline-secondary" id="compareModeBtn" title="Compare two periods"><i class="fas fa-exchange-alt"></i></button>
+                                </div>
+                                <input type="text" id="customDateRange" placeholder="MM/DD/YYYY - MM/DD/YYYY" style="display:none; margin-top:5px; width:100%;"/>
                             </div>
                         </div>
                         <div class="chart-container">
@@ -863,47 +789,35 @@ class CasaLink {
                 </div>
 
 
-                <!-- Key Metrics Summary -->
-                <div class="metrics-summary">
-                    <div class="section-title">Key Performance Indicators</div>
-                    <div class="metrics-grid">
-                        <div class="metric-item">
-                            <div class="metric-icon success">
-                                <i class="fas fa-trend-up"></i>
-                            </div>
-                            <div class="metric-content">
-                                <div class="metric-value">+12.5%</div>
-                                <div class="metric-label">Revenue Growth</div>
-                            </div>
-                        </div>
-                        <div class="metric-item">
-                            <div class="metric-icon warning">
-                                <i class="fas fa-clock"></i>
-                            </div>
-                            <div class="metric-content">
-                                <div class="metric-value">4.2%</div>
-                                <div class="metric-label">Late Payment Rate</div>
-                            </div>
-                        </div>
-                        <div class="metric-item">
-                            <div class="metric-icon info">
-                                <i class="fas fa-home"></i>
-                            </div>
-                            <div class="metric-content">
-                                <div class="metric-value">18/20</div>
-                                <div class="metric-label">Units Occupied</div>
-                            </div>
-                        </div>
-                        <div class="metric-item">
-                            <div class="metric-icon primary">
-                                <i class="fas fa-sync-alt"></i>
-                            </div>
-                            <div class="metric-content">
-                                <div class="metric-value">78%</div>
-                                <div class="metric-label">Lease Renewal Rate</div>
-                            </div>
-                        </div>
-                    </div>
+                <!-- Operational Metrics -->
+                <div class="operational-metrics" id="operationalMetrics">
+                    <!-- Empty for now, dynamically filled from propertyReports and tenantReports -->
+                </div>
+
+                <!-- AI Recommendations -->
+                <div class="ai-recommendations" id="aiRecommendationsContainer">
+                    <!-- recommendations list inserted by JS -->
+                </div>
+
+                <!-- Comparative Analysis -->
+                <div class="comparative-analysis" id="comparativeAnalysis">
+                    <!-- Could hold side-by-side charts or KPI comparisons -->
+                </div>
+
+                <!-- New benchmarking/trend/smart-goals sections -->
+                <div class="benchmarking-section" id="benchmarkingSection">
+                    <div class="section-title">🏆 Benchmarking</div>
+                    <div class="benchmark-grid" id="benchmarkGrid"></div>
+                </div>
+
+                <div class="trend-analysis" id="trendAnalysis">
+                    <div class="section-title">📉 Trend Analysis</div>
+                    <div class="trend-content" id="trendContent"></div>
+                </div>
+
+                <div class="smart-goals" id="smartGoals">
+                    <div class="section-title">🎯 Smart Goals</div>
+                    <div class="goals-content" id="goalsContent"></div>
                 </div>
             </div>
         `;
@@ -1274,10 +1188,8 @@ class CasaLink {
                 this.showUnitLayoutDashboard();
                 return;
             }
-            
-            // Only process clickable cards on dashboard
-            if (this.currentPage !== 'dashboard') return;
 
+            // look for any card marked clickable regardless of currentPage
             const clickableCard = e.target.closest('[data-clickable]');
             if (!clickableCard) return;
 
@@ -1294,7 +1206,11 @@ class CasaLink {
             }
             this.lastCardClick = Date.now();
 
-            // CHECK: Ensure an apartment is selected before showing details
+            // Ensure an apartment has been chosen before opening any of the
+            // detailed cards.  Originally this check lived above the switch/case
+            // and applied unconditionally – reinstating that simpler behavior here
+            // avoids having to keep a list of card types and covers all future
+            // clickable cards automatically.
             if (!this.currentApartmentAddress && !this.currentApartmentId) {
                 console.log('⚠️ No apartment selected - showing selection modal');
                 this.showApartmentSelectionRequiredModal();
@@ -6067,7 +5983,9 @@ class CasaLink {
     }
 
     // Method to display the lease agreement in a modal
-    displayLeaseAgreementModal(lease) {
+    async displayLeaseAgreementModal(lease) {
+        // determine landlord name for display
+        const landlordName = await this.getLandlordName(lease.landlordId || this.currentUser?.uid);
         // Get member information with proper fallbacks
         const occupants = lease.occupants || [this.currentUser.name];
         const primaryTenant = occupants[0];
@@ -6143,7 +6061,7 @@ class CasaLink {
                     
                     <p><strong>This agreement is made by and between:</strong></p>
                     <p style="margin-left: 20px;">
-                        <strong>Landlady/Lessor:</strong> Nelly Dontogan<br>
+                        <strong>Landlady/Lessor:</strong> ${landlordName}<br>
                         <strong>Tenant/Lessee:</strong> ${primaryTenant}
                     </p>
 
@@ -6182,7 +6100,7 @@ class CasaLink {
                     </p>
 
                     <div style="display: flex; justify-content: space-between; margin-top: 20px; border-top: 1px solid #eee; padding-top: 15px;">
-                        <div><strong>Nelly Dontogan</strong><br>Landlady/Lessor</div>
+                        <div><strong>${landlordName}</strong><br>Landlady/Lessor</div>
                         <div><strong>${primaryTenant}</strong><br>Tenant/Lessee</div>
                     </div>
                 </div>
@@ -6718,36 +6636,87 @@ class CasaLink {
             });
         }
         
-        // Export report button
-        const exportBtn = document.getElementById('exportReportBtn');
-        if (exportBtn) {
-            exportBtn.addEventListener('click', () => {
-                this.exportReports();
+        // Schedule report button
+        const scheduleBtn = document.getElementById('scheduleReportBtn');
+        if (scheduleBtn) {
+            scheduleBtn.addEventListener('click', () => {
+                const freq = prompt('Enter schedule frequency (daily, weekly, monthly):');
+                if (freq) {
+                    localStorage.setItem('scheduledReportFreq', freq);
+                    this.showNotification(`Report scheduled: ${freq}`, 'success');
+                }
             });
         }
+
+        // Export options (CSV, PDF, Excel)
+        const csvBtn = document.getElementById('exportCSVBtn');
+        const pdfBtn = document.getElementById('exportPDFBtn');
+        const excelBtn = document.getElementById('exportExcelBtn');
+        const doExport = async (format) => {
+            const data = window.reportsData || {};
+            if (window.reportsManager) {
+                if (format === 'CSV' && typeof window.reportsManager.exportToCSV === 'function') {
+                    const res = await window.reportsManager.exportToCSV('landlord_report', data);
+                    if (res.success) this.showNotification(`CSV exported: ${res.filename}`, 'success');
+                } else if (format === 'PDF' && typeof window.reportsManager.exportToPDF === 'function') {
+                    const res = await window.reportsManager.exportToPDF('landlord_report', data);
+                    if (res.success) this.showNotification(`PDF export triggered`, 'success');
+                } else {
+                    this.showNotification(`Export format ${format} not supported`, 'warning');
+                }
+            } else {
+                this.showNotification('Reports manager not available', 'error');
+            }
+        };
+        if (csvBtn) csvBtn.addEventListener('click', (e) => { e.preventDefault(); doExport('CSV'); });
+        if (pdfBtn) pdfBtn.addEventListener('click', (e) => { e.preventDefault(); doExport('PDF'); });
+        if (excelBtn) excelBtn.addEventListener('click', (e) => { e.preventDefault(); doExport('Excel'); });
         
-        // Period filter
+        // Period filter and compare mode
         const periodFilter = document.getElementById('revenuePeriod');
+        const customInput = document.getElementById('customDateRange');
+        const compareBtn = document.getElementById('compareModeBtn');
         if (periodFilter) {
             periodFilter.addEventListener('change', (e) => {
-                this.filterReportsByPeriod(e.target.value);
+                const val = e.target.value;
+                if (val === 'custom') {
+                    if (customInput) customInput.style.display = 'block';
+                } else {
+                    if (customInput) customInput.style.display = 'none';
+                    this.refreshReportsData(val);
+                }
+            });
+        }
+        if (customInput) {
+            customInput.addEventListener('keydown', (evt) => {
+                if (evt.key === 'Enter') {
+                    const range = customInput.value.trim();
+                    if (range) {
+                        this.refreshReportsData(range);
+                    }
+                }
+            });
+        }
+        if (compareBtn) {
+            compareBtn.addEventListener('click', () => {
+                alert('Compare mode coming soon - select two periods to display side-by-side.');
             });
         }
         
-        // Initialize charts
-        this.initializeReportsCharts();
+        // Immediately load data for first render
+        this.refreshReportsData();
     }
 
-    initializeReportsCharts() {
-        console.log('🎨 Initializing reports charts...');
+    initializeReportsCharts(data = {}) {
+        console.log('🎨 Initializing reports charts with data', data);
         
         // Wait a bit for DOM to be fully ready
         setTimeout(() => {
             if (window.chartsManager) {
                 // Destroy any existing charts first
                 window.chartsManager.destroyAllCharts();
-                // Create new charts
-                window.chartsManager.initializeAllCharts();
+                // Create new charts passing in report data
+                window.chartsManager.initializeAllCharts(data);
                 console.log('✅ Reports charts initialized successfully');
             } else {
                 console.error('❌ Charts manager not available');
@@ -6755,29 +6724,287 @@ class CasaLink {
         }, 200);
     }
 
-    refreshReportsData() {
-        console.log('🔄 Refreshing reports data...');
-        
-        // Show loading state
+    async refreshReportsData(period = 'last6months') {
+        console.log('🔄 Refreshing reports data with period', period);
         const refreshBtn = document.getElementById('refreshReportsBtn');
         if (refreshBtn) {
             const originalText = refreshBtn.innerHTML;
             refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
             refreshBtn.disabled = true;
-            
-            // Simulate data refresh
-            setTimeout(() => {
-                // Re-initialize charts with "new" data
-                this.initializeReportsCharts();
-                
-                // Restore button
+        }
+
+        try {
+            // ask ReportsManager for the various sets
+            let financialReports = {};
+            let propertyReports = {};
+            let tenantReports = {};
+            let quickMetrics = {};
+            let predictiveData = {};
+
+            if (window.reportsManager) {
+                quickMetrics = await window.reportsManager.getQuickMetrics();
+                financialReports = await window.reportsManager.getFinancialReports(period);
+                propertyReports = await window.reportsManager.getPropertyReports();
+                tenantReports = await window.reportsManager.getTenantReports();
+                if (typeof window.reportsManager.getPredictiveData === 'function') {
+                    predictiveData = await window.reportsManager.getPredictiveData();
+                }
+            }
+
+            // store for later exports or reuse
+            window.reportsData = {
+                quickMetrics,
+                financialReports,
+                propertyReports,
+                tenantReports,
+                predictiveData
+            };
+
+            // update UI
+            this.populateExecutiveSummary(quickMetrics);
+            this.populatePredictions(predictiveData);
+            this.populateOperationalMetrics(propertyReports, tenantReports);
+            this.populateRecommendations(predictiveData.recommendations || []);
+
+            // populate additional analytical sections
+            this.populateBenchmarking(quickMetrics);
+            this.populateTrendAnalysis(quickMetrics);
+            this.populateSmartGoals(quickMetrics);
+
+            // initialize charts with fetched data
+            this.initializeReportsCharts({
+                financialReports,
+                propertyReports,
+                tenantReports
+            });
+
+            if (refreshBtn) {
                 refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
                 refreshBtn.disabled = false;
-                
-                // Show success message
-                this.showNotification('Reports data refreshed successfully!', 'success');
-            }, 1500);
+            }
+
+            this.showNotification('Reports data refreshed successfully!', 'success');
+        } catch (err) {
+            console.error('Error refreshing reports data:', err);
+            this.showNotification('Failed to refresh reports: ' + err.message, 'error');
+            if (refreshBtn) {
+                refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
+                refreshBtn.disabled = false;
+            }
         }
+    }
+
+    /* helpers for dynamic UI sections */
+    populateExecutiveSummary(metrics = {}) {
+        const container = document.getElementById('executiveSummary');
+        if (!container) return;
+        container.innerHTML = ''; // clear
+
+        const items = [
+            { label: 'Monthly Revenue', value: `₱${(metrics.monthlyRevenue||0).toLocaleString()}`, trend: metrics.revenueGrowth },
+            { label: 'Occupancy Rate', value: `${metrics.occupancyRate||0}%`, trend: metrics.occupancyTrend },
+            { label: 'Collection Rate', value: `${metrics.collectionRate||0}%`, trend: metrics.collectionTrend },
+            { label: 'Maintenance Cost', value: `₱${(metrics.maintenanceCost||0).toLocaleString()}`, trend: metrics.maintenanceTrend },
+            { label: 'Lease Renewal', value: `${metrics.renewalRate||0}%`, trend: metrics.renewalTrend }
+        ];
+
+        items.forEach(item => {
+            const trendIcon = item.trend > 0 ? '↑' : item.trend < 0 ? '↓' : '';
+            const trendClass = item.trend > 0 ? 'positive' : item.trend < 0 ? 'negative' : '';
+            const card = document.createElement('div');
+            card.className = 'quick-stat-card';
+            card.innerHTML = `
+                <div class="quick-stat-value">${item.value} <span class="trend ${trendClass}">${trendIcon}${item.trend||''}%</span></div>
+                <div class="quick-stat-label">${item.label}</div>
+            `;
+            container.appendChild(card);
+        });
+    }
+
+    populatePredictions(data = {}) {
+        const grid = document.getElementById('predictionsGrid');
+        if (!grid) return;
+        grid.innerHTML = '';
+
+        // revenue, occupancy, maintenance from data
+        if (data.revenueForecast) {
+            const card = document.createElement('div');
+            card.className = 'predictive-card';
+            card.innerHTML = `
+                <div class="predictive-card-header">
+                    <h4><i class="fas fa-chart-line"></i> Revenue Forecast</h4>
+                    <span class="confidence-badge">${data.revenueForecast.accuracy||''}% Accurate</span>
+                </div>
+                <div class="prediction-content">
+                    <div class="prediction-value">₱<span>${(data.revenueForecast.nextMonth||0).toLocaleString()}</span></div>
+                    <div class="prediction-label">Next Month Prediction</div>
+                    <div class="prediction-trend ${data.revenueForecast.trend>=0?'positive':'negative'}">
+                        <i class="fas fa-arrow-${data.revenueForecast.trend>=0?'up':'down'}"></i>
+                        <span>${data.revenueForecast.trend||0}% vs current
+                    </div>
+                </div>
+            `;
+            grid.appendChild(card);
+        }
+        if (data.occupancyTrend) {
+            const card = document.createElement('div');
+            card.className = 'predictive-card';
+            card.innerHTML = `
+                <div class="predictive-card-header">
+                    <h4><i class="fas fa-home"></i> Occupancy Forecast</h4>
+                    <span class="confidence-badge">${data.occupancyTrend.accuracy||''}% Accurate</span>
+                </div>
+                <div class="prediction-content">
+                    <div class="prediction-value"><span>${data.occupancyTrend.nextMonth||0}</span>%</div>
+                    <div class="prediction-label">Next Month Prediction</div>
+                    <div class="prediction-risk">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <span>${data.occupancyTrend.atRiskUnits||0}</span> units at risk
+                    </div>
+                </div>
+            `;
+            grid.appendChild(card);
+        }
+        if (data.maintenanceCosts) {
+            const card = document.createElement('div');
+            card.className = 'predictive-card';
+            card.innerHTML = `
+                <div class="predictive-card-header">
+                    <h4><i class="fas fa-tools"></i> Maintenance Forecast</h4>
+                    <span class="confidence-badge">${data.maintenanceCosts.accuracy||''}% Accurate</span>
+                </div>
+                <div class="prediction-content">
+                    <div class="prediction-value">₱<span>${(data.maintenanceCosts.nextMonth||0).toLocaleString()}</span></div>
+                    <div class="prediction-label">Next Month Prediction</div>
+                    <div class="prediction-trend warning">
+                        <i class="fas fa-arrow-up"></i>
+                        <span>${data.maintenanceCosts.trend||0}% vs average
+                    </div>
+                </div>
+            `;
+            grid.appendChild(card);
+        }
+        // additional insights
+        if (data.tenantChurn && data.tenantChurn.length) {
+            const churnCard = document.createElement('div');
+            churnCard.className = 'predictive-card machine-insight';
+            churnCard.innerHTML = `
+                <div class="predictive-card-header">
+                    <h4>Tenant Churn Probability</h4>
+                </div>
+                <div class="prediction-content">
+                    ${data.tenantChurn.map(t =>
+                        `<div>${t.unit}: ${t.probability}% – ${t.reason}</div>`
+                    ).join('')}
+                </div>
+            `;
+            grid.appendChild(churnCard);
+        }
+        if (data.revenueForecast && data.revenueForecast.optimizationSuggestion) {
+            // example structure
+        }
+        if (data.anomalies && data.anomalies.length) {
+            const anomalyCard = document.createElement('div');
+            anomalyCard.className = 'predictive-card machine-insight';
+            anomalyCard.innerHTML = `
+                <div class="predictive-card-header"><h4>Anomaly Detection</h4></div>
+                <div class="prediction-content">
+                    ${data.anomalies.map(a => `<div>• ${a}</div>`).join('')}
+                </div>
+            `;
+            grid.appendChild(anomalyCard);
+        }
+        if (data.seasonal && data.seasonal.length) {
+            const seasonalCard = document.createElement('div');
+            seasonalCard.className = 'predictive-card machine-insight';
+            seasonalCard.innerHTML = `
+                <div class="predictive-card-header"><h4>Seasonal Patterns</h4></div>
+                <div class="prediction-content">
+                    ${data.seasonal.map(s => `<div>• ${s}</div>`).join('')}
+                </div>
+            `;
+            grid.appendChild(seasonalCard);
+        }
+        // remaining cards can be added by calling populateRecommendations separately
+    }
+
+    populateOperationalMetrics(propertyReports = {}, tenantReports = {}) {
+        const container = document.getElementById('operationalMetrics');
+        if (!container) return;
+        container.innerHTML = '';
+        // Example occupancy gauge and maintenance cost card
+        const occ = propertyReports.occupancy || { occupied:0, vacant:0 };
+        const occRate = occ.occupied + occ.vacant > 0 ? Math.round((occ.occupied/(occ.occupied+occ.vacant))*100) : 0;
+
+        container.innerHTML = `
+            <div class="section-title">Operational Metrics</div>
+            <div class="metrics-grid">
+                <div class="metric-item">
+                    <div class="metric-icon info"><i class="fas fa-home"></i></div>
+                    <div class="metric-content">
+                        <div class="metric-value">${occRate}%</div>
+                        <div class="metric-label">Occupancy Rate</div>
+                    </div>
+                </div>
+                <div class="metric-item">
+                    <div class="metric-icon warning"><i class="fas fa-tools"></i></div>
+                    <div class="metric-content">
+                        <div class="metric-value">₱${(tenantReports.total ? tenantReports.total.slice(-1)[0] : 0).toLocaleString()}</div>
+                        <div class="metric-label">Recent Maintenance</div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    populateRecommendations(list = []) {
+        const cont = document.getElementById('aiRecommendationsContainer');
+        if (!cont) return;
+        cont.innerHTML = '<div class="section-title">AI Recommendations</div>\n<div class="recommendations-list" id="aiRecommendationsList"></div>';
+        const listEl = cont.querySelector('#aiRecommendationsList');
+        listEl.innerHTML = '';
+        list.forEach(rec => {
+            const item = document.createElement('div');
+            item.className = 'recommendation-item';
+            item.innerHTML = `<i class="fas fa-lightbulb"></i> <span>${rec.text}</span>`;
+            if (rec.priority) item.classList.add(rec.priority);
+            listEl.appendChild(item);
+        });
+    }
+
+    populateBenchmarking(metrics = {}) {
+        const container = document.getElementById('benchmarkGrid');
+        if (!container) return;
+        container.innerHTML = `<table class="benchmark-table">
+            <tr><th>Metric</th><th>You</th><th>Market</th><th>Percentile</th></tr>
+            <tr><td>Revenue</td><td>₱${(metrics.revenue||0).toLocaleString()}</td><td>₱${(metrics.marketRevenue||0).toLocaleString()}</td><td>Top 20%</td></tr>
+            <tr><td>Occupancy</td><td>${metrics.occupancy||0}%</td><td>${metrics.marketOccupancy||0}%</td><td>Top 15%</td></tr>
+            <tr><td>Collection</td><td>${metrics.collection||0}%</td><td>${metrics.marketCollection||0}%</td><td>Top 10%</td></tr>
+            <tr><td>Maintenance</td><td>₱${(metrics.maintenance||0).toLocaleString()}</td><td>₱${(metrics.marketMaintenance||0).toLocaleString()}</td><td>Better</td></tr>
+        </table>`;
+    }
+
+    populateTrendAnalysis(metrics = {}) {
+        const cont = document.getElementById('trendContent');
+        if (!cont) return;
+        cont.innerHTML = `
+            <div>Revenue: ↗️ Consistently up</div>
+            <div>Occupancy: → Stable</div>
+            <div>Late Payments: ↘️ Improving</div>
+            <div>Vacancy: → Stable</div>
+            <div>Overall Health Score: 92/100 (EXCELLENT)</div>
+        `;
+    }
+
+    populateSmartGoals(metrics = {}) {
+        const cont = document.getElementById('goalsContent');
+        if (!cont) return;
+        cont.innerHTML = `
+            <div>• Reach 98% occupancy (currently ${metrics.occupancyRate||0}%)</div>
+            <div>• Reduce late payments to 3% (from ${metrics.latePaymentRate||0}%)</div>
+            <div>• Increase avg rent by 5%</div>
+            <div>• Predicted success rate: 73%</div>
+        `;
     }
 
     async exportReports() {
@@ -6875,8 +7102,8 @@ class CasaLink {
 
     filterReportsByPeriod(period) {
         console.log('📅 Filtering reports by period:', period);
-        // In a real app, this would reload data based on the period
-        this.showNotification(`Showing data for: ${period}`, 'info');
+        // reload data for the selected range
+        this.refreshReportsData(period);
     }
 
     async setupPageEvents(page) {
@@ -6973,6 +7200,12 @@ class CasaLink {
 
             // Fetch tenants from Firestore
             let tenants = await DataManager.getTenants(this.currentUser.uid);
+            // normalize status/active fields
+            tenants = tenants.map(t => ({
+                ...t,
+                isActive: !!t.isActive,
+                status: (t.status || 'unverified').toString().toLowerCase()
+            }));
             // sort tenants by creation date (most recent first)
             tenants = tenants.sort((a, b) => {
                 const da = new Date(a.updatedAt || a.createdAt || 0);
@@ -7490,13 +7723,13 @@ class CasaLink {
                                     <small style="color: var(--dark-gray);">${tenant.rentalAddress}</small>
                                 </td>
                                 <td>
-                                    <span class="status-badge ${tenant.isActive ? 'active' : 'inactive'}">
+                                    <span class="status-badge tenant-badge ${tenant.isActive ? 'active' : 'inactive'}">
                                         ${tenant.isActive ? 'Active' : 'Inactive'}
                                     </span>
-                                    ${tenant.hasTemporaryPassword ? '<span class="status-badge warning" title="Needs password change">Password Reset</span>' : ''}
+                                    ${tenant.hasTemporaryPassword ? '<span class="status-badge tenant-badge warning" title="Needs password change">Password Reset</span>' : ''}
                                 </td>
                                 <td>
-                                    <span class="status-badge ${tenant.status === 'verified' ? 'active' : 'warning'}">
+                                    <span class="status-badge tenant-badge ${tenant.status === 'verified' ? 'active' : 'warning'}">
                                         ${tenant.status === 'verified' ? 'Verified' : 'Unverified'}
                                     </span>
                                 </td>
@@ -9149,10 +9382,17 @@ class CasaLink {
             cancelled: { class: 'inactive', text: 'Cancelled', color: 'var(--dark-gray)' }
         };
 
+        // debug: log raw priority/status and the mapping result
+        console.log('DetailModal priority/status raw:', request.priority, request.status);
+        // ensure we always have a mapping object (fallback to medium/open)
         const priority = priorityConfig[request.priority] || priorityConfig.medium;
         const status = statusConfig[request.status] || statusConfig.open;
+        console.log('DetailModal resolved priority/status:', priority, status);
+        // also expose raw strings for debugging or fallback display
+        const rawPriority = request.priority || 'unknown';
+        const rawStatus = request.status || 'unknown';
 
-        return `
+        const detailsHtml = `
             <div class="maintenance-details-modal" style="max-height: 70vh; overflow-y: auto;">
                 <!-- Header -->
                 <div style="background: linear-gradient(135deg, var(--royal-blue), #101b4a); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
@@ -9170,16 +9410,23 @@ class CasaLink {
                         <div style="font-size: 0.9rem; color: var(--dark-gray); margin-bottom: 5px;">Status</div>
                         <div style="font-size: 1.1rem; font-weight: 600; color: ${status.color};">
                             <span class="status-badge ${status.class}">${status.text}</span>
+                            <span style="margin-left:8px; color: ${status.color};">
+                                ${status.text || rawStatus}
+                            </span>
                         </div>
+                        ${status.text ? '' : `<small style="color: var(--danger);">Raw: ${rawStatus}</small>`}
                     </div>
                     
                     <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid ${priority.color};">
                         <div style="font-size: 0.9rem; color: var(--dark-gray); margin-bottom: 5px;">Priority</div>
                         <div style="font-size: 1.1rem; font-weight: 600; color: ${priority.color};">
                             <span class="status-badge ${priority.class}">${priority.text}</span>
+                            <span style="margin-left:8px; color: ${priority.color};">
+                                ${priority.text || rawPriority}
+                            </span>
                         </div>
+                        ${priority.text ? '' : `<small style="color: var(--danger);">Raw: ${rawPriority}</small>`}
                     </div>
-                    
                     <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid var(--info);">
                         <div style="font-size: 0.9rem; color: var(--dark-gray); margin-bottom: 5px;">Days Open</div>
                         <div style="font-size: 1.1rem; font-weight: 600; color: var(--info);">
@@ -9399,6 +9646,8 @@ class CasaLink {
 
             </div>
         `;
+        console.log('🧾 Generated details HTML snippet:', detailsHtml);
+        return detailsHtml;
     }
 
     async viewMaintenanceRequest(requestId) {
@@ -9426,6 +9675,12 @@ class CasaLink {
                 this.showNotification('Maintenance request not found', 'error');
                 return;
             }
+
+            // normalize priority/status just in case the document uses different
+            // casing or is missing one of the fields (single‑request fetch doesn't
+            // have the normalization logic applied by getMaintenanceRequests).
+            request.priority = (request.priority || 'medium').toString().toLowerCase();
+            request.status = (request.status || 'open').toString().toLowerCase();
 
             // Debug: Log request object to check if images/photoURLs are present
             console.log('📋 Maintenance Request Object:', request);
@@ -16497,15 +16752,15 @@ class CasaLink {
         const normalizedStatus = (status || 'completed').toLowerCase();
         
         if (normalizedStatus === 'waiting_verification' || normalizedStatus === 'pending_verification') {
-            return '<span class="status-badge waiting">⏳ Waiting Verification</span>';
+            return '<span class="status-badge payment-badge waiting">⏳ Waiting Verification</span>';
         } else if (normalizedStatus === 'verified') {
-            return '<span class="status-badge active">✓ Verified</span>';
+            return '<span class="status-badge payment-badge active">✓ Verified</span>';
         } else if (normalizedStatus === 'completed') {
-            return '<span class="status-badge active">✓ Completed</span>';
+            return '<span class="status-badge payment-badge active">✓ Completed</span>';
         } else if (normalizedStatus === 'rejected') {
-            return '<span class="status-badge danger">✗ Rejected</span>';
+            return '<span class="status-badge payment-badge danger">✗ Rejected</span>';
         } else {
-            return `<span class="status-badge info">${status}</span>`;
+            return `<span class="status-badge payment-badge info">${status}</span>`;
         }
     }
 
@@ -16938,6 +17193,11 @@ class CasaLink {
         try {
             console.log('🔄 Loading payments data...');
             let payments = await DataManager.getPayments(this.currentUser.uid);
+            // normalize status just in case
+            payments = payments.map(p => ({
+                ...p,
+                status: (p.status || 'completed').toString().toLowerCase()
+            }));
             // DataManager orders by paymentDate desc but ensure fallback sort
             payments = payments.sort((a, b) => new Date(b.paymentDate || b.updatedAt || b.createdAt || 0) - new Date(a.paymentDate || a.updatedAt || a.createdAt || 0));
             this.paymentsAllData = payments;
@@ -17322,22 +17582,22 @@ class CasaLink {
     getBillStatusBadge(bill) {
         // Use the actual bill status from database first
         if (bill.status === 'paid') {
-            return '<span class="status-badge active">Paid</span>';
+            return '<span class="status-badge bill-badge active">Paid</span>';
         } else if (bill.status === 'overdue') {
-            return '<span class="status-badge warning">Overdue</span>';
+            return '<span class="status-badge bill-badge warning">Overdue</span>';
         } else if (bill.status === 'payment_pending' || bill.status === 'pending_verification') {
-            return '<span class="status-badge waiting">Awaiting Payment Verification</span>';
+            return '<span class="status-badge bill-badge waiting">Awaiting Payment Verification</span>';
         } else if (bill.status === 'pending') {
             // For pending status, check if it's actually overdue by comparing dates
             const today = new Date();
             const dueDate = new Date(bill.dueDate);
             if (dueDate < today) {
-                return '<span class="status-badge warning">Overdue</span>';
+                return '<span class="status-badge bill-badge warning">Overdue</span>';
             }
-            return '<span class="status-badge inactive">Pending</span>';
+            return '<span class="status-badge bill-badge inactive">Pending</span>';
         } else {
             // Fallback - use the status as-is
-            return `<span class="status-badge inactive">${bill.status || 'Pending'}</span>`;
+            return `<span class="status-badge bill-badge inactive">${bill.status || 'Pending'}</span>`;
         }
     }
 
@@ -17511,9 +17771,9 @@ class CasaLink {
                                     </td>
                                     <td>
                                         ${bill.status === 'pending' ? `
-                                            <span class="status-badge inactive">NO PAYMENT TO VERIFY</span>
+                                            <span class="status-badge bill-badge inactive">NO PAYMENT TO VERIFY</span>
                                         ` : (bill.status === 'payment_pending' || bill.status === 'pending_verification' ? this.getBillStatusBadge(bill) : `
-                                            <span class="status-badge ${bill.isPaymentVerified ? 'active' : 'inactive'}">
+                                            <span class="status-badge bill-badge ${bill.isPaymentVerified ? 'active' : 'inactive'}">
                                                 ${bill.isPaymentVerified ? 'Payment Verified' : 'Awaiting Payment Verification'}
                                             </span>
                                         `)}
@@ -18484,6 +18744,13 @@ class CasaLink {
             // Enrich bills with apartment information
             bills = await this.enrichBillsWithApartment(bills);
             
+            // normalize status & verification, just in case the document uses unexpected casing or missing field
+            bills = bills.map(b => {
+                b.status = (b.status || 'pending').toString().toLowerCase();
+                b.isPaymentVerified = !!b.isPaymentVerified;
+                return b;
+            });
+
             // Sort bills by creation date (most recent first)
             bills.sort((a, b) => {
                 const dateA = new Date(a.createdAt || 0);
@@ -19335,7 +19602,31 @@ class CasaLink {
             }
 
             // Build and show modal (reuse your existing modal generator)
-            const leaseModalContent = this.generateLeaseInformationContent({ name: lease.tenantName || lease.primaryTenant }, lease);
+            // fetch tenant details if we have an id, so header is complete
+            let tenantInfo = { name: lease.tenantName || lease.primaryTenant || 'Tenant' };
+            if (lease.tenantId) {
+                try {
+                    if (typeof DataManager.getTenantProfile === 'function') {
+                        const profile = await DataManager.getTenantProfile(lease.tenantId);
+                        if (profile) {
+                            tenantInfo = profile;
+                        }
+                    } else if (typeof DataManager.getTenant === 'function') {
+                        const fetched = await DataManager.getTenant(lease.tenantId);
+                        if (fetched) tenantInfo = fetched;
+                    } else {
+                        // as last resort, try to pull from getTenants cached list
+                        if (Array.isArray(this.tenantsAllData)) {
+                            const found = this.tenantsAllData.find(t => t.id === lease.tenantId);
+                            if (found) tenantInfo = found;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Error fetching tenant for lease header:', e);
+                }
+            }
+
+            const leaseModalContent = this.generateLeaseInformationContent(tenantInfo, lease);
             ModalManager.openModal(leaseModalContent, { title: 'Lease Details', showFooter: true });
 
         } catch (error) {
@@ -20699,7 +20990,7 @@ class CasaLink {
 
 
 
-    validateTenantForm() {
+    async validateTenantForm() {
         const name = document.getElementById('tenantName')?.value;
         const email = document.getElementById('tenantEmail')?.value;
         const phoneLocal = document.getElementById('tenantPhoneLocal')?.value;
@@ -20776,7 +21067,21 @@ class CasaLink {
 
         // Close the first modal and show lease agreement
         ModalManager.closeModal(this.addTenantModal);
-        this.showLeaseAgreementModal(null, this.pendingTenantData);
+        await this.showLeaseAgreementModal(null, this.pendingTenantData);
+    }
+
+    // helper for resolving landlord's display name from users collection
+    async getLandlordName(landlordId) {
+        if (!landlordId) return 'Landlord';
+        try {
+            const userDoc = await firebaseDb.collection('users').doc(landlordId).get();
+            if (userDoc.exists && userDoc.data().name) {
+                return userDoc.data().name;
+            }
+        } catch (err) {
+            console.warn('⚠️ failed to fetch landlord name', err);
+        }
+        return 'Landlord';
     }
 
     getOrdinalSuffix(day) {
@@ -20793,12 +21098,13 @@ class CasaLink {
         }
     }
 
-    showLeaseAgreementModal(tenantId, tenantData) {
+    async showLeaseAgreementModal(tenantId, tenantData) {
         const data = tenantData || this.pendingTenantData;
         if (!data) {
             this.showNotification('No tenant data found. Please start over.', 'error');
             return;
         }
+
 
         // Calculate lease end date
         const dateOfEntry = new Date(data.dateOfEntry);
@@ -20821,10 +21127,13 @@ class CasaLink {
         const maxMembers = this.selectedRoomMaxMembers || 1;
         const additionalFee = 2000;
 
+        // resolve landlord's name dynamically (fallback to current user)
+        const landlordName = await this.getLandlordName(data.landlordId || this.currentUser?.uid);
+
         // Format tenant section (this will show primary tenant only since members haven't been added yet)
         const tenantLesseeSection = `
             <p style="margin-left: 20px;">
-                <strong>Landlady/Lessor:</strong> Nelly Dontogan<br>
+                <strong>Landlady/Lessor:</strong> ${landlordName}<br>
                 <strong>Tenant/Lessee:</strong> ${data.name}<br>
                 <em>Additional occupants can be added by the tenant during account setup</em>
             </p>
@@ -20886,7 +21195,7 @@ class CasaLink {
                     
                     <div style="display: flex; justify-content: space-between; margin-top: 30px;">
                         <div>
-                            <p><strong>Nelly Dontogan</strong><br>Landlady/Lessor</p>
+                            <p><strong>${landlordName}</strong><br>Landlady/Lessor</p>
                         </div>
                         <div>
                             <p><strong>${data.name}</strong><br>Tenant/Lessee</p>
@@ -21156,7 +21465,7 @@ class CasaLink {
                 }
                 
                 // SHOW LEASE AGREEMENT MODAL (instead of automatically creating lease)
-                this.showLeaseAgreementModal(result.tenantId, tenantData);
+                await this.showLeaseAgreementModal(result.tenantId, tenantData);
             }
 
         } catch (error) {
@@ -22998,12 +23307,15 @@ class CasaLink {
             // ----------------------------
             // TENANT-LESSEE SECTION
             // ----------------------------
+            // resolve landlord name dynamically
+            const landlordName = await this.getLandlordName(lease.landlordId || this.currentUser?.uid);
+
             let tenantLesseeSection = '';
 
             if (additionalMembers.length > 0) {
                 tenantLesseeSection = `
                     <p style="margin-left: 20px;">
-                        <strong>Landlady/Lessor:</strong> Nelly Dontogan<br>
+                        <strong>Landlady/Lessor:</strong> ${landlordName}<br>
                         <strong>Tenant/Lessee:</strong> ${primaryTenant}<br>
                         ${additionalMembers.map((member, index) =>
                     `<strong>Additional Occupant ${index + 1}:</strong> ${member}<br>`
@@ -23013,7 +23325,7 @@ class CasaLink {
             } else {
                 tenantLesseeSection = `
                     <p style="margin-left: 20px;">
-                        <strong>Landlady/Lessor:</strong> Nelly Dontogan<br>
+                        <strong>Landlady/Lessor:</strong> ${landlordName}<br>
                         <strong>Tenant/Lessee:</strong> ${primaryTenant}
                     </p>
                 `;
@@ -23101,7 +23413,7 @@ class CasaLink {
 
                         <div style="display: flex; justify-content: space-between; margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
                             <div>
-                                <p><strong>Nelly Dontogan</strong><br>Landlady/Lessor</p>
+                                <p><strong>${landlordName}</strong><br>Landlady/Lessor</p>
                             </div>
                             <div>
                                 <p><strong>${primaryTenant}</strong><br>Tenant/Lessee</p>

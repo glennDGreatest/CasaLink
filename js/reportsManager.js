@@ -12,24 +12,119 @@ class ReportsManager {
     }
 
     async getPredictiveData() {
+        // Fetch base forecasts
         const [revenueForecast, occupancyTrend, maintenanceCosts] = await Promise.all([
             this.predictiveAnalytics.predictRevenueForecast(6),
             this.predictiveAnalytics.predictOccupancyTrend(6),
             this.predictiveAnalytics.predictMaintenanceCosts(6)
         ]);
-       
+
+        // Generate dummy tenant churn probabilities for now
+        const tenantChurn = [
+            { unit: '2A', probability: 85, reason: "Hasn't paid in 2 weeks" },
+            { unit: '4C', probability: 45, reason: 'Late payments twice' },
+            { unit: '1B', probability: 12, reason: 'Long-term, always paid' }
+        ];
+
+        // AI recommendations (could come from an ML model in real app)
+        const recommendations = [
+            { text: 'Focus on lease renewals for 2 at-risk tenants', priority: 'high' },
+            { text: 'Budget for higher maintenance in coming months', priority: 'medium' },
+            { text: 'Consider rent adjustment for under-market units', priority: 'low' }
+        ];
+
+        // revenue optimization suggestion
+        const optimizationSuggestion = {
+            text: 'Increase rent for Unit 3B',
+            current: 12000,
+            market: 14500,
+            potentialGain: 30000,
+            confidence: 87
+        };
+
+        // Anomaly detection placeholder
+        const anomalies = [
+            'Water usage spike in Unit 5C (possible leak)',
+            'Payment delay pattern for Unit 2B',
+            'Maintenance requests up 40% this month'
+        ];
+
+        // Seasonal patterns placeholder
+        const seasonal = [
+            'Maintenance peaks in August (AC issues)',
+            'Vacancies highest in December',
+            'Rent collections slowest in January'
+        ];
+
         return {
             revenueForecast,
             occupancyTrend,
-            maintenanceCosts
+            maintenanceCosts,
+            tenantChurn,
+            recommendations,
+            anomalies,
+            seasonal,
+            optimizationSuggestion
         };
     }
 
     // Financial Reports
     async getFinancialReports(period = 'last6months') {
         console.log('💰 Generating financial reports for:', period);
-        
-        // Mock data - in real app, this would come from Firebase
+
+        // attempt to use live data if available
+        const landlordId = this.currentUser?.uid || this.currentUser?.id;
+        if (landlordId && this.dataManager && typeof this.dataManager.getBills === 'function') {
+            try {
+                const bills = await this.dataManager.getBills(landlordId);
+                const months = this.getMonthsForPeriod(period);
+
+                const labels = months.slice();
+                const currentYear = labels.map(() => 0);
+                const lateData = labels.map(() => 0);
+                const paymentMethodsCount = {};
+                const revenueByUnit = {};
+                let paidCount = 0;
+
+                bills.forEach(b => {
+                    const status = b.status || '';
+                    if (status.toLowerCase() === 'paid') {
+                        paidCount++;
+                        const paidDate = new Date(b.paidDate || b.dueDate || Date.now());
+                        const mon = labels[paidDate.getMonth()];
+                        const idx = labels.indexOf(mon);
+                        if (idx > -1) {
+                            currentYear[idx] += (b.amount || 0);
+                            if (b.paidDate && b.dueDate && new Date(b.paidDate) > new Date(b.dueDate)) {
+                                lateData[idx]++;
+                            }
+                        }
+
+                        // revenue by unit
+                        const u = b.unitId || b.propertyId || 'Other';
+                        revenueByUnit[u] = (revenueByUnit[u] || 0) + (b.amount || 0);
+
+                        // payment methods
+                        const pm = b.paymentMethod || 'Unknown';
+                        paymentMethodsCount[pm] = (paymentMethodsCount[pm] || 0) + 1;
+                    }
+                });
+
+                const collectionRate = bills.length ? Math.round((paidCount / bills.length) * 100) : 0;
+
+                return {
+                    monthlyRevenue: { labels, currentYear, previousYear: currentYear.slice() },
+                    collectionRate: { collected: collectionRate, pending: 100 - collectionRate },
+                    latePayments: { labels, data: lateData },
+                    paymentMethods: { labels: Object.keys(paymentMethodsCount), data: Object.values(paymentMethodsCount) },
+                    revenueByUnit: { labels: Object.keys(revenueByUnit), data: Object.values(revenueByUnit) }
+                };
+            } catch (err) {
+                console.warn('Unable to build financial reports from live data, falling back to mocks', err);
+            }
+        }
+
+        // fallback to mocks
         return {
             monthlyRevenue: this.generateMonthlyRevenueData(period),
             collectionRate: this.generateCollectionRateData(),
@@ -42,7 +137,25 @@ class ReportsManager {
     // Property Performance Reports
     async getPropertyReports() {
         console.log('🏠 Generating property performance reports');
-        
+
+        const landlordId = this.currentUser?.uid || this.currentUser?.id;
+        if (landlordId && this.dataManager && typeof this.dataManager.getLandlordUnits === 'function') {
+            try {
+                const units = await this.dataManager.getLandlordUnits(landlordId);
+                const occupied = units.filter(u => u.status === 'occupied' || !u.isAvailable).length;
+                const vacant = units.length - occupied;
+                const occupancy = { occupied, vacant };
+
+                // rent comparison still mock market data
+                const rentComparison = this.generateRentComparisonData();
+                const vacancyRate = this.generateVacancyData();
+
+                return { occupancy, rentComparison, vacancyRate };
+            } catch (err) {
+                console.warn('Unable to fetch units for property reports', err);
+            }
+        }
+
         return {
             occupancy: this.generateOccupancyData(),
             rentComparison: this.generateRentComparisonData(),
@@ -53,7 +166,59 @@ class ReportsManager {
     // Tenant Management Reports
     async getTenantReports() {
         console.log('👥 Generating tenant management reports');
-        
+
+        const landlordId = this.currentUser?.uid || this.currentUser?.id;
+        if (landlordId && this.dataManager) {
+            try {
+                // retention based on leases
+                let renewed = 0, movedOut = 0;
+                if (typeof this.dataManager.getLandlordLeases === 'function') {
+                    const leases = await this.dataManager.getLandlordLeases(landlordId);
+                    leases.forEach(l => {
+                        if (l.status === 'renewed') renewed++;
+                        else if (l.status === 'ended' || l.status === 'moved_out' || l.status === 'terminated') movedOut++;
+                    });
+                }
+                const total = renewed + movedOut;
+                const retention = { renewed: total ? Math.round((renewed / total) * 100) : 0, movedOut: total ? Math.round((movedOut / total) * 100) : 0 };
+
+                // maintenance costs from requests
+                let maintenance = { labels: [], emergency: [], planned: [], total: [] };
+                if (typeof this.dataManager.getMaintenanceRequests === 'function') {
+                    const reqs = await this.dataManager.getMaintenanceRequests(landlordId);
+                    // group by month
+                    const months = this.getMonthsForPeriod('last6months');
+                    maintenance.labels = months;
+                    months.forEach(() => {
+                        maintenance.emergency.push(0);
+                        maintenance.planned.push(0);
+                        maintenance.total.push(0);
+                    });
+                    reqs.forEach(r => {
+                        const date = new Date(r.reportedDate || r.createdAt);
+                        const mon = months[date.getMonth()];
+                        const idx = months.indexOf(mon);
+                        if (idx > -1) {
+                            const cost = r.cost || r.estimatedCost || 0;
+                            maintenance.total[idx] += cost;
+                            if (r.type === 'emergency' || r.priority === 'high') {
+                                maintenance.emergency[idx] += cost;
+                            } else {
+                                maintenance.planned[idx] += cost;
+                            }
+                        }
+                    });
+                }
+
+                // turnover remains mock
+                const turnover = this.generateTurnoverData();
+
+                return { retention, maintenance, turnover };
+            } catch (err) {
+                console.warn('Unable to generate tenant reports from live data', err);
+            }
+        }
+
         return {
             retention: this.generateRetentionData(),
             maintenance: this.generateMaintenanceData(),
@@ -64,13 +229,42 @@ class ReportsManager {
     // Quick Glance Metrics
     async getQuickMetrics() {
         console.log('📊 Generating quick glance metrics');
-        
+        const landlordId = this.currentUser?.uid || this.currentUser?.id;
+        if (landlordId && this.dataManager) {
+            try {
+                const fr = await this.getFinancialReports('last6months');
+                const pr = await this.getPropertyReports();
+                const tr = await this.getTenantReports();
+                return {
+                    monthlyRevenue: fr.monthlyRevenue.currentYear.reduce((a,b)=>a+b,0),
+                    revenueGrowth: 0,
+                    occupancyRate: pr.occupancy ? Math.round((pr.occupancy.occupied / (pr.occupancy.occupied + pr.occupancy.vacant))*100) : 0,
+                    occupancyTrend: 0,
+                    collectionRate: fr.collectionRate.collected,
+                    collectionTrend: 0,
+                    maintenanceCost: tr.maintenance.total ? tr.maintenance.total.slice(-1)[0] : 0,
+                    maintenanceTrend: 0,
+                    renewalRate: tr.retention.renewed,
+                    renewalTrend: 0,
+                    vacantUnits: pr.occupancy ? pr.occupancy.vacant : 0,
+                    totalUnits: pr.occupancy ? (pr.occupancy.occupied+pr.occupancy.vacant) : 0
+                };
+            } catch(err){
+                console.warn('quick metrics live failure', err);
+            }
+        }
+        // include some trend numbers so executive summary can render arrows
         return {
             monthlyRevenue: 84500,
+            revenueGrowth: 3.2,
             occupancyRate: 94,
+            occupancyTrend: 0,
             collectionRate: 97,
+            collectionTrend: 1.5,
             maintenanceCost: 2150,
+            maintenanceTrend: -2.3,
             renewalRate: 78,
+            renewalTrend: 0.8,
             vacantUnits: 2,
             totalUnits: 20
         };
@@ -80,6 +274,13 @@ class ReportsManager {
     generateMonthlyRevenueData(period) {
         const months = this.getMonthsForPeriod(period);
         
+        // if a custom range (MM/DD/YYYY - MM/DD/YYYY) is passed,
+        // just return the last 6 months view for now and ignore custom
+        if (typeof period === 'string' && period.includes('-') && !months.length) {
+            // parse period if needed in future
+            return this.generateMonthlyRevenueData('last6months');
+        }
+
         return {
             labels: months,
             currentYear: [72000, 78000, 82000, 79000, 86000, 84500, 88000, 90000, 87000, 89000, 92000, 95000].slice(0, months.length),
@@ -174,6 +375,11 @@ class ReportsManager {
         const allMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         
         switch (period) {
+            case 'last30days':
+                // approximate by last 1 month
+                return allMonths.slice(-1);
+            case 'lastQuarter':
+                return allMonths.slice(-3);
             case 'last3months':
                 return allMonths.slice(-3);
             case 'last6months':
@@ -183,6 +389,10 @@ class ReportsManager {
             case 'last12months':
                 return allMonths;
             default:
+                // try to detect custom range pattern and ignore
+                if (typeof period === 'string' && period.includes('-')) {
+                    return allMonths.slice(-6);
+                }
                 return allMonths.slice(-6);
         }
     }
@@ -229,6 +439,20 @@ class ReportsManager {
             return { success: true, filename, format: 'PDF' };
         } catch (error) {
             console.error('Error exporting to PDF:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async exportToExcel(reportType, data) {
+        console.log('📤 Exporting report to Excel (dummy):', reportType);
+        try {
+            // Placeholder - would use SheetJS or similar
+            const filename = `CasaLink-${reportType}.xlsx`;
+            // simulate download
+            this.showNotification('Excel export not implemented; returning dummy', 'info');
+            return { success: true, filename, format: 'Excel' };
+        } catch (error) {
+            console.error('Error exporting to Excel:', error);
             return { success: false, error: error.message };
         }
     }

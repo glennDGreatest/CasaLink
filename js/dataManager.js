@@ -1808,11 +1808,17 @@ class DataManager {
         // Normalize common type field variations (some records use 'billType')
         const normalizedType = d.type ?? d.billType ?? d.bill_type ?? 'rent';
 
+        // ensure status exists and is lower‑case
+        const normalizedStatus = (d.status || 'pending').toString().toLowerCase();
+        const normalizedVerified = !!d.isPaymentVerified;
+
         return {
             ...d,
             totalAmount: normalizedTotal,
             amount: normalizedAmount,
-            type: normalizedType
+            type: normalizedType,
+            status: normalizedStatus,
+            isPaymentVerified: normalizedVerified
         };
     }
 

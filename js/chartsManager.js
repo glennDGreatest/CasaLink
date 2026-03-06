@@ -15,29 +15,35 @@ class ChartsManager {
         };
     }
 
-    initializeAllCharts() {
-        this.createRevenueTrendChart();
-        this.createPaymentMethodsChart();
-        this.createRevenuePerUnitChart();
-        this.createOccupancyChart();
-        this.createLatePaymentsChart();
-        this.createMaintenanceCostsChart();
-        this.createRetentionChart();
-        this.createRentComparisonChart();
+    // initializeAllCharts optionally accepts a data object populated by ReportsManager
+    initializeAllCharts(data = {}) {
+        this.createRevenueTrendChart(data.financialReports);
+        this.createPaymentMethodsChart(data.financialReports);
+        this.createRevenuePerUnitChart(data.financialReports);
+        this.createOccupancyChart(data.propertyReports);
+        this.createLatePaymentsChart(data.financialReports);
+        this.createMaintenanceCostsChart(data.tenantReports);
+        this.createRetentionChart(data.tenantReports);
+        this.createRentComparisonChart(data.propertyReports);
     }
 
-    createRevenueTrendChart() {
+    createRevenueTrendChart(financialData = {}) {
         const ctx = document.getElementById('revenueTrendChart').getContext('2d');
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         
+        // fallback arrays if the ReportsManager did not supply them
+        const labels = financialData.labels || months.slice(0, 6);
+        const currentYear = financialData.currentYear || [72000, 78000, 82000, 79000, 86000, 84500].slice(0, labels.length);
+        const previousYear = financialData.previousYear || [65000, 68000, 72000, 70000, 75000, 73000].slice(0, labels.length);
+
         this.charts.revenueTrend = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: months.slice(0, 6),
+                labels: labels,
                 datasets: [
                     {
                         label: 'Monthly Revenue',
-                        data: [72000, 78000, 82000, 79000, 86000, 84500],
+                        data: currentYear,
                         borderColor: this.colors.primary,
                         backgroundColor: this.colors.primary + '20',
                         borderWidth: 3,
@@ -46,7 +52,7 @@ class ChartsManager {
                     },
                     {
                         label: 'Previous Year',
-                        data: [65000, 68000, 72000, 70000, 75000, 73000],
+                        data: previousYear,
                         borderColor: this.colors.secondary,
                         backgroundColor: this.colors.secondary + '20',
                         borderWidth: 2,
@@ -95,15 +101,17 @@ class ChartsManager {
         });
     }
 
-    createPaymentMethodsChart() {
+    createPaymentMethodsChart(financialData = {}) {
         const ctx = document.getElementById('paymentMethodsChart').getContext('2d');
+        const labels = financialData.paymentMethods?.labels || ['GCash', 'Bank Transfer', 'Cash', 'Maya', 'Check'];
+        const dataPoints = financialData.paymentMethods?.data || [45, 25, 15, 10, 5];
         
         this.charts.paymentMethods = new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: ['GCash', 'Bank Transfer', 'Cash', 'Maya', 'Check'],
+                labels: labels,
                 datasets: [{
-                    data: [45, 25, 15, 10, 5],
+                    data: dataPoints,
                     backgroundColor: [
                         this.colors.success,
                         this.colors.primary,
@@ -139,16 +147,18 @@ class ChartsManager {
         });
     }
 
-    createRevenuePerUnitChart() {
+    createRevenuePerUnitChart(financialData = {}) {
         const ctx = document.getElementById('revenuePerUnitChart').getContext('2d');
+        const labels = financialData.revenueByUnit?.labels || ['Unit 101', 'Unit 102', 'Unit 201', 'Unit 202', 'Unit 301', 'Unit 302'];
+        const dataPoints = financialData.revenueByUnit?.data || [12500, 11800, 13200, 12700, 14000, 13500];
         
         this.charts.revenuePerUnit = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: ['Unit 101', 'Unit 102', 'Unit 201', 'Unit 202', 'Unit 301', 'Unit 302'],
+                labels: labels,
                 datasets: [{
                     label: 'Monthly Revenue',
-                    data: [12500, 11800, 13200, 12700, 14000, 13500],
+                    data: dataPoints,
                     backgroundColor: [
                         this.colors.primary,
                         this.colors.secondary,
@@ -190,15 +200,17 @@ class ChartsManager {
         });
     }
 
-    createOccupancyChart() {
+    createOccupancyChart(propertyData = {}) {
         const ctx = document.getElementById('occupancyChart').getContext('2d');
+        const occupied = propertyData.occupancy?.occupied || 94;
+        const vacant = propertyData.occupancy?.vacant || 6;
         
         this.charts.occupancy = new Chart(ctx, {
             type: 'doughnut',
             data: {
                 labels: ['Occupied', 'Vacant'],
                 datasets: [{
-                    data: [94, 6],
+                    data: [occupied, vacant],
                     backgroundColor: [
                         this.colors.success,
                         this.colors.danger
@@ -227,16 +239,18 @@ class ChartsManager {
         });
     }
 
-    createLatePaymentsChart() {
+    createLatePaymentsChart(financialData = {}) {
         const ctx = document.getElementById('latePaymentsChart').getContext('2d');
+        const months = financialData.labels || ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
+        const values = financialData.data || [3, 5, 2, 4, 6, 2];
         
         this.charts.latePayments = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+                labels: months,
                 datasets: [{
                     label: 'Late Payments',
-                    data: [3, 5, 2, 4, 6, 2],
+                    data: values,
                     backgroundColor: this.colors.danger,
                     borderWidth: 0,
                     borderRadius: 6
@@ -263,16 +277,18 @@ class ChartsManager {
         });
     }
 
-    createMaintenanceCostsChart() {
+    createMaintenanceCostsChart(tenantData = {}) {
         const ctx = document.getElementById('maintenanceCostsChart').getContext('2d');
+        const labels = tenantData.labels || ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
+        const costs = tenantData.total || [1800, 2200, 1500, 1900, 2100, 2150];
         
         this.charts.maintenanceCosts = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+                labels: labels,
                 datasets: [{
                     label: 'Maintenance Costs',
-                    data: [1800, 2200, 1500, 1900, 2100, 2150],
+                    data: costs,
                     borderColor: this.colors.warning,
                     backgroundColor: this.colors.warning + '20',
                     borderWidth: 3,
@@ -309,15 +325,17 @@ class ChartsManager {
         });
     }
 
-    createRetentionChart() {
+    createRetentionChart(tenantData = {}) {
         const ctx = document.getElementById('retentionChart').getContext('2d');
+        const renewed = tenantData.renewed || 78;
+        const moved = tenantData.movedOut || 22;
         
         this.charts.retention = new Chart(ctx, {
             type: 'doughnut',
             data: {
                 labels: ['Renewed', 'Moved Out'],
                 datasets: [{
-                    data: [78, 22],
+                    data: [renewed, moved],
                     backgroundColor: [
                         this.colors.success,
                         this.colors.danger
@@ -346,24 +364,27 @@ class ChartsManager {
         });
     }
 
-    createRentComparisonChart() {
+    createRentComparisonChart(propertyData = {}) {
         const ctx = document.getElementById('rentComparisonChart').getContext('2d');
+        const labels = propertyData.rentComparison?.labels || ['Studio', '1BR', '2BR', '3BR'];
+        const your = propertyData.rentComparison?.yourRent || [12000, 15000, 18000, 22000];
+        const market = propertyData.rentComparison?.marketAverage || [11500, 14500, 17500, 21000];
         
         this.charts.rentComparison = new Chart(ctx, {
             type: 'bar',
             data: {
-                labels: ['Studio', '1BR', '2BR', '3BR'],
+                labels: labels,
                 datasets: [
                     {
                         label: 'Your Rent',
-                        data: [12000, 15000, 18000, 22000],
+                        data: your,
                         backgroundColor: this.colors.primary,
                         borderWidth: 0,
                         borderRadius: 6
                     },
                     {
                         label: 'Market Average',
-                        data: [11500, 14500, 17500, 21000],
+                        data: market,
                         backgroundColor: this.colors.secondary,
                         borderWidth: 0,
                         borderRadius: 6
