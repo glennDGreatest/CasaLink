@@ -8,53 +8,88 @@ class ReportsManager {
     async init(user) {
         this.currentUser = user;
         console.log('✅ Reports Manager initialized for:', user.role);
+
+        // attach predictive analytics helper
+        if (window.PredictiveAnalytics) {
+            this.predictiveAnalytics = new PredictiveAnalytics(this.dataManager);
+            await this.predictiveAnalytics.init();
+        }
+
         return this;
     }
 
-    async getPredictiveData() {
-        // Fetch base forecasts
+    async getPredictiveData(financialReports = {}, maintenanceReports = {}) {
+        // fetch base forecasts
         const [revenueForecast, occupancyTrend, maintenanceCosts] = await Promise.all([
             this.predictiveAnalytics.predictRevenueForecast(6),
             this.predictiveAnalytics.predictOccupancyTrend(6),
             this.predictiveAnalytics.predictMaintenanceCosts(6)
         ]);
 
-        // Generate dummy tenant churn probabilities for now
-        const tenantChurn = [
-            { unit: '2A', probability: 85, reason: "Hasn't paid in 2 weeks" },
-            { unit: '4C', probability: 45, reason: 'Late payments twice' },
-            { unit: '1B', probability: 12, reason: 'Long-term, always paid' }
-        ];
+        // tenant churn probabilities via ML model
+        let tenantChurn = [];
+        if (this.predictiveAnalytics && typeof this.predictiveAnalytics.predictTenantChurn === 'function') {
+            tenantChurn = await this.predictiveAnalytics.predictTenantChurn();
+        }
+        if (tenantChurn.length === 0) {
+            tenantChurn = [
+                { unit: '2A', probability: 85, reason: "Hasn't paid in 2 weeks" },
+                { unit: '4C', probability: 45, reason: 'Late payments twice' },
+                { unit: '1B', probability: 12, reason: 'Long-term, always paid' }
+            ];
+        }
 
-        // AI recommendations (could come from an ML model in real app)
-        const recommendations = [
-            { text: 'Focus on lease renewals for 2 at-risk tenants', priority: 'high' },
-            { text: 'Budget for higher maintenance in coming months', priority: 'medium' },
-            { text: 'Consider rent adjustment for under-market units', priority: 'low' }
-        ];
+        // recommendations built off churn, forecasts, and rent suggestions
+        const recommendations = [];
+        tenantChurn.forEach(c => {
+            if (c.probability > 60) {
+                recommendations.push({ text: `Reach out to tenant in ${c.unit} (${c.probability}% churn risk)`, priority: 'high' });
+            }
+        });
+        if (maintenanceCosts && maintenanceCosts.monthlyPredictions) {
+            const avg = maintenanceCosts.monthlyPredictions.reduce((a,b)=>a+b,0)/maintenanceCosts.monthlyPredictions.length;
+            if (avg > 2500) recommendations.push({ text: 'Budget for higher maintenance in coming months', priority: 'medium' });
+        }
+        if (revenueForecast && revenueForecast.growthRate && parseFloat(revenueForecast.growthRate) < 0) {
+            recommendations.push({ text: 'Review pricing strategy to improve revenue', priority: 'low' });
+        }
+        if (recommendations.length === 0) {
+            recommendations.push({ text: 'No issues detected; keep monitoring.', priority: 'low' });
+        }
 
-        // revenue optimization suggestion
-        const optimizationSuggestion = {
-            text: 'Increase rent for Unit 3B',
-            current: 12000,
-            market: 14500,
-            potentialGain: 30000,
-            confidence: 87
-        };
+        // rent optimization suggestions
+        let optimizationSuggestion = null;
+        if (this.predictiveAnalytics && typeof this.predictiveAnalytics.suggestRentAdjustments === 'function') {
+            const opts = await this.predictiveAnalytics.suggestRentAdjustments();
+            if (opts && opts.length) optimizationSuggestion = opts[0];
+        }
+        if (!optimizationSuggestion) {
+            optimizationSuggestion = { text: 'No optimization needed', confidence: 0 };
+        }
 
-        // Anomaly detection placeholder
-        const anomalies = [
-            'Water usage spike in Unit 5C (possible leak)',
-            'Payment delay pattern for Unit 2B',
-            'Maintenance requests up 40% this month'
-        ];
+        // anomaly detection
+        let anomalies = [];
+        if (this.predictiveAnalytics && typeof this.predictiveAnalytics.detectAnomalies === 'function') {
+            anomalies = await this.predictiveAnalytics.detectAnomalies(financialReports, maintenanceReports);
+        }
+        if (!anomalies.length) {
+            anomalies = ['None detected'];
+        }
 
-        // Seasonal patterns placeholder
+        // seasonal patterns (simple placeholder, could be derived from data)
         const seasonal = [
             'Maintenance peaks in August (AC issues)',
             'Vacancies highest in December',
             'Rent collections slowest in January'
         ];
+
+        // sentiment analysis on any textual feedback (e.g. maintenance request notes)
+        let sentiment = { score: 0, label: 'neutral' };
+        if (this.predictiveAnalytics && typeof this.predictiveAnalytics.analyzeSentiment === 'function') {
+            const reqs = await this.dataManager.getMaintenanceRequests(this.currentUser.uid) || [];
+            const text = reqs.map(r => r.notes || r.description || '').join(' ');
+            sentiment = this.predictiveAnalytics.analyzeSentiment(text);
+        }
 
         return {
             revenueForecast,
@@ -64,7 +99,8 @@ class ReportsManager {
             recommendations,
             anomalies,
             seasonal,
-            optimizationSuggestion
+            optimizationSuggestion,
+            sentiment
         };
     }
 

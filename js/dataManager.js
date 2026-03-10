@@ -1260,12 +1260,36 @@ class DataManager {
         }
     }
 
-    static calculateLandlordStats(tenants, leases, bills, maintenance, totalUnits = 0) {
+    static calculateLandlordStats(tenants, leases, bills, maintenance, totalUnits = 0, rawUnits = null) {
         console.log('🧮 Calculating landlord statistics...');
         
         // PROPERTY OVERVIEW
         // Use passed totalUnits (may be 0 when landlord has no units)
         const actualTotalUnits = (typeof totalUnits === 'number' && !isNaN(totalUnits)) ? totalUnits : 0;
+        
+        // optionally derive scoped room numbers from rawUnits for bill filtering
+        // note: we only want to apply this filter when we actually have a
+        // meaningful set of room numbers. passing an empty array would cause all
+        // bills to be dropped, which is exactly what was happening when an
+        // apartment had no room documents yet. check length before using it.
+        let scopedRoomNumbers = null;
+        if (Array.isArray(rawUnits)) {
+            // use roomNumber OR id as canonical identifier; some UI components
+            // prefer one or the other so we keep both in the set.
+            scopedRoomNumbers = rawUnits.reduce((arr, u) => {
+                const r = u.roomNumber || u.id;
+                if (r && !arr.includes(r)) arr.push(r);
+                if (u.id && !arr.includes(u.id)) arr.push(u.id);
+                return arr;
+            }, []);
+            console.log(`🔍 rawUnits count=${rawUnits.length}, displayUnits(totalUnits)=${actualTotalUnits}`);
+            console.log('🔍 scopedRoomNumbers sample', scopedRoomNumbers.slice(0,10));
+            if (scopedRoomNumbers.length === 0) {
+                // don't keep the empty array, treat as null so later logic skips
+                scopedRoomNumbers = null;
+                console.log('🔍 scopedRoomNumbers was empty; will skip room-number filtering');
+            }
+        }
         
         // Active leases (both isActive and status check)
         const activeLeases = leases.filter(lease => 
@@ -1312,13 +1336,18 @@ class DataManager {
             Math.round((monthlyRevenue / expectedMonthlyRent) * 100) : 0;
         
         // Late payments (bills overdue)
-        const latePayments = bills.filter(bill => 
+        let billPool = bills;
+        // only narrow by room numbers if we actually gathered any from rawUnits
+        if (scopedRoomNumbers && scopedRoomNumbers.length > 0) {
+            billPool = billPool.filter(b => scopedRoomNumbers.includes(b.roomNumber));
+        }
+        const latePayments = billPool.filter(bill => 
             bill.status === 'pending' && 
             new Date(bill.dueDate) < today
         ).length;
         
         // Unpaid bills (all pending bills)
-        const unpaidBills = bills.filter(bill => bill.status === 'pending').length;
+        const unpaidBills = billPool.filter(bill => bill.status === 'pending').length;
         
         // OPERATIONS
         // Lease renewals (leases ending in next 30 days)
@@ -1368,19 +1397,23 @@ class DataManager {
 
     // ===== DASHBOARD STATISTICS METHODS =====
     static async getDashboardStats(userId, userRole, apartmentSelector = null) {
-        // apartmentSelector may be: null | string (apartmentAddress) | { apartmentId, apartmentAddress }
+        // apartmentSelector may be: null | string (apartmentAddress) | { apartmentId, apartmentAddress, apartmentName }
         let apartmentId = null;
         let apartmentAddress = null;
+        let apartmentName = null;
+        // apartmentSelector may supply id, address and/or name
         if (apartmentSelector) {
             if (typeof apartmentSelector === 'string') {
                 apartmentAddress = apartmentSelector;
             } else if (typeof apartmentSelector === 'object') {
                 apartmentId = apartmentSelector.apartmentId || null;
                 apartmentAddress = apartmentSelector.apartmentAddress || null;
+                // allow passing apartmentName explicitly for name-based filtering
+                apartmentName = apartmentSelector.apartmentName || null;
             }
         }
 
-        console.log(`📊 Getting dashboard stats for ${userRole}: ${userId}${apartmentId ? ` (Apartment ID: ${apartmentId})` : apartmentAddress ? ` (Apartment: ${apartmentAddress})` : ' (All apartments)'}`);
+        console.log(`📊 Getting dashboard stats for ${userRole}: ${userId}${apartmentId ? ` (Apartment ID: ${apartmentId})` : apartmentAddress ? ` (Apartment: ${apartmentAddress})` : apartmentName ? ` (Apartment Name: ${apartmentName})` : ' (All apartments)'}`);
         
         try {
             if (userRole === 'landlord') {
@@ -1394,8 +1427,8 @@ class DataManager {
                 ]);
 
                 // FILTER by apartment address if provided
-                if (apartmentId || apartmentAddress) {
-                    console.log(`🏢 Filtering stats for apartmentId: ${apartmentId} address: ${apartmentAddress}`);
+                if (apartmentId || apartmentAddress || apartmentName) {
+                    console.log(`🏢 Filtering stats for apartmentId: ${apartmentId} address: ${apartmentAddress} name: ${apartmentName}`);
 
                     // Filter units by apartmentId first, fall back to apartmentAddress
                     if (apartmentId) {
@@ -1439,6 +1472,22 @@ class DataManager {
                     bills = bills.filter(b => {
                         if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
 
+                        // match using the generic 'apartment' field if it exists. this
+                        // covers legacy documents where apartmentAddress/name may not
+                        // have been populated.
+                        if (b.apartment) {
+                            if (apartmentName && b.apartment === apartmentName) return true;
+                            if (apartmentAddress && b.apartment === apartmentAddress) return true;
+                        }
+
+                        // apartmentName-based check (more specific fields)
+                        if (apartmentName) {
+                            if ((b.apartmentName && b.apartmentName === apartmentName) ||
+                                (b.propertyName && b.propertyName === apartmentName)) {
+                                return true;
+                            }
+                        }
+
                         if (apartmentId) {
                             if ((b.apartmentId && b.apartmentId === apartmentId) ||
                                 (b.propertyId && b.propertyId === apartmentId) ||
@@ -1465,6 +1514,12 @@ class DataManager {
                     maintenanceRequests = maintenanceRequests.filter(m => {
                         if (m.roomId && filteredRoomIds.includes(m.roomId)) return true;
 
+                        // generic apartment field match for older docs
+                        if (m.apartment) {
+                            if (apartmentName && m.apartment === apartmentName) return true;
+                            if (apartmentAddress && m.apartment === apartmentAddress) return true;
+                        }
+
                         if (apartmentId) {
                             if ((m.apartmentId && m.apartmentId === apartmentId) ||
                                 (m.propertyId && m.propertyId === apartmentId) ||
@@ -1490,13 +1545,16 @@ class DataManager {
                     const tenantIds = leases.map(l => l.tenantId).filter(Boolean);
                     tenants = tenants.filter(t => tenantIds.includes(t.id));
                     
-                    console.log(`📦 Filtered data counts for ${apartmentAddress}:`, {
+                    console.log(`📦 Filtered data counts for ${apartmentAddress || apartmentName}:`, {
                         units: units.length,
                         leases: leases.length,
                         bills: bills.length,
                         maintenance: maintenanceRequests.length,
                         tenants: tenants.length
                     });
+                    // extra debug summary to help trace card mismatches
+                    console.log('🔍 sample bills after filtering:', bills.slice(0,5));
+                    console.log('🔍 sample maintenance after filtering:', maintenanceRequests.slice(0,5));
                 } else {
                     console.log('📦 Fetched data counts (all apartments):', {
                         units: units.length,
@@ -1508,7 +1566,7 @@ class DataManager {
                 }
 
                 // Calculate statistics (passing filtered units count now)
-                const stats = this.calculateLandlordStats(tenants, leases, bills, maintenanceRequests, units.length);
+                const stats = this.calculateLandlordStats(tenants, leases, bills, maintenanceRequests, units.length, units);
                 console.log('✅ Calculated dashboard stats:', stats);
                 return stats;
                 
@@ -1812,13 +1870,17 @@ class DataManager {
         const normalizedStatus = (d.status || 'pending').toString().toLowerCase();
         const normalizedVerified = !!d.isPaymentVerified;
 
+        // derive a canonical apartment name for easier filtering
+        const normalizedApartmentName = d.apartment || d.apartmentName || d.propertyName || '';
+
         return {
             ...d,
             totalAmount: normalizedTotal,
             amount: normalizedAmount,
             type: normalizedType,
             status: normalizedStatus,
-            isPaymentVerified: normalizedVerified
+            isPaymentVerified: normalizedVerified,
+            apartmentName: normalizedApartmentName
         };
     }
 
@@ -2123,6 +2185,49 @@ class DataManager {
         } catch (error) {
             console.error('Error getting bills:', error);
             return [];
+        }
+    }
+
+    /**
+     * Fetch bills for a specific apartment name.
+     * Uses the apartment/apartmentName/propertyName fields stored on the bill.
+     * If no apartmentName is provided or the query fails, falls back to getBills.
+     */
+    static async getBillsForApartment(landlordId, apartmentName) {
+        if (!landlordId) return [];
+        try {
+            if (apartmentName) {
+                const results = [];
+                const baseQuery = firebaseDb.collection('bills').where('landlordId', '==', landlordId);
+
+                // fields we will search by – apartment/address/name for compatibility
+                const searchFields = ['apartment', 'apartmentName', 'propertyName', 'apartmentAddress'];
+                for (const field of searchFields) {
+                    try {
+                        const snap = await baseQuery.where(field, '==', apartmentName).get();
+                        snap.docs.forEach(doc => {
+                            const normalized = { id: doc.id, ...this.normalizeBill(doc.data()) };
+                            if (!results.find(r => r.id === normalized.id)) {
+                                results.push(normalized);
+                            }
+                        });
+                    } catch (qerr) {
+                        console.warn(`⚠️ query by ${field} failed:`, qerr);
+                    }
+                }
+
+                console.log(`📄 Retrieved ${results.length} bills for apartmentName="${apartmentName}"`);
+                if (results.length === 0) {
+                    console.warn('⚠️ no bills found with apartmentName filter - falling back to full bill list');
+                    return await this.getBills(landlordId);
+                }
+                return results;
+            }
+            // no apartmentName supplied; fall back to fetching everything for landlord
+            return await this.getBills(landlordId);
+        } catch (error) {
+            console.error('Error getting bills for apartment:', error);
+            return await this.getBills(landlordId);
         }
     }
 

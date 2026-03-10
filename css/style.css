@@ -1243,6 +1243,41 @@ header > .container {
     width: 100%;            /* ensure it stretches the full width of its parent */
 }
 
+    .header-center {
+        flex: 1;
+        text-align: center;
+        padding: 0 20px;
+    }
+
+    .header-slogan {
+        line-height: 1.2;
+    }
+
+    .header-slogan div:first-child {
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+
+    @media (max-width: 768px) {
+        .header-center {
+            display: none; /* hide slogan on small screens to save space */
+        }
+    }
+.header-slogan {
+    line-height: 1.2;
+}
+
+.header-slogan div:first-child {
+    font-weight: 600;
+    font-size: 1.1rem;
+}
+
+@media (max-width: 768px) {
+    .header-center {
+        display: none; /* hide slogan on small screens to save space */
+    }
+}
+
 /* add extra padding for large viewports so header items don't hug the edges */
 @media (min-width: 1200px) {
     header > .container {

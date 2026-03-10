@@ -2462,8 +2462,9 @@ class CasaLink {
                 if (apartments.length === 1) {
                     selector.value = apartments[0].id;
                     this.currentApartmentId = apartments[0].id;
-                    this.currentApartmentAddress = apartments[0].apartmentAddress || null;
-                    this.currentApartmentName = apartments[0].apartmentName || apartments[0].name || apartments[0].apartmentAddress || null;
+                    // support both apartmentAddress and legacy "address" field
+                    this.currentApartmentAddress = apartments[0].apartmentAddress || apartments[0].address || null;
+                    this.currentApartmentName = apartments[0].apartmentName || apartments[0].name || this.currentApartmentAddress || null;
                     console.log('✅ Single apartment auto-selected:', this.currentApartmentName);
                 } else {
                     // Multiple apartments: don't select by default
@@ -2478,6 +2479,7 @@ class CasaLink {
 
                 // Setup change event
                 selector.addEventListener('change', async (e) => {
+                    console.log('🏷 apartmentSelector change event fired, value=', e.target.value);
                     if (!e.target.value) {
                         // User cleared selection
                         this.currentApartmentId = null;
@@ -2499,7 +2501,8 @@ class CasaLink {
                         return;
                     }
                     
-                    const selectedApartment = this.apartmentsList.find(apt => apt.id === e.target.value);
+                    const selectedApartment = this.apartmentsList.find(apt => String(apt.id) === String(e.target.value));
+                    console.log('🔎 selectedApartment', selectedApartment);
                     if (selectedApartment) {
                         this.currentApartmentId = selectedApartment.id;
                         this.currentApartmentAddress = selectedApartment.apartmentAddress || null;
@@ -2507,12 +2510,17 @@ class CasaLink {
                         this.shouldAutoLoadUnitLayout = true; // User manually selected, load it
                         // Clear cached layout so we always refresh when apartment changes
                         this._layoutAlreadyLoaded = false;
-                        console.log('🔄 Switched to apartment:', this.currentApartmentName);
+                        console.log('🔄 Switched to apartment:', this.currentApartmentName, 'id=', this.currentApartmentId);
+
+                        // clear the old numbers immediately so the user doesn't see stale data
+                        this.initializeDashboardStatsToZero();
 
                         // Reload unit layout and stats for selected apartment
                         // IMPORTANT: Await both to ensure they complete and prevent race conditions with Firestore listeners
                         await this.loadAndDisplayUnitLayoutInDashboard();
                         await this.loadDashboardDataForSelectedApartment();
+                    } else {
+                        console.warn('⚠️ Apartment id from selector not found in apartmentsList');
                     }
                 });
                 
@@ -2591,6 +2599,10 @@ class CasaLink {
                     this.currentApartmentName = this.currentApartmentAddress;
                     this.shouldAutoLoadUnitLayout = true; // User manually selected, load it
                     console.log('🔄 Switched to apartment (derived):', this.currentApartmentAddress);
+
+                    // wipe existing stats while new values are fetched
+                    this.initializeDashboardStatsToZero();
+
                     await this.loadAndDisplayUnitLayoutInDashboard();
                     await this.loadDashboardDataForSelectedApartment();
                 });
@@ -2794,13 +2806,25 @@ class CasaLink {
         }
     }
 
-    showAddPropertyStep2(modal, numberOfFloors, numberOfRooms) {
-        // Generate room form fields for each room
+    showAddPropertyStep2(modal, numberOfFloors, numberOfRooms, existingRoomsData) {
+        // remember the step configuration for navigating back from preview
+        window.currentApartmentStepConfig = { numberOfFloors, numberOfRooms };
+        // Generate room form fields for each room, optionally prefilling from existingRoomsData
         let roomFormsHTML = '';
         for (let i = 1; i <= numberOfRooms; i++) {
-            const floorOptions = Array.from({ length: numberOfFloors }, (_, idx) => `
-                <option value="${idx + 1}">Floor ${idx + 1}</option>
-            `).join('');
+            const floorOptions = Array.from({ length: numberOfFloors }, (_, idx) => {
+                const val = `${idx + 1}`;
+                const selected = existingRoomsData && existingRoomsData[i - 1] && existingRoomsData[i - 1].floor === val ? 'selected' : '';
+                return `<option value="${val}" ${selected}>Floor ${idx + 1}</option>`;
+            }).join('');
+
+            const existing = existingRoomsData && existingRoomsData[i - 1] ? existingRoomsData[i - 1] : {};
+            const roomNumVal = existing.roomNumber || '';
+            const rentVal = existing.monthlyRent != null ? existing.monthlyRent : 5000;
+            const depositVal = existing.securityDeposit != null ? existing.securityDeposit : 5000;
+            const bedroomsVal = existing.numberOfBedrooms != null ? existing.numberOfBedrooms : 1;
+            const bathroomsVal = existing.numberOfBathrooms != null ? existing.numberOfBathrooms : 1;
+            const maxMembersVal = existing.maxMembers != null ? existing.maxMembers : 1;
 
             roomFormsHTML += `
                 <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
@@ -2809,7 +2833,10 @@ class CasaLink {
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                         <div class="form-group">
                             <label class="form-label">Unit/Room Number *</label>
-                            <input type="text" class="room-number form-input" placeholder="e.g 1A, 2A, 3A" data-room-index="${i}">
+                            <input type="text" class="room-number form-input" placeholder="e.g 1A, 2A, 3A" data-room-index="${i}" value="${roomNumVal}">
+                            <div class="room-number-error" style="color:#dc3545; font-size:0.85rem; margin-top:5px; display:none;">
+                                Duplicate Unit/Room Number detected. Please use a unique Unit/Room Number.
+                            </div>
                         </div>
 
                         <div class="form-group">
@@ -2821,27 +2848,27 @@ class CasaLink {
 
                         <div class="form-group">
                             <label class="form-label">Monthly Rent (₱) *</label>
-                            <input type="number" class="room-rent form-input" min="0" step="100" value="5000" data-room-index="${i}">
+                            <input type="number" class="room-rent form-input" min="0" step="100" value="${rentVal}" data-room-index="${i}">
                         </div>
 
                         <div class="form-group">
                             <label class="form-label">Security Deposit (₱) *</label>
-                            <input type="number" class="room-deposit form-input" min="0" step="100" value="5000" data-room-index="${i}">
+                            <input type="number" class="room-deposit form-input" min="0" step="100" value="${depositVal}" data-room-index="${i}">
                         </div>
 
                         <div class="form-group">
                             <label class="form-label">Bedrooms *</label>
-                            <input type="number" class="room-bedrooms form-input" min="0" value="1" data-room-index="${i}">
+                            <input type="number" class="room-bedrooms form-input" min="0" value="${bedroomsVal}" data-room-index="${i}">
                         </div>
 
                         <div class="form-group">
                             <label class="form-label">Bathrooms *</label>
-                            <input type="number" class="room-bathrooms form-input" min="0" step="0.5" value="1" data-room-index="${i}">
+                            <input type="number" class="room-bathrooms form-input" min="0" step="0.5" value="${bathroomsVal}" data-room-index="${i}">
                         </div>
 
                         <div class="form-group">
                             <label class="form-label">Max Members *</label>
-                            <input type="number" class="room-maxmembers form-input" min="1" value="1" data-room-index="${i}">
+                            <input type="number" class="room-maxmembers form-input" min="1" value="${maxMembersVal}" data-room-index="${i}">
                         </div>
                     </div>
                 </div>
@@ -2857,7 +2884,7 @@ class CasaLink {
 
                 <div style="margin-top: 25px; display: flex; gap: 10px; justify-content: flex-end;">
                     <button type="button" class="btn btn-secondary" id="backToStep1Btn">Back</button>
-                    <button type="button" class="btn btn-primary" id="createApartmentBtn">Create Apartment & Rooms</button>
+                    <button type="button" class="btn btn-primary" id="confirmApartmentBtn">Confirm Apartment & Rooms</button>
                 </div>
             </div>
         `;
@@ -2865,13 +2892,56 @@ class CasaLink {
         // Update modal body
         modal.querySelector('.modal-body').innerHTML = step2HTML;
 
+        // function to check for duplicate room numbers and update UI
+        const validateRoomNumbers = () => {
+            const inputs = Array.from(modal.querySelectorAll('.room-number'));
+            const values = inputs.map(i => i.value.trim());
+            const freq = {};
+            values.forEach(v => { if (v) freq[v] = (freq[v] || 0) + 1; });
+
+            let hasDup = false;
+            inputs.forEach(input => {
+                const val = input.value.trim();
+                const errorDiv = input.parentElement.querySelector('.room-number-error');
+                if (val && freq[val] > 1) {
+                    hasDup = true;
+                    input.style.borderColor = '#dc3545';
+                    input.style.backgroundColor = '#ffe6e6';
+                    if (errorDiv) errorDiv.style.display = 'block';
+                } else {
+                    input.style.borderColor = '';
+                    input.style.backgroundColor = '';
+                    if (errorDiv) errorDiv.style.display = 'none';
+                }
+            });
+            const createBtn = modal.querySelector('#createApartmentBtn');
+            const confirmBtn = modal.querySelector('#confirmApartmentBtn');
+            if (confirmBtn) confirmBtn.disabled = hasDup;
+            if (createBtn) createBtn.disabled = hasDup; // in case preview step still uses it
+            return !hasDup;
+        };
+
+        // attach live validation to each room-number input
+        modal.querySelectorAll('.room-number').forEach(input => {
+            input.addEventListener('input', validateRoomNumbers);
+        });
+        // perform an initial check in case prefilled values (unlikely)
+        validateRoomNumbers();
+
         // Back button
         modal.querySelector('#backToStep1Btn').addEventListener('click', () => {
             this.showAddPropertyForm();
         });
 
-        // Submit button
-        modal.querySelector('#createApartmentBtn').addEventListener('click', async () => {
+        // Confirm button (step2 -> preview)
+        modal.querySelector('#confirmApartmentBtn').addEventListener('click', async () => {
+            // run duplicate check before proceeding
+            if (!validateRoomNumbers()) {
+                if (window.notificationManager && typeof window.notificationManager.error === 'function') {
+                    window.notificationManager.error('Please resolve duplicate room numbers before continuing.');
+                }
+                return;
+            }
             const data = window.apartmentFormData;
             const roomsData = [];
             let isValid = true;
@@ -2909,6 +2979,71 @@ class CasaLink {
                 return;
             }
 
+            // store for potential back navigation
+            window.apartmentRoomsData = roomsData;
+            // move to preview step
+            this.showAddPropertyStep3(modal, roomsData);
+        });
+    }
+
+    showAddPropertyStep3(modal, roomsData) {
+        const cfg = window.currentApartmentStepConfig || {};
+        const data = window.apartmentFormData || {};
+        // apartment information summary
+        const summaryHTML = `
+            <div style="margin-bottom:20px;">
+                <h6 style="margin-bottom:10px; color: var(--royal-blue);">Apartment Overview</h6>
+                <p><strong>Name:</strong> ${data.name || ''}</p>
+                <p><strong>Address:</strong> ${data.address || ''}</p>
+                <p><strong>Floors:</strong> ${data.floors || ''}</p>
+                <p><strong>Rooms:</strong> ${data.rooms || ''}</p>
+                ${data.description ? `<p><strong>Description:</strong> ${data.description}</p>` : ''}
+            </div>
+        `;
+        // build simple preview table
+        let previewRows = roomsData.map((r, idx) => {
+            return `<tr>
+                        <td>${idx + 1}</td>
+                        <td>${r.roomNumber}</td>
+                        <td>${r.floor}</td>
+                        <td>₱${r.monthlyRent.toLocaleString()}</td>
+                        <td>₱${r.securityDeposit.toLocaleString()}</td>
+                        <td>${r.numberOfBedrooms}</td>
+                        <td>${r.numberOfBathrooms}</td>
+                        <td>${r.maxMembers}</td>
+                    </tr>`;
+        }).join('');
+
+        const previewHTML = `
+            <div class="add-property-step3">
+                <h5 style="margin-bottom: 25px; color: var(--royal-blue);">Step 3: Apartment & Rooms Preview</h5>
+                ${summaryHTML}
+                <div style="max-height: 400px; overflow-y: auto; margin-bottom: 20px;">
+                    <table style="width:100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background:#e9ecef;">
+                                <th>#</th><th>Unit</th><th>Floor</th><th>Rent</th><th>Deposit</th><th>Beds</th><th>Baths</th><th>Max</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${previewRows}
+                        </tbody>
+                    </table>
+                </div>
+                <div style="margin-top: 25px; display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" id="backToStep2Btn">Back</button>
+                    <button type="button" class="btn btn-primary" id="createApartmentBtn">Create Apartment & Rooms</button>
+                </div>
+            </div>
+        `;
+        modal.querySelector('.modal-body').innerHTML = previewHTML;
+
+        modal.querySelector('#backToStep2Btn').addEventListener('click', () => {
+            this.showAddPropertyStep2(modal, cfg.numberOfFloors, cfg.numberOfRooms, roomsData);
+        });
+
+        modal.querySelector('#createApartmentBtn').addEventListener('click', async () => {
+            const data = window.apartmentFormData;
             try {
                 modal.querySelector('#createApartmentBtn').disabled = true;
 
@@ -3416,9 +3551,23 @@ class CasaLink {
 
             // Additionally, fetch apartment-scoped dashboard stats to update Financial and Operations cards
             try {
-                const stats = await DataManager.getDashboardStats(this.currentUser.id || this.currentUser.uid, this.currentRole, { apartmentId: this.currentApartmentId, apartmentAddress: this.currentApartmentAddress });
+                // mark token in case another load begins meanwhile
+                const statsToken = this._dashboardLoadToken = Symbol('dashboard');
+                const stats = await DataManager.getDashboardStats(
+                    this.currentUser.id || this.currentUser.uid,
+                    this.currentRole,
+                    {
+                        apartmentId: this.currentApartmentId,
+                        apartmentAddress: this.currentApartmentAddress,
+                        apartmentName: this.currentApartmentName
+                    }
+                );
                 console.log('📊 Apartment-scoped dashboard stats loaded:', stats);
-                this.updateDashboardWithRealData(stats);
+                if (statsToken === this._dashboardLoadToken) {
+                    this.updateDashboardWithRealData(stats);
+                } else {
+                    console.log('📌 Ignored stale stats from layout loader');
+                }
             } catch (err) {
                 console.warn('⚠️ Failed to load apartment-scoped dashboard stats:', err);
             }
@@ -5414,6 +5563,17 @@ class CasaLink {
                 console.warn('⚠️ Could not resolve apartment name for modal header:', err.message);
             }
             if (!apartmentDisplayName) apartmentDisplayName = room.apartmentAddress || 'Apartment';
+
+            // *** Update global apartment context so downstream actions (e.g. add tenant form)
+            // use the specific apartment of this room. This makes rental address /
+            // available rooms filtering work even if the layout was global.
+            if (room.apartmentAddress || room.rentalAddress) {
+                this.currentApartmentAddress = room.apartmentAddress || room.rentalAddress;
+            }
+            if (room.apartmentId) {
+                this.currentApartmentId = room.apartmentId;
+            }
+            this.currentApartmentName = apartmentDisplayName || this.currentApartmentName;
             
             // Format dates
             const createdDate = room.createdAt ? 
@@ -5663,7 +5823,7 @@ class CasaLink {
                             <i class="fas fa-times"></i> Close
                         </button>
                         ${room.isAvailable === true ? `
-                        <button class="btn btn-success" onclick="window.app.startAddTenantForUnit('${room.roomNumber}'); ModalManager.closeModal(this.closest('.modal-overlay'))">
+                        <button class="btn btn-success" onclick="ModalManager.closeModal(this.closest('.modal-overlay')); setTimeout(() => window.app.startAddTenantForUnit('${room.roomNumber || room.id}', { apartmentAddress: '${(room.apartmentAddress||room.rentalAddress||'').replace(/'/g,"\\'")}', apartmentName: '${(apartmentDisplayName||'').replace(/'/g,"\\'")}'}), 50)">
                             <i class="fas fa-user-plus"></i> Add Tenant
                         </button>
                         ` : ''}
@@ -6747,7 +6907,7 @@ class CasaLink {
                 propertyReports = await window.reportsManager.getPropertyReports();
                 tenantReports = await window.reportsManager.getTenantReports();
                 if (typeof window.reportsManager.getPredictiveData === 'function') {
-                    predictiveData = await window.reportsManager.getPredictiveData();
+                    predictiveData = await window.reportsManager.getPredictiveData(financialReports, tenantReports);
                 }
             }
 
@@ -6894,14 +7054,24 @@ class CasaLink {
                 </div>
                 <div class="prediction-content">
                     ${data.tenantChurn.map(t =>
-                        `<div>${t.unit}: ${t.probability}% – ${t.reason}</div>`
+                        `<div>${t.unit}: ${t.probability}%${t.reason ? ' – ' + t.reason : ''}</div>`
                     ).join('')}
                 </div>
             `;
             grid.appendChild(churnCard);
         }
         if (data.revenueForecast && data.revenueForecast.optimizationSuggestion) {
-            // example structure
+            const opt = data.revenueForecast.optimizationSuggestion;
+            const optCard = document.createElement('div');
+            optCard.className = 'predictive-card machine-insight';
+            optCard.innerHTML = `
+                <div class="predictive-card-header"><h4>Rent Optimization</h4></div>
+                <div class="prediction-content">
+                    <div>${opt.unit ? opt.unit + ': ' : ''}${opt.recommendation || opt.text || ''}</div>
+                    ${opt.probability ? `<div>Confidence: ${opt.probability}%</div>` : ''}
+                </div>
+            `;
+            grid.appendChild(optCard);
         }
         if (data.anomalies && data.anomalies.length) {
             const anomalyCard = document.createElement('div');
@@ -6924,6 +7094,17 @@ class CasaLink {
                 </div>
             `;
             grid.appendChild(seasonalCard);
+        }
+        if (data.sentiment) {
+            const sentimentCard = document.createElement('div');
+            sentimentCard.className = 'predictive-card machine-insight';
+            sentimentCard.innerHTML = `
+                <div class="predictive-card-header"><h4>Tenant Sentiment</h4></div>
+                <div class="prediction-content">
+                    <div>Overall: ${data.sentiment.label} (${data.sentiment.score})</div>
+                </div>
+            `;
+            grid.appendChild(sentimentCard);
         }
         // remaining cards can be added by calling populateRecommendations separately
     }
@@ -11350,8 +11531,9 @@ class CasaLink {
             const roomsSnapshot = await firebaseDb.collection('rooms').get();
             
             if (roomsSnapshot.empty) {
-                console.log('📦 No rooms found, creating default rooms...');
-                return await this.createDefaultRooms();
+                console.log('📦 No rooms found');
+                // do not auto-populate; just return an empty list
+                return [];
             }
             
             const rooms = roomsSnapshot.docs.map(doc => ({
@@ -11365,10 +11547,12 @@ class CasaLink {
             
         } catch (error) {
             console.error('❌ Error fetching rooms:', error);
-            return await this.createDefaultRooms();
+            // don't create default rooms on error, just propagate empty result
+            return [];
         }
     }
 
+    // show a user-friendly modal when no apartment has been selected
     showApartmentSelectionRequiredModal() {
         const modalContent = `
             <div style="text-align: center; padding: 40px 30px;">
@@ -11381,14 +11565,14 @@ class CasaLink {
                 </h3>
                 
                 <p style="color: var(--gray-700); font-size: 1rem; margin-bottom: 30px; line-height: 1.6;">
-                    You need to select an apartment from the <strong>"Viewing"</strong> dropdown menu 
+                    You need to select an apartment from the <strong>\"Viewing\"</strong> dropdown menu 
                     in order to view detailed information and statistics for your properties.
                 </p>
                 
                 <div style="background: #f8f9fa; border-left: 4px solid var(--royal-blue); padding: 20px; border-radius: 6px; margin-bottom: 30px; text-align: left;">
                     <p style="margin: 0; color: var(--dark-gray); font-size: 0.95rem;">
                         <strong>📌 How to proceed:</strong><br><br>
-                        1. Look for the <strong>"Viewing"</strong> dropdown menu at the top of the dashboard<br>
+                        1. Look for the <strong>\"Viewing\"</strong> dropdown menu at the top of the dashboard<br>
                         2. Click on it to see your available apartments<br>
                         3. Select an apartment to view<br>
                         4. Once selected, you can view all statistics and details
@@ -13343,6 +13527,7 @@ class CasaLink {
                                 <thead>
                                     <tr style="background-color: #f8f9fa;">
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Tenant</th>
+                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Apartment</th>
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Room</th>
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Amount</th>
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Due Date</th>
@@ -13358,6 +13543,7 @@ class CasaLink {
                                         return `
                                             <tr style="border-bottom: 1px solid #e9ecef;">
                                                 <td style="padding: 12px;">${bill.tenantName || 'N/A'}</td>
+                                                <td style="padding: 12px;">${bill.apartment || 'N/A'}</td>
                                                 <td style="padding: 12px;">${bill.roomNumber || 'N/A'}</td>
                                                 <td style="padding: 12px; font-weight: 600; color: var(--danger);">₱${(bill.totalAmount || 0).toLocaleString()}</td>
                                                 <td style="padding: 12px;">${dueDate.toLocaleDateString()}</td>
@@ -13400,6 +13586,7 @@ class CasaLink {
                                 <thead>
                                     <tr style="background-color: #f8f9fa;">
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Tenant</th>
+                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Apartment</th>
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Room</th>
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Type</th>
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Amount</th>
@@ -13416,6 +13603,7 @@ class CasaLink {
                                         return `
                                             <tr style="border-bottom: 1px solid #e9ecef;">
                                                 <td style="padding: 12px;">${bill.tenantName || 'N/A'}</td>
+                                                <td style="padding: 12px;">${bill.apartment || 'N/A'}</td>
                                                 <td style="padding: 12px;">${bill.roomNumber || 'N/A'}</td>
                                                 <td style="padding: 12px; text-transform: capitalize;">${bill.type || 'rent'}</td>
                                                 <td style="padding: 12px; font-weight: 600; color: var(--warning);">₱${(bill.totalAmount || 0).toLocaleString()}</td>
@@ -13767,19 +13955,47 @@ class CasaLink {
                 maxWidth: '1200px'
             });
 
+            // When possible, perform a server‑side filter by apartment name to ensure
+            // the card and modal are working from the same data set. We still keep the
+            // address-based room filtering as a secondary guard.
+            const landlordId = this.currentUser?.id || this.currentUser?.uid;
             const [bills, rooms] = await Promise.all([
-                DataManager.getBills(this.currentUser.uid),
+                DataManager.getBillsForApartment(landlordId, this.currentApartmentName),
                 this.getAllRooms()
             ]);
 
-            // FILTER by selected apartment
-            let filteredBills = bills;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering unpaid bills by apartment: ${this.currentApartmentAddress}`);
-                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
-                filteredBills = bills.filter(b => roomNumbers.includes(b.roomNumber));
+            // determine the rooms that belong to the selected apartment (using id/address)
+            let apartmentUnits = [];
+            if (this.currentApartmentId) {
+                apartmentUnits = rooms.filter(r => r.apartmentId === this.currentApartmentId);
+            } else if (this.currentApartmentAddress) {
+                apartmentUnits = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
             }
+            const filteredRoomNumbers = apartmentUnits.map(u => u.roomNumber);
+            const filteredRoomIds = apartmentUnits.map(u => u.id);
+
+            // now apply the comprehensive filter to the bills list
+            let filteredBills = bills.filter(b => {
+                if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
+                if (this.currentApartmentId && b.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && this.currentApartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
+                if (this.currentApartmentName && ((b.apartment && b.apartment === this.currentApartmentName) ||
+                                                 (b.apartmentName && b.apartmentName === this.currentApartmentName) ||
+                                                 (b.propertyName && b.propertyName === this.currentApartmentName))) {
+                    return true;
+                }
+                if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
+                    if (this.currentApartmentId) {
+                        if (b.apartmentId && b.apartmentId !== this.currentApartmentId) return false;
+                        return true;
+                    } else if (this.currentApartmentAddress) {
+                        if (b.apartmentAddress && b.apartmentAddress !== this.currentApartmentAddress) return false;
+                        return true;
+                    }
+                }
+                return false;
+            });
+            console.log(`🏢 ${filteredBills.length} bills remain after apartment filter (modal)`);
 
             const unpaidBills = this.getUnpaidBills(filteredBills);
             const unpaidBillsTable = this.generateUnpaidBillsTable(unpaidBills);
@@ -13822,14 +14038,37 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
-            // FILTER by selected apartment
-            let filteredBills = bills;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering late payments by apartment: ${this.currentApartmentAddress}`);
-                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
-                filteredBills = bills.filter(b => roomNumbers.includes(b.roomNumber));
+            // filter using the same comprehensive rules as the unpaid modal/stat loader
+            let apartmentUnits = [];
+            if (this.currentApartmentId) {
+                apartmentUnits = rooms.filter(r => r.apartmentId === this.currentApartmentId);
+            } else if (this.currentApartmentAddress) {
+                apartmentUnits = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
             }
+            const filteredRoomNumbers = apartmentUnits.map(u => u.roomNumber);
+            const filteredRoomIds = apartmentUnits.map(u => u.id);
+
+            let filteredBills = bills.filter(b => {
+                if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
+                if (this.currentApartmentId && b.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && this.currentApartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
+                if (this.currentApartmentName && ((b.apartment && b.apartment === this.currentApartmentName) ||
+                                                 (b.apartmentName && b.apartmentName === this.currentApartmentName) ||
+                                                 (b.propertyName && b.propertyName === this.currentApartmentName))) {
+                    return true;
+                }
+                if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
+                    if (this.currentApartmentId) {
+                        if (b.apartmentId && b.apartmentId !== this.currentApartmentId) return false;
+                        return true;
+                    } else if (this.currentApartmentAddress) {
+                        if (b.apartmentAddress && b.apartmentAddress !== this.currentApartmentAddress) return false;
+                        return true;
+                    }
+                }
+                return false;
+            });
+            console.log(`🏢 ${filteredBills.length} late-payment bills remain after apartment filter`);
 
             const latePayments = this.getLatePayments(filteredBills);
             const latePaymentsTable = this.generateLatePaymentsTable(latePayments);
@@ -13877,33 +14116,54 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
-            // FILTER by selected apartment using 3-tier matching
-            let filteredBills = bills;
-            let filteredLeases = leases;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering revenue by apartment: ${this.currentApartmentAddress}`);
-                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
-                const roomIds = apartmentRooms.map(r => r.id);
-                
-                filteredBills = bills.filter(b => {
-                    if (b.roomId && roomIds.includes(b.roomId)) return true;
-                    if (b.apartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
-                    if (b.roomNumber && roomNumbers.includes(b.roomNumber)) return true;
-                    return false;
-                });
-                
-                filteredLeases = leases.filter(l => {
-                    if (l.roomId && roomIds.includes(l.roomId)) return true;
-                    if (l.apartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
-                    if (l.roomNumber && roomNumbers.includes(l.roomNumber)) {
-                        // If lease has apartmentAddress, it must match selected apartment
-                        if (l.apartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
+            // comprehensive apartment filter (same logic as unpaid modal)
+            let apartmentUnits = [];
+            if (this.currentApartmentId) {
+                apartmentUnits = rooms.filter(r => r.apartmentId === this.currentApartmentId);
+            } else if (this.currentApartmentAddress) {
+                apartmentUnits = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
+            }
+            const filteredRoomNumbers = apartmentUnits.map(u => u.roomNumber);
+            const filteredRoomIds = apartmentUnits.map(u => u.id);
+
+            let filteredBills = bills.filter(b => {
+                if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
+                if (this.currentApartmentId && b.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && this.currentApartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
+                if (this.currentApartmentName && ((b.apartment && b.apartment === this.currentApartmentName) ||
+                                                 (b.apartmentName && b.apartmentName === this.currentApartmentName) ||
+                                                 (b.propertyName && b.propertyName === this.currentApartmentName))) {
+                    return true;
+                }
+                if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
+                    if (this.currentApartmentId) {
+                        if (b.apartmentId && b.apartmentId !== this.currentApartmentId) return false;
+                        return true;
+                    } else if (this.currentApartmentAddress) {
+                        if (b.apartmentAddress && b.apartmentAddress !== this.currentApartmentAddress) return false;
                         return true;
                     }
-                    return false;
-                });
-            }
+                }
+                return false;
+            });
+
+            let filteredLeases = leases.filter(l => {
+                if (l.roomId && filteredRoomIds.includes(l.roomId)) return true;
+                if (this.currentApartmentId && l.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && this.currentApartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
+                if (this.currentApartmentName && ((l.apartment && l.apartment === this.currentApartmentName) ||
+                                                  (l.apartmentName && l.apartmentName === this.currentApartmentName) ||
+                                                  (l.propertyName && l.propertyName === this.currentApartmentName))) {
+                    return true;
+                }
+                if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) {
+                    if (l.apartmentAddress && this.currentApartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
+                    return true;
+                }
+                return false;
+            });
+
+            console.log(`🏢 ${filteredBills.length} revenue bills and ${filteredLeases.length} leases remain after apartment filter`);
 
             const revenueData = this.calculateRevenueBreakdown(filteredBills, filteredLeases);
             const revenueTable = this.generateRevenueTable(revenueData);
@@ -14881,10 +15141,32 @@ class CasaLink {
                     return;
                 }
             }
-            
-            const stats = await DataManager.getDashboardStats(this.currentUser.id || this.currentUser.uid, this.currentRole, { apartmentId: this.currentApartmentId, apartmentAddress: this.currentApartmentAddress });
-            console.log('📊 Fresh dashboard stats:', stats);
-            this.updateDashboardWithRealData(stats);
+
+            // If an apartment is selected, defer to the more granular loader which
+            // ensures all filtering logic exactly matches the unit layout.
+            if (this.currentRole === 'landlord' && (this.currentApartmentId || this.currentApartmentAddress)) {
+                console.log('📍 Apartment selected, using scoped dashboard loader');
+                await this.loadDashboardDataForSelectedApartment();
+            } else {
+                // token for generic loader as well
+                this._dashboardLoadToken = Symbol('dashboard');
+                const myToken = this._dashboardLoadToken;
+                const stats = await DataManager.getDashboardStats(
+                    this.currentUser.id || this.currentUser.uid,
+                    this.currentRole,
+                    {
+                        apartmentId: this.currentApartmentId,
+                        apartmentAddress: this.currentApartmentAddress,
+                        apartmentName: this.currentApartmentName
+                    }
+                );
+                console.log('📊 Fresh dashboard stats:', stats);
+                if (this._dashboardLoadToken === myToken) {
+                    this.updateDashboardWithRealData(stats);
+                } else {
+                    console.log('📌 Ignored outdated generic stats response');
+                }
+            }
             
             // Auto-load unit layout for landlords ONLY if appropriate
             if (this.currentRole === 'landlord' && this.shouldAutoLoadUnitLayout !== false) {
@@ -14922,23 +15204,71 @@ class CasaLink {
         try {
             console.log('🔄 Loading dashboard data for selected apartment...');
             console.log(`📍 Current apartment selection: ID=${this.currentApartmentId}, Address=${this.currentApartmentAddress}`);
+
+            // bookkeeping token to prevent stale responses
+            this._dashboardLoadToken = Symbol('dashboard');
+            const myToken = this._dashboardLoadToken;
+
+            // clear any stale values before fetching new ones
+            this.initializeDashboardStatsToZero();
+            // optionally show loading indicator on cards
+            const cardChanges = document.querySelectorAll('.card-change');
+            cardChanges.forEach(el => {
+                el.className = 'card-change loading';
+                el.innerHTML = `<i class="fas fa-spinner fa-spin"></i> <span>Updating</span>`;
+            });
             
             // Fetch same data sources used by the inline unit layout so scoping matches exactly
             const landlordId = this.currentUser?.id || this.currentUser?.uid;
-            const [units, tenants, leases, bills, maintenance] = await Promise.all([
+            // if we have a currentApartmentName use a specialized query so that the
+            // unpaid bills card is guaranteed to come from firestore with the proper
+            // apartment name filter. this mirrors the field used by the unit layout
+            // and the create‑bill form (which stores 'apartment').
+            const apartmentNameForQuery = this.currentApartmentName || '';
+            let [units, tenants, leases, bills, maintenance] = await Promise.all([
                 this.fetchAllUnitsFromFirestore(),
                 DataManager.getTenants(landlordId),
                 DataManager.getLandlordLeases(landlordId),
-                DataManager.getBills(landlordId),
+                DataManager.getBillsForApartment(landlordId, apartmentNameForQuery),
                 DataManager.getMaintenanceRequests(landlordId)
             ]);
 
-            console.log(`📦 Raw data fetched: ${units.length} units, ${tenants.length} tenants, ${leases.length} leases, ${bills.length} bills`);
+            console.log(`📦 Raw data fetched: ${units.length} units, ${tenants.length} tenants, ${leases.length} leases, ${bills.length} bills (filtered by apartmentName="${apartmentNameForQuery}")`);
+            if (bills.length === 0 && (this.currentApartmentAddress || this.currentApartmentId)) {
+                console.warn('⚠️ received 0 bills from name query in dashboard loader; falling back to full bill set');
+                bills = await DataManager.getBills(landlordId);
+            }
+
+            // Determine apartment-specific units from the raw (un-enriched) list.
+            // Use the same source that the unpaid bills modal uses (getAllRooms) so the
+            // room numbers are guaranteed to match what the modal will filter by.
+            let apartmentUnits = [];
+            try {
+                const rooms = await this.getAllRooms();
+                apartmentUnits = rooms.filter(r => {
+                    if (this.currentApartmentId) {
+                        return r.apartmentId === this.currentApartmentId;
+                    }
+                    if (this.currentApartmentAddress) {
+                        return r.apartmentAddress === this.currentApartmentAddress;
+                    }
+                    return false;
+                });
+                console.log('🏢 apartmentUnits from getAllRooms:', apartmentUnits.map(r=>r.id));
+            } catch (err) {
+                console.warn('⚠️ failed to load rooms for apartmentUnits, falling back to units array', err);
+                if (this.currentApartmentId) {
+                    apartmentUnits = units.filter(u => u.apartmentId === this.currentApartmentId);
+                } else if (this.currentApartmentAddress) {
+                    apartmentUnits = units.filter(u => u.apartmentAddress === this.currentApartmentAddress);
+                }
+            }
+            console.log(`🏢 Raw apartment units count for stats: ${apartmentUnits.length}`);
 
             // Enrich units with tenant data using the same method as the unit layout
             const enrichedUnits = this.enrichUnitsWithTenantData(units, tenants, leases);
 
-            // Filter by selected apartment (prioritize apartmentId)
+            // Filter enriched units for display/occupancy calculations
             let displayUnits = [];
             if (this.currentApartmentId) {
                 displayUnits = enrichedUnits.filter(u => u.apartmentId === this.currentApartmentId);
@@ -14951,41 +15281,74 @@ class CasaLink {
             }
 
             // Prepare filtered lists for leases, bills, and maintenance to pass to the stats calculator
-            const filteredRoomNumbers = displayUnits.map(u => u.roomNumber);
-            const filteredRoomIds = displayUnits.map(u => u.id);
+            // Use apartmentUnits (raw) to derive room numbers/ids so bill filtering matches the modal
+            const filteredRoomNumbers = apartmentUnits.map(u => u.roomNumber);
+            const filteredRoomIds = apartmentUnits.map(u => u.id);
 
             const filteredLeases = leases.filter(l => {
+                // match by explicit roomId first
                 if (l.roomId && filteredRoomIds.includes(l.roomId)) return true;
-                if (this.currentApartmentId && l.apartmentId && l.apartmentId === this.currentApartmentId) return true;
-                if (!this.currentApartmentId && l.apartmentAddress && this.currentApartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
+                // match explicit apartment fields
+                if (this.currentApartmentId && l.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && this.currentApartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
+                // fallback to roomNumber only when apartment info agrees (prevents cross‑apartment leakage)
                 if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) {
-                    if (l.apartmentId && this.currentApartmentId && l.apartmentId !== this.currentApartmentId) return false;
-                    if (l.apartmentAddress && this.currentApartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
-                    return true;
+                    if (this.currentApartmentId) {
+                        if (l.apartmentId && l.apartmentId === this.currentApartmentId) return true;
+                        return false; // missing or mismatched apartmentId
+                    } else if (this.currentApartmentAddress) {
+                        if (l.apartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
+                        return false;
+                    }
                 }
                 return false;
             });
 
+            // Bills have already been pre‑filtered by apartmentName at the database level
+            // but we still run the same defensive checks to ensure consistency with units.
             const filteredBills = bills.filter(b => {
+                // if for any reason a bill slipped through without the correct apartment
+                // we include it only if it matches the room or apartment identifiers.
                 if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
-                if (this.currentApartmentId && b.apartmentId && b.apartmentId === this.currentApartmentId) return true;
-                if (!this.currentApartmentId && b.apartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
+                // generic field match by apartment or address
+                if (b.apartment) {
+                    if (this.currentApartmentName && b.apartment === this.currentApartmentName) return true;
+                    if (this.currentApartmentAddress && b.apartment === this.currentApartmentAddress) return true;
+                }
+                if (this.currentApartmentId && b.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && this.currentApartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
                 if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
-                    if (b.apartmentId && this.currentApartmentId && b.apartmentId !== this.currentApartmentId) return false;
-                    if (b.apartmentAddress && this.currentApartmentAddress && b.apartmentAddress !== this.currentApartmentAddress) return false;
+                    if (this.currentApartmentId) {
+                        if (b.apartmentId && b.apartmentId === this.currentApartmentId) return true;
+                        return false;
+                    } else if (this.currentApartmentAddress) {
+                        if (b.apartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
+                        return false;
+                    }
+                }
+                // final catch: if the bill has a normalized apartmentName that exactly matches
+                // our current apartmentName, we allow it as well. this covers any edge cases
+                if (b.apartmentName && b.apartmentName === this.currentApartmentName) return true;
+                if (m.roomId && filteredRoomIds.includes(m.roomId)) return true;
+                // generic field match
+                if (m.apartment) {
+                    if (this.currentApartmentName && m.apartment === this.currentApartmentName) return true;
+                    if (this.currentApartmentAddress && m.apartment === this.currentApartmentAddress) return true;
+                }
+                if (this.currentApartmentId && m.apartmentId === this.currentApartmentId) return true;
+                if (!this.currentApartmentId && this.currentApartmentAddress && m.apartmentAddress === this.currentApartmentAddress) return true;
+                if (this.currentApartmentName && ((m.apartmentName && m.apartmentName === this.currentApartmentName) ||
+                                                  (m.propertyName && m.propertyName === this.currentApartmentName))) {
                     return true;
                 }
-                return false;
-            });
-
-            const filteredMaintenance = maintenance.filter(m => {
-                if (m.roomId && filteredRoomIds.includes(m.roomId)) return true;
-                if (this.currentApartmentId && m.apartmentId && m.apartmentId === this.currentApartmentId) return true;
-                if (!this.currentApartmentId && m.apartmentAddress && m.apartmentAddress === this.currentApartmentAddress) return true;
                 if (m.roomNumber && filteredRoomNumbers.includes(m.roomNumber)) {
-                    if (m.apartmentId && this.currentApartmentId && m.apartmentId !== this.currentApartmentId) return false;
-                    if (m.apartmentAddress && this.currentApartmentAddress && m.apartmentAddress !== this.currentApartmentAddress) return false;
-                    return true;
+                    if (this.currentApartmentId) {
+                        if (m.apartmentId && m.apartmentId === this.currentApartmentId) return true;
+                        return false;
+                    } else if (this.currentApartmentAddress) {
+                        if (m.apartmentAddress && m.apartmentAddress === this.currentApartmentAddress) return true;
+                        return false;
+                    }
                 }
                 return false;
             });
@@ -14997,11 +15360,16 @@ class CasaLink {
             console.log(`📦 Filtered data for apartment: ${displayUnits.length} units, ${filteredLeases.length} leases, ${filteredBills.length} bills, ${filteredTenants.length} tenants`);
 
             // Calculate stats using DataManager.calculateLandlordStats to keep calculations consistent
-            const stats = DataManager.calculateLandlordStats(filteredTenants, filteredLeases, filteredBills, filteredMaintenance, displayUnits.length);
+            const stats = DataManager.calculateLandlordStats(filteredTenants, filteredLeases, filteredBills, filteredMaintenance, displayUnits.length, apartmentUnits);
             console.log('📊 Dashboard stats for apartment (scoped):', stats);
             console.log(`✅ Updating dashboard with: Occupancy=${stats.occupancyRate}%, Units=${stats.occupiedUnits}/${stats.totalUnits}, Revenue=₱${stats.totalRevenue}`);
             
-            this.updateDashboardWithRealData(stats);
+            // if another load was started after this one, ignore this result
+            if (this._dashboardLoadToken === myToken) {
+                this.updateDashboardWithRealData(stats);
+            } else {
+                console.log('📌 Ignored outdated stats response');
+            }
         } catch (error) {
             console.log('❌ Failed to load dashboard data for selected apartment:', error);
             this.showDashboardErrorState();
@@ -15393,12 +15761,25 @@ class CasaLink {
                 </option>
             `).join('');
 
-            // Smart autofill for description (Rent - Month Year)
+            // Smart autofill for description based on bill type and current month/year
             const today = new Date();
-            const defaultDescription = `Rent - ${today.toLocaleDateString('en-US', { 
+            const monthYear = today.toLocaleDateString('en-US', { 
                 month: 'long', 
                 year: 'numeric' 
-            })}`;
+            });
+            // helper to compute a description given a bill type
+            const getDefaultDescription = (type) => {
+                switch(type) {
+                    case 'rent': return `Rent - ${monthYear}`;
+                    case 'utility': return `Utility Bill - ${monthYear}`;
+                    case 'maintenance': return `Maintenance Fee - ${monthYear}`;
+                    case 'penalty': return `Penalty Fee - ${monthYear}`;
+                    case 'other': return `Other - ${monthYear}`;
+                    default: return '';
+                }
+            };
+
+            const defaultDescription = getDefaultDescription('rent');
 
             const modalContent = `
                 <div class="create-bill-modal">
@@ -15481,8 +15862,18 @@ class CasaLink {
 
             // Add real-time validation listeners
             document.getElementById('billTenant')?.addEventListener('change', () => this.validateBillForm());
-            document.getElementById('billType')?.addEventListener('change', () => this.validateBillForm());
-            document.getElementById('billDescription')?.addEventListener('input', () => this.validateBillForm());
+            const billTypeEl = document.getElementById('billType');
+            const billDescEl = document.getElementById('billDescription');
+            if (billTypeEl) {
+                billTypeEl.addEventListener('change', () => {
+                    // update description each time the type changes
+                    if (billDescEl) {
+                        billDescEl.value = getDefaultDescription(billTypeEl.value);
+                    }
+                    this.validateBillForm();
+                });
+            }
+            billDescEl?.addEventListener('input', () => this.validateBillForm());
             document.getElementById('billDueDate')?.addEventListener('change', () => this.validateBillForm());
 
             // Add listener to first bill item
@@ -16210,22 +16601,19 @@ class CasaLink {
                             <span>CasaLink</span>
                         </div>
                         
-                        <nav class="nav-links ${isLandlord ? 'landlord-nav' : 'tenant-nav'}">
+                        <div class="header-center">
                             ${isLandlord ? `
-                                <a href="#" class="active" data-page="dashboard">Dashboard</a>
-                                <a href="#" data-page="properties">Properties</a>
-                                <a href="#" data-page="billing">Billing & Payments</a>
-                                <a href="#" data-page="maintenance">Maintenance</a>
-                                <a href="#" data-page="tenants">Tenant Management</a>
-                                <a href="#" data-page="lease-management">Lease Management</a>
-                                <a href="#" data-page="reports">Reports</a>
+                                <div class="header-slogan">
+                                    <div>Smart Property Management Made Simple</div>
+                                    <div>Streamline your rental properties, tenants, and maintenance from one powerful dashboard</div>
+                                </div>
                             ` : `
-                                <a href="#" class="active" data-page="dashboard">Dashboard</a>
-                                <a href="#" data-page="tenantBilling">Billing & Payments</a>
-                                <a href="#" data-page="tenantMaintenance">Maintenance</a>
-                                <a href="#" data-page="tenantProfile">My Profile</a>
+                                <div class="header-slogan">
+                                    <div>Tenant Portal at Your Fingertips</div>
+                                    <div>Pay bills, request maintenance, and manage your profile all in one place</div>
+                                </div>
                             `}
-                        </nav>
+                        </div>
                         
                         <div class="header-actions">
                             <div class="user-profile" id="userProfile">
@@ -20067,8 +20455,8 @@ class CasaLink {
             const roomsSnapshot = await roomsQuery.get();
             
             if (roomsSnapshot.empty) {
-                console.log('📦 No available rooms found, creating default rooms collection...');
-                return await this.createDefaultRooms();
+                console.log('📦 No available rooms found');
+                return [];
             }
             
             const rooms = roomsSnapshot.docs.map(doc => ({
@@ -20082,113 +20470,14 @@ class CasaLink {
             
         } catch (error) {
             console.error('❌ Error fetching available rooms:', error);
-            // Fallback to creating default rooms
-            return await this.createDefaultRooms();
+            return [];
         }
     }
 
     async createDefaultRooms() {
-        try {
-            console.log('🏗️ Creating default rooms collection with member limits...');
-            
-            const defaultRooms = [
-                // 1st floor: 1A-1E - 10,000 PHP - MAX 1 MEMBER
-                { roomNumber: '1A', floor: '1', monthlyRent: 10000, securityDeposit: 10000, maxMembers: 1, isAvailable: true, occupiedBy: null },
-                { roomNumber: '1B', floor: '1', monthlyRent: 10000, securityDeposit: 10000, maxMembers: 1, isAvailable: true, occupiedBy: null },
-                { roomNumber: '1C', floor: '1', monthlyRent: 10000, securityDeposit: 10000, maxMembers: 1, isAvailable: true, occupiedBy: null },
-                { roomNumber: '1D', floor: '1', monthlyRent: 10000, securityDeposit: 10000, maxMembers: 1, isAvailable: true, occupiedBy: null },
-                { roomNumber: '1E', floor: '1', monthlyRent: 10000, securityDeposit: 10000, maxMembers: 1, isAvailable: true, occupiedBy: null },
-                
-                // 1st floor: 2A-2E - 12,000 PHP - MAX 2 MEMBERS
-                { roomNumber: '2A', floor: '1', monthlyRent: 12000, securityDeposit: 12000, maxMembers: 2, isAvailable: true, occupiedBy: null },
-                { roomNumber: '2B', floor: '1', monthlyRent: 12000, securityDeposit: 12000, maxMembers: 2, isAvailable: true, occupiedBy: null },
-                { roomNumber: '2C', floor: '1', monthlyRent: 12000, securityDeposit: 12000, maxMembers: 2, isAvailable: true, occupiedBy: null },
-                { roomNumber: '2D', floor: '1', monthlyRent: 12000, securityDeposit: 12000, maxMembers: 2, isAvailable: true, occupiedBy: null },
-                { roomNumber: '2E', floor: '1', monthlyRent: 12000, securityDeposit: 12000, maxMembers: 2, isAvailable: true, occupiedBy: null },
-                
-                // 1st floor: 3A-3E - 14,000 PHP - MAX 4 MEMBERS
-                { roomNumber: '3A', floor: '1', monthlyRent: 14000, securityDeposit: 14000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                { roomNumber: '3B', floor: '1', monthlyRent: 14000, securityDeposit: 14000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                { roomNumber: '3C', floor: '1', monthlyRent: 14000, securityDeposit: 14000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                { roomNumber: '3D', floor: '1', monthlyRent: 14000, securityDeposit: 14000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                { roomNumber: '3E', floor: '1', monthlyRent: 14000, securityDeposit: 14000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                
-                // 1st floor: 4A-4E - 15,000 PHP - MAX 4 MEMBERS
-                { roomNumber: '4A', floor: '1', monthlyRent: 15000, securityDeposit: 15000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                { roomNumber: '4B', floor: '1', monthlyRent: 15000, securityDeposit: 15000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                { roomNumber: '4C', floor: '1', monthlyRent: 15000, securityDeposit: 15000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                { roomNumber: '4D', floor: '1', monthlyRent: 15000, securityDeposit: 15000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                { roomNumber: '4E', floor: '1', monthlyRent: 15000, securityDeposit: 15000, maxMembers: 4, isAvailable: true, occupiedBy: null },
-                
-                // 1st floor: 5A-5B - 15,500 PHP - MAX 5 MEMBERS
-                { roomNumber: '5A', floor: '1', monthlyRent: 15500, securityDeposit: 15500, maxMembers: 5, isAvailable: true, occupiedBy: null },
-                { roomNumber: '5B', floor: '1', monthlyRent: 15500, securityDeposit: 15500, maxMembers: 5, isAvailable: true, occupiedBy: null }
-            ];
-            
-            const batch = firebaseDb.batch();
-            const createdRooms = [];
-            
-            defaultRooms.forEach(room => {
-                const roomRef = firebaseDb.collection('rooms').doc(room.roomNumber);
-                batch.set(roomRef, {
-                    floor: room.floor,
-                    monthlyRent: room.monthlyRent,
-                    securityDeposit: room.securityDeposit,
-                    maxMembers: room.maxMembers,
-                    isAvailable: room.isAvailable,
-                    occupiedBy: room.occupiedBy,
-                    createdAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                });
-                createdRooms.push({
-                    id: room.roomNumber,
-                    roomNumber: room.roomNumber,
-                    floor: room.floor,
-                    monthlyRent: room.monthlyRent,
-                    securityDeposit: room.securityDeposit,
-                    maxMembers: room.maxMembers,
-                    isAvailable: room.isAvailable,
-                    occupiedBy: room.occupiedBy
-                });
-            });
-            
-            await batch.commit();
-            console.log('✅ Created default rooms collection with member limits');
-            
-            return createdRooms;
-            
-        } catch (error) {
-            console.error('❌ Error creating default rooms:', error);
-            return this.getHardcodedRooms();
-        }
-    }
-
-    getHardcodedRooms() {
-        // Fallback hardcoded rooms in case Firestore fails
-        return [
-            { id: '1A', roomNumber: '1A', monthlyRent: 10000, securityDeposit: 10000, isAvailable: true },
-            { id: '1B', roomNumber: '1B', monthlyRent: 10000, securityDeposit: 10000, isAvailable: true },
-            { id: '1C', roomNumber: '1C', monthlyRent: 10000, securityDeposit: 10000, isAvailable: true },
-            { id: '1D', roomNumber: '1D', monthlyRent: 10000, securityDeposit: 10000, isAvailable: true },
-            { id: '1E', roomNumber: '1E', monthlyRent: 10000, securityDeposit: 10000, isAvailable: true },
-            { id: '2A', roomNumber: '2A', monthlyRent: 12000, securityDeposit: 12000, isAvailable: true },
-            { id: '2B', roomNumber: '2B', monthlyRent: 12000, securityDeposit: 12000, isAvailable: true },
-            { id: '2C', roomNumber: '2C', monthlyRent: 12000, securityDeposit: 12000, isAvailable: true },
-            { id: '2D', roomNumber: '2D', monthlyRent: 12000, securityDeposit: 12000, isAvailable: true },
-            { id: '2E', roomNumber: '2E', monthlyRent: 12000, securityDeposit: 12000, isAvailable: true },
-            { id: '3A', roomNumber: '3A', monthlyRent: 14000, securityDeposit: 14000, isAvailable: true },
-            { id: '3B', roomNumber: '3B', monthlyRent: 14000, securityDeposit: 14000, isAvailable: true },
-            { id: '3C', roomNumber: '3C', monthlyRent: 14000, securityDeposit: 14000, isAvailable: true },
-            { id: '3D', roomNumber: '3D', monthlyRent: 14000, securityDeposit: 14000, isAvailable: true },
-            { id: '3E', roomNumber: '3E', monthlyRent: 14000, securityDeposit: 14000, isAvailable: true },
-            { id: '4A', roomNumber: '4A', monthlyRent: 15000, securityDeposit: 15000, isAvailable: true },
-            { id: '4B', roomNumber: '4B', monthlyRent: 15000, securityDeposit: 15000, isAvailable: true },
-            { id: '4C', roomNumber: '4C', monthlyRent: 15000, securityDeposit: 15000, isAvailable: true },
-            { id: '4D', roomNumber: '4D', monthlyRent: 15000, securityDeposit: 15000, isAvailable: true },
-            { id: '4E', roomNumber: '4E', monthlyRent: 15000, securityDeposit: 15000, isAvailable: true },
-            { id: '5A', roomNumber: '5A', monthlyRent: 15500, securityDeposit: 15500, isAvailable: true },
-            { id: '5B', roomNumber: '5B', monthlyRent: 15500, securityDeposit: 15500, isAvailable: true }
-        ];
+        // seeding disabled; don't return hard-coded rooms
+        console.warn('⚠️ createDefaultRooms() called but seeding is disabled – returning empty list');
+        return [];
     }
 
     setupRoomSelection() {
@@ -20264,12 +20553,55 @@ class CasaLink {
     }
 
     // Landlord creates tenant accounts
-    async showAddTenantForm(preselectedRoom = null) {
-        // Fetch available rooms from Firestore (scoped to selected apartment)
-        const availableRooms = await this.getAvailableRooms();
+    async showAddTenantForm(preselectedRoom = null, context = {}) {
+        // Normalize and trim the preselected value; ignore the literal string 'undefined'
+        if (typeof preselectedRoom === 'string') {
+            preselectedRoom = preselectedRoom.trim();
+            if (preselectedRoom === 'undefined' || preselectedRoom === '') {
+                console.warn('⚠️ Ignoring invalid preselectedRoom:', preselectedRoom);
+                preselectedRoom = null;
+            }
+        }
 
-        // Determine rental address to autofill
-        let rentalAddress = this.currentApartmentAddress || '';
+        // If a context apartment address/ID was passed, temporarily override
+        // the global apartment context so that room queries are scoped correctly.
+        const origAptAddr = this.currentApartmentAddress;
+        const origAptId = this.currentApartmentId;
+        if (context.apartmentAddress) this.currentApartmentAddress = context.apartmentAddress;
+        if (context.apartmentId) this.currentApartmentId = context.apartmentId;
+
+        // Fetch available rooms from Firestore (scoped to selected apartment)
+        let availableRooms = await this.getAvailableRooms();
+        console.log('📦 Available rooms fetched for preselection:', availableRooms.map(r => r.roomNumber));
+        if (preselectedRoom) console.log('🎯 Preselected room incoming:', preselectedRoom);
+
+        // restore original context so we don't accidentally leak
+        this.currentApartmentAddress = origAptAddr;
+        this.currentApartmentId = origAptId;
+
+        // If a room was passed as preselected but somehow is missing from the
+        // fetched list (e.g. apartment context mismatch), add it so the drop‑down
+        // can actually select it.  This defensive step is what fixes the layout
+        // button issue where the value never appeared.
+        if (preselectedRoom) {
+            const exists = availableRooms.some(r => (r.roomNumber || '').toString().trim() === preselectedRoom);
+            if (!exists) {
+                console.warn('⚠️ Preselected room not in availableRooms, injecting manually:', preselectedRoom);
+                // try to fetch the room info to get rental/deposit values
+                const roomInfo = await this.getRoomByNumber(preselectedRoom);
+                availableRooms.unshift({
+                    roomNumber: preselectedRoom,
+                    monthlyRent: roomInfo?.monthlyRent || '',
+                    securityDeposit: roomInfo?.securityDeposit || '',
+                    maxMembers: roomInfo?.maxMembers || 1,
+                    // keep isAvailable true so the form isn't disabled
+                    isAvailable: true
+                });
+            }
+        }
+
+        // Determine rental address to autofill (context takes precedence)
+        let rentalAddress = context.apartmentAddress || this.currentApartmentAddress || '';
         if (!rentalAddress && this.currentApartmentId && this.apartmentsList && Array.isArray(this.apartmentsList)) {
             const apt = this.apartmentsList.find(a => a.id === this.currentApartmentId);
             if (apt) rentalAddress = apt.apartmentAddress || apt.address || apt.location || '';
@@ -20277,6 +20609,10 @@ class CasaLink {
         
         let roomOptions = '';
         let availabilityMessage = '';
+        const selectedRoomNumber = preselectedRoom || '';
+        if (selectedRoomNumber) {
+            console.log('🛠 Preselected room requested:', selectedRoomNumber);
+        }
         
         if (availableRooms.length === 0) {
             roomOptions = '<option value="">No available rooms</option>';
@@ -20306,7 +20642,10 @@ class CasaLink {
                 this.getMemberLimitText(maxMembers) : 
                 this.getMemberLimitTextFallback(maxMembers);
             
-            return `<option value="${room.roomNumber}" data-rent="${room.monthlyRent}" data-deposit="${room.securityDeposit}" data-max-members="${maxMembers}">${room.roomNumber} - ₱${room.monthlyRent.toLocaleString()} (${memberText})</option>`;
+            // mark the option selected if it matches the preselected room
+            const selectedAttr = (room.roomNumber || '').toString().trim() === (selectedRoomNumber || '').toString().trim() ? ' selected' : '';
+
+            return `<option value="${room.roomNumber}"${selectedAttr} data-rent="${room.monthlyRent}" data-deposit="${room.securityDeposit}" data-max-members="${maxMembers}">${room.roomNumber} - ₱${room.monthlyRent.toLocaleString()} (${memberText})</option>`;
         }).join('');
             
             availabilityMessage = `<small style="color: var(--dark-gray);">${availableRooms.length} available room(s) found</small>`;
@@ -20370,7 +20709,7 @@ class CasaLink {
 
                 <div class="form-group">
                     <label class="form-label">Apartment Name</label>
-                    <input type="text" id="apartmentName" class="form-input" value="" readonly>
+                    <input type="text" id="apartmentName" class="form-input" value="${context.apartmentName || ''}" readonly>
                     <small style="color: var(--dark-gray);">Auto-filled from selected unit</small>
                 </div>
                 
@@ -20413,7 +20752,40 @@ class CasaLink {
             onSubmit: availableRooms.length === 0 ? () => {} : () => this.validateTenantForm()
         });
 
+        // ensure context values are reflected in the DOM (redundant but safe)
+        if (context.apartmentAddress) {
+            const addrInput = modal.querySelector('#rentalAddress');
+            if (addrInput) addrInput.value = context.apartmentAddress;
+        }
+        if (context.apartmentName) {
+            const aptInput = modal.querySelector('#apartmentName');
+            if (aptInput) aptInput.value = context.apartmentName;
+        }
+
+        // Immediately pre-select room if we have one (avoid timing races);
+        // also retry a few times in case the modal isn't attached yet.
+        if (preselectedRoom) {
+            const attemptPreselect = (attempt = 1) => {
+                const immediateSelect = modal.querySelector('#roomNumber');
+                if (immediateSelect) {
+                    immediateSelect.value = preselectedRoom ? preselectedRoom.toString().trim() : '';
+                    immediateSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (immediateSelect.value !== (preselectedRoom ? preselectedRoom.toString().trim() : '')) {
+                        console.warn('⚠️ dropdown value mismatch after preselect; selected', immediateSelect.value, 'expected', preselectedRoom);
+                    }
+                    console.log('✅ Room pre-selected after open (attempt', attempt, '):', preselectedRoom);
+                } else if (attempt < 5) {
+                    // retry after 100ms
+                    setTimeout(() => attemptPreselect(attempt + 1), 100);
+                } else {
+                    console.warn('⚠️ Could not pre-select room after multiple attempts:', preselectedRoom);
+                }
+            };
+            attemptPreselect();
+        }
+
         // Set up dates and event listeners (always run so date defaults and payment-day autofill work)
+            // give the browser slightly more time to insert the modal into the DOM
             setTimeout(() => {
                 // Use local date components to avoid timezone shifts (toISOString uses UTC)
                 const now = new Date();
@@ -20470,7 +20842,7 @@ class CasaLink {
                 if (preselectedRoom) {
                     const roomSelect = document.getElementById('roomNumber');
                     if (roomSelect) {
-                        roomSelect.value = preselectedRoom;
+                        roomSelect.value = preselectedRoom ? preselectedRoom.toString().trim() : '';
                         
                         // Trigger change event to populate rental amount and security deposit
                         const event = new Event('change', { bubbles: true });
@@ -20485,17 +20857,48 @@ class CasaLink {
                         console.log('✅ Room pre-selected:', preselectedRoom);
                     }
                 }
-            }, 100);
+            }, 300);
 
         this.addTenantModal = modal;
+        if (preselectedRoom) {
+            console.log('🛠 Modal opened for preselected room:', preselectedRoom);
+        }
     }
 
     // Start adding tenant for a specific unit (pre-filled from unit click)
-    async startAddTenantForUnit(roomNumber) {
-        console.log('🏠 Starting tenant addition for unit:', roomNumber);
-        
-        // Show the add tenant form with the pre-selected room
-        await this.showAddTenantForm(roomNumber);
+    async startAddTenantForUnit(roomNumber, context = {}) {
+        // protect against literal string 'undefined' or empty values
+        if (!roomNumber || roomNumber === 'undefined') {
+            console.warn('⚠️ startAddTenantForUnit called with invalid roomNumber:', roomNumber);
+            roomNumber = null;
+        } else {
+            console.log('🏠 Starting tenant addition for unit (raw):', roomNumber, 'context:', context);
+        }
+
+        // store temporary context so showAddTenantForm can access it
+        this._tenantFormContext = context || {};
+
+        // If the passed value looks like a Firestore doc ID rather than the
+        // human-readable room number, try to resolve it first.  This ensures
+        // the dropdown can match by roomNumber instead of id.
+        let resolvedRoom = roomNumber;
+        if (roomNumber) {
+            try {
+                const doc = await firebaseDb.collection('rooms').doc(roomNumber).get();
+                if (doc && doc.exists) {
+                    const data = doc.data();
+                    if (data.roomNumber && data.roomNumber !== roomNumber) {
+                        resolvedRoom = data.roomNumber.toString().trim();
+                        console.log('🔁 Resolved room id to roomNumber:', resolvedRoom);
+                    }
+                }
+            } catch (err) {
+                console.warn('⚠️ could not resolve room by id', err.message);
+            }
+        }
+
+        // Show the add tenant form with the pre-selected room (may be null)
+        await this.showAddTenantForm(resolvedRoom, this._tenantFormContext);
     }
 
     setupRoomSelectionWithMemberInfo() {
