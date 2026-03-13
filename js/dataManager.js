@@ -616,56 +616,158 @@ class DataManager {
                 updatedAt: new Date().toISOString()
             });
 
-            // Ensure we have a sensible property/apartment name for landlords to see
+            // Ensure the request is tied to the correct apartment via apartmentId/propertyId.
+            // This is critical to avoid cross‑apartment leaks in the maintenance tab.
             try {
-                if (!normalized.propertyName || normalized.propertyName === 'N/A') {
-                    // Prefer propertyName from the original requestData if present
-                    let resolved = requestData.propertyName || requestData.apartment || null;
+                const tenantId = normalized.tenantId;
+                const tenantRoom = normalized.roomNumber || requestData.roomNumber || (current && (current.roomNumber || current.unitNumber));
 
-                    // Try current user fields (rentalAddress, apartmentName, roomNumber)
-                    const rentalAddr = (current && (current.rentalAddress || current.apartmentAddress || current.apartmentName)) || null;
-                    const tenantRoom = (current && (current.roomNumber || current.unitNumber)) || null;
+                // Prefer apartment linkage already available on the user object (most reliable)
+                const userApartmentId = current?.apartmentId || current?.propertyId || current?.rentalPropertyId;
+                const userApartmentAddress = current?.apartmentAddress || current?.rentalAddress || current?.apartmentName || current?.apartment;
 
-                    if (!resolved && rentalAddr) resolved = rentalAddr;
+                // 1) Allow callers to explicitly provide apartmentId/propertyId (preferred)
+                normalized.apartmentId = normalized.apartmentId || requestData.apartmentId || requestData.propertyId || requestData.rentalPropertyId || userApartmentId;
+                normalized.propertyId = normalized.propertyId || normalized.apartmentId;
 
-                    // If we have an address-like value, try to find matching apartment document
-                    if (resolved) {
-                        try {
-                            const aptQuery = await firebaseDb.collection('apartments')
-                                .where('apartmentAddress', '==', resolved)
+                // 1b) If we still don't have an apartmentId but have a resolved address/name, try to lookup apartmentId by address/name
+                if (!normalized.apartmentId && userApartmentAddress) {
+                    try {
+                        const aptQuery = await firebaseDb.collection('apartments')
+                            .where('apartmentAddress', '==', userApartmentAddress)
+                            .limit(1)
+                            .get();
+                        if (!aptQuery.empty) {
+                            const apt = aptQuery.docs[0].data();
+                            normalized.apartmentId = apt.id || apt.apartmentId || apt.id;
+                            normalized.propertyId = normalized.propertyId || normalized.apartmentId;
+                        } else {
+                            const aptQuery2 = await firebaseDb.collection('apartments')
+                                .where('apartmentName', '==', userApartmentAddress)
                                 .limit(1)
                                 .get();
-                            if (!aptQuery.empty) {
-                                const apt = aptQuery.docs[0].data();
-                                normalized.propertyName = apt.apartmentName || apt.apartmentAddress || resolved;
+                            if (!aptQuery2.empty) {
+                                const apt = aptQuery2.docs[0].data();
+                                normalized.apartmentId = apt.id || apt.apartmentId || apt.id;
+                                normalized.propertyId = normalized.propertyId || normalized.apartmentId;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Could not resolve apartmentId from user address/name:', e);
+                    }
+                }
+
+                // 2) If we still don't have apartmentId, try to resolve it from the tenant's most recent lease
+                if (!normalized.apartmentId && tenantId) {
+                    let leaseQuery = firebaseDb.collection('leases')
+                        .where('tenantId', '==', tenantId)
+                        .orderBy('startDate', 'desc')
+                        .orderBy('createdAt', 'desc')
+                        .limit(1);
+
+                    // Prefer active lease if available
+                    const activeLeaseSnap = await leaseQuery.where('isActive', '==', true).get();
+                    let leaseSnap = activeLeaseSnap;
+                    if (leaseSnap.empty) {
+                        leaseSnap = await leaseQuery.get();
+                    }
+
+                    if (!leaseSnap.empty) {
+                        const lease = leaseSnap.docs[0].data();
+                        normalized.apartmentId = lease.apartmentId || lease.propertyId || lease.rentalPropertyId || normalized.apartmentId;
+                        normalized.propertyId = normalized.propertyId || normalized.apartmentId;
+                        normalized.roomId = normalized.roomId || lease.roomId;
+                        normalized.roomNumber = normalized.roomNumber || lease.roomNumber;
+                    }
+                }
+
+                // 3) If still missing, try to resolve via the room record (roomNumber or roomId)
+                if (!normalized.apartmentId) {
+                    // Try to resolve from roomId (if present)
+                    if (normalized.roomId) {
+                        try {
+                            const roomDoc = await firebaseDb.collection('rooms').doc(normalized.roomId).get();
+                            if (roomDoc.exists) {
+                                const room = roomDoc.data();
+                                normalized.apartmentId = room.apartmentId || room.apartmentId;
+                                normalized.propertyId = normalized.propertyId || normalized.apartmentId;
                             }
                         } catch (e) {
-                            console.warn('Could not query apartments by apartmentAddress:', e);
+                            console.warn('Could not resolve apartmentId from roomId:', e);
                         }
                     }
 
-                    // If still unresolved, try rooms collection by roomNumber + landlordId
-                    if ((!normalized.propertyName || normalized.propertyName === 'N/A') && tenantRoom) {
+                    // Try to resolve from roomNumber and tenant context (landlord + apartment/address)
+                    if (!normalized.apartmentId && tenantRoom) {
                         try {
                             let roomsQuery = firebaseDb.collection('rooms').where('roomNumber', '==', tenantRoom).limit(1);
-                            if (current && current.landlordId) roomsQuery = roomsQuery.where('landlordId', '==', current.landlordId);
+                            if (current && current.landlordId) {
+                                roomsQuery = roomsQuery.where('landlordId', '==', current.landlordId);
+                            }
+                            if (userApartmentId) {
+                                roomsQuery = roomsQuery.where('apartmentId', '==', userApartmentId);
+                            } else if (userApartmentAddress) {
+                                roomsQuery = roomsQuery.where('apartmentAddress', '==', userApartmentAddress);
+                            }
                             const roomsSnap = await roomsQuery.get();
                             if (!roomsSnap.empty) {
                                 const room = roomsSnap.docs[0].data();
-                                normalized.propertyName = room.apartmentName || room.apartmentAddress || room.apartmentId || tenantRoom;
+                                normalized.apartmentId = room.apartmentId;
+                                normalized.propertyId = normalized.propertyId || normalized.apartmentId;
                             }
                         } catch (e) {
-                            console.warn('Could not query rooms by roomNumber:', e);
+                            console.warn('Could not resolve apartmentId from roomNumber:', e);
                         }
                     }
+                }
 
-                    // As a last resort, fall back to tenant's roomNumber or rentalAddress
-                    if (!normalized.propertyName || normalized.propertyName === 'N/A') {
-                        normalized.propertyName = tenantRoom || rentalAddr || 'N/A';
+                // Ensure propertyId is set when we got apartmentId
+                if (normalized.apartmentId && !normalized.propertyId) {
+                    normalized.propertyId = normalized.apartmentId;
+                }
+
+                // If we have an apartmentId but not name/address, fetch it
+                if (normalized.apartmentId && (!normalized.apartmentName || !normalized.apartmentAddress)) {
+                    try {
+                        const aptDoc = await firebaseDb.collection('apartments').doc(normalized.apartmentId).get();
+                        if (aptDoc.exists) {
+                            const apt = aptDoc.data();
+                            normalized.apartmentName = normalized.apartmentName || apt.apartmentName || apt.name || '';
+                            normalized.apartmentAddress = normalized.apartmentAddress || apt.apartmentAddress || apt.address || '';
+                        }
+                    } catch (e) {
+                        console.warn('Could not fetch apartment info for maintenance request:', e);
                     }
                 }
+
+                console.log('🔍 Resolved maintenance request linkage:', {
+                    apartmentId: normalized.apartmentId,
+                    propertyId: normalized.propertyId,
+                    apartmentName: normalized.apartmentName,
+                    apartmentAddress: normalized.apartmentAddress,
+                    roomId: normalized.roomId,
+                    roomNumber: normalized.roomNumber
+                });
             } catch (resolveErr) {
-                console.warn('Error resolving propertyName for maintenance request:', resolveErr);
+                console.warn('Error resolving apartmentId for maintenance request:', resolveErr);
+            }
+
+            // Ensure required apartment linkage fields exist (even if empty)
+            normalized.apartmentId = normalized.apartmentId || '';
+            normalized.propertyId = normalized.propertyId || '';
+            normalized.apartmentName = normalized.apartmentName || '';
+            normalized.apartmentAddress = normalized.apartmentAddress || '';
+
+            // Remove any undefined values (Firestore rejects them)
+            Object.keys(normalized).forEach(key => {
+                if (normalized[key] === undefined) {
+                    delete normalized[key];
+                }
+            });
+
+            // Ensure we do NOT store the legacy propertyName field
+            if ('propertyName' in normalized) {
+                delete normalized.propertyName;
             }
 
             const requestRef = await firebaseDb.collection('maintenance').add(normalized);
@@ -731,7 +833,7 @@ class DataManager {
                                 tenantId: request.tenantId || request.tenant || null,
                                 tenantName: request.tenantName || request.reportedBy || '',
                                 roomNumber: request.roomNumber || request.unitNumber || request.unit || '',
-                                apartment: request.propertyName || request.apartment || '',
+                                apartment: request.apartmentName || request.apartment || request.apartmentAddress || '',
                                 landlordId: request.landlordId || request.landlord || null,
                                 type: 'maintenance_fee',
                                 description: `Maintenance charge for request ${request.title || request.id}`,

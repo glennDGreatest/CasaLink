@@ -681,7 +681,11 @@ class AuthManager {
                 
                 // Property Information
                 roomNumber: tenantData.roomNumber || '',
-                rentalAddress: tenantData.rentalAddress || 'Lot 22 Zarate Compound Purok 4, Bakakent Norte, Baguio City',
+                apartmentAddress: tenantData.rentalAddress || 'Lot 22 Zarate Compound Purok 4, Bakakent Norte, Baguio City',
+                
+                // Room occupancy
+                roomMembers: [tenantData.name],
+                totalRoomMembers: 1,
                 
                 // Authentication & Security
                 hasTemporaryPassword: true,

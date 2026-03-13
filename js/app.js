@@ -1179,6 +1179,35 @@ class CasaLink {
         console.log('🎯 Setting up global event listeners...');
         
         document.addEventListener('click', (e) => {
+            // Handle property details modal tab switching (and related data loading)
+            const tabButton = e.target.closest('.tab-button');
+            if (tabButton && tabButton.closest('.property-details-modal')) {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const tabName = tabButton.getAttribute('data-tab');
+                if (!tabName) return;
+
+                // Update active tab styling and content visibility
+                const modal = tabButton.closest('.property-details-modal');
+                modal.querySelectorAll('.tab-button').forEach(btn => {
+                    btn.classList.toggle('active', btn === tabButton);
+                });
+                modal.querySelectorAll('.tab-pane').forEach(pane => {
+                    pane.style.display = (pane.id === `tab-${tabName}`) ? '' : 'none';
+                });
+
+                // When the Units tab is selected, load it from Firestore
+                if (tabName === 'units') {
+                    this.loadPropertyUnitsForDetailsModal();
+                }
+                // When the Maintenance tab is selected, load it from Firestore
+                if (tabName === 'maintenance') {
+                    this.loadPropertyMaintenanceForDetailsModal();
+                }
+                return;
+            }
+
             // Check for unit layout button first
             const openUnitLayoutBtn = e.target.closest('#openUnitLayoutBtn');
             if (openUnitLayoutBtn) {
@@ -1269,6 +1298,165 @@ class CasaLink {
 
             return false;
         });
+    }
+
+    async loadPropertyUnitsForDetailsModal() {
+        const modal = document.getElementById('propertyDetailsModal');
+        if (!modal) return;
+
+        const unitsContainer = modal.querySelector('#unitsList');
+        if (!unitsContainer) return;
+
+        // Use the property ID to scope room/units to this property
+        const propId = modal.dataset.propertyId;
+        if (!propId) {
+            unitsContainer.innerHTML = `<p style="text-align:center; color:#999;">Unable to determine property ID.</p>`;
+            return;
+        }
+
+        unitsContainer.innerHTML = `
+            <div style="text-align:center; color:#999;">
+                <i class="fas fa-spinner fa-spin" style="margin-right: 8px;"></i>
+                Loading units...
+            </div>
+        `;
+
+        try {
+            const landlordId = window.currentUser?.uid || window.currentUser?.id;
+
+            // Prefer using DataManager helper if available
+            let units = [];
+            if (typeof DataManager !== 'undefined' && typeof DataManager.getLandlordUnits === 'function' && landlordId) {
+                units = await DataManager.getLandlordUnits(landlordId);
+            } else if (window.firebaseDb) {
+                const snapshot = await window.firebaseDb.collection('rooms').where('apartmentId', '==', propId).get();
+                units = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            }
+
+            // Filter by apartmentId in case the helper returns extra units
+            units = units.filter(u => u.apartmentId === propId);
+
+            if (!units || units.length === 0) {
+                unitsContainer.innerHTML = `<p style="text-align:center; color:#999;">No units found for this property.</p>`;
+                return;
+            }
+
+            const html = units.map(u => {
+                const status = u.isAvailable === false ? 'occupied' : 'vacant';
+                const statusLabel = status === 'occupied' ? 'Occupied' : 'Vacant';
+                return `
+                    <div class="unit-card">
+                        <div class="unit-header">
+                            <div class="unit-number">${u.roomNumber || u.unitNumber || 'N/A'}</div>
+                            <div class="unit-floor">Floor: ${u.floor || 'N/A'}</div>
+                        </div>
+                        <div class="unit-details">
+                            <div>Bedrooms: ${u.numberOfBedrooms || 0}</div>
+                            <div>Bathrooms: ${u.numberOfBathrooms || 0}</div>
+                            <div>Max Members: ${u.maxMembers || 0}</div>
+                            <div>Rent: ₱${(u.monthlyRent || 0).toLocaleString()}</div>
+                            <div>Security Deposit: ₱${(u.securityDeposit || 0).toLocaleString()}</div>
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <span class="unit-status ${status}">${statusLabel}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            unitsContainer.innerHTML = html;
+        } catch (error) {
+            console.error('Error loading property units for modal:', error);
+            unitsContainer.innerHTML = `<p style="text-align:center; color:#999;">Error loading units.</p>`;
+        }
+    }
+
+    async loadPropertyMaintenanceForDetailsModal() {
+        const modal = document.getElementById('propertyDetailsModal');
+        if (!modal) return;
+
+        const maintenanceContainer = modal.querySelector('#maintenanceList');
+        if (!maintenanceContainer) return;
+
+        const addressEl = modal.querySelector('#propertyDetailsAddress');
+        const propertyAddress = addressEl?.textContent?.trim();
+        if (!propertyAddress) {
+            maintenanceContainer.innerHTML = `<p style="text-align:center; color:#999;">Unable to determine property address.</p>`;
+            return;
+        }
+
+        const propId = modal.dataset.propertyId;
+
+        maintenanceContainer.innerHTML = `
+            <div style="text-align:center; color:#999;">
+                <i class="fas fa-spinner fa-spin" style="margin-right: 8px;"></i>
+                Loading maintenance requests...
+            </div>
+        `;
+
+        try {
+            const landlordId = window.currentUser?.uid || window.currentUser?.id;
+
+            // Fetch maintenance requests
+            let requests = [];
+            if (typeof DataManager !== 'undefined' && typeof DataManager.getMaintenanceRequests === 'function' && landlordId) {
+                requests = await DataManager.getMaintenanceRequests(landlordId);
+            } else if (window.firebaseDb) {
+                const snapshot = await window.firebaseDb.collection('maintenance').where('landlordId', '==', landlordId).get();
+                requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            }
+
+            // Determine which units belong to this property (room numbers + unit IDs)
+            const units = [];
+            if (typeof DataManager !== 'undefined' && typeof DataManager.getLandlordUnits === 'function' && landlordId) {
+                units.push(...(await DataManager.getLandlordUnits(landlordId)).filter(u => u.apartmentId === propId));
+            } else if (window.firebaseDb) {
+                const snapshot = await window.firebaseDb.collection('rooms').where('apartmentId', '==', propId).get();
+                units.push(...snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+            }
+            const unitIds = units.map(u => u.id);
+            const roomNumbers = units.map(u => u.roomNumber || u.unitNumber).filter(Boolean);
+
+            // Filter maintenance requests to this property (by apartmentId/propertyId, or propertyName/address + roomNumber, or unitId/roomId)
+            requests = requests.filter(r => {
+                const matchesByPropertyId = r.apartmentId === propId || r.propertyId === propId;
+                const matchesByNameAndRoom = (r.propertyName === propertyAddress) && roomNumbers.includes(r.roomNumber);
+                const matchesByUnitId = unitIds.includes(r.unitId) || unitIds.includes(r.roomId);
+                return matchesByPropertyId || matchesByNameAndRoom || matchesByUnitId;
+            });
+
+            // Sort and limit
+            requests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+            requests = requests.slice(0, 5);
+
+            if (!requests || requests.length === 0) {
+                maintenanceContainer.innerHTML = `<p style="text-align:center; color:#999;">No maintenance requests for this property.</p>`;
+                return;
+            }
+
+            const html = requests.map(req => {
+                const date = req.createdAt ? new Date(req.createdAt.toDate?.() || req.createdAt).toLocaleDateString() : '';
+                return `
+                    <div class="maintenance-item">
+                        <div class="maintenance-header">
+                            <div>
+                                <div class="maintenance-title">${req.title || 'Maintenance Request'}</div>
+                                <div class="maintenance-description">${req.description || ''}</div>
+                            </div>
+                            <span class="maintenance-status ${(req.status || 'pending').toLowerCase()}">
+                                ${req.status || 'Pending'}
+                            </span>
+                        </div>
+                        <div class="maintenance-date">${date}</div>
+                    </div>
+                `;
+            }).join('');
+
+            maintenanceContainer.innerHTML = html;
+        } catch (error) {
+            console.error('Error loading property maintenance for modal:', error);
+            maintenanceContainer.innerHTML = `<p style="text-align:center; color:#999;">Error loading maintenance requests.</p>`;
+        }
     }
 
     async loadRecentActivities() {
@@ -5918,10 +6106,6 @@ class CasaLink {
                         </h6>
                         <table class="table table-sm" style="font-size: 0.9rem;">
                             <tr>
-                                <td style="width: 40%; color: var(--gray-600);">Amenities:</td>
-                                <td style="font-weight: 600;">${unit.amenities?.join(', ') || 'None specified'}</td>
-                            </tr>
-                            <tr>
                                 <td style="color: var(--gray-600);">Parking Spots:</td>
                                 <td style="font-weight: 600;">${unit.parkingSpots || '0'}</td>
                             </tr>
@@ -8463,59 +8647,65 @@ class CasaLink {
                 return db - da;
             });
 
-            // Resolve missing propertyName/apartment for each request so the table shows apartment, not just unit
+            // Resolve missing apartmentName/apartmentAddress for each request so the table shows apartment, not just unit
             const resolvedRequests = await Promise.all(requests.map(async (req) => {
                 try {
-                    if (req.propertyName && req.propertyName !== 'N/A') return req;
+                    if (req.apartmentName || req.apartmentAddress) return req;
 
-                    let resolved = req.propertyName || req.apartment || null;
+                    let resolvedName = req.apartmentName || req.apartment || null;
+                    let resolvedAddress = req.apartmentAddress || null;
 
                     // Try tenant/user document
-                    if (!resolved && req.tenantId) {
+                    if ((!resolvedName || !resolvedAddress) && req.tenantId) {
                         try {
                             const userDoc = await firebaseDb.collection('users').doc(req.tenantId).get();
                             if (userDoc.exists) {
                                 const u = userDoc.data();
-                                resolved = resolved || u.rentalAddress || u.apartmentAddress || u.apartmentName || u.apartment || u.roomNumber || null;
+                                resolvedName = resolvedName || u.apartmentName || u.apartment || u.propertyName || null;
+                                resolvedAddress = resolvedAddress || u.apartmentAddress || u.rentalAddress || null;
                             }
                         } catch (e) {
-                            console.warn('Could not fetch tenant document for property resolution:', e);
+                            console.warn('Could not fetch tenant document for apartment resolution:', e);
                         }
                     }
 
                     // Try rooms collection by roomNumber
-                    if (!resolved && req.roomNumber) {
+                    if ((!resolvedName || !resolvedAddress) && req.roomNumber) {
                         try {
                             let roomsQuery = firebaseDb.collection('rooms').where('roomNumber', '==', req.roomNumber).limit(1);
                             if (req.landlordId) roomsQuery = roomsQuery.where('landlordId', '==', req.landlordId);
                             const roomsSnap = await roomsQuery.get();
                             if (!roomsSnap.empty) {
                                 const room = roomsSnap.docs[0].data();
-                                resolved = resolved || room.apartmentName || room.apartmentAddress || room.apartmentId || req.roomNumber;
+                                resolvedName = resolvedName || room.apartmentName || room.apartment || null;
+                                resolvedAddress = resolvedAddress || room.apartmentAddress || null;
                             }
                         } catch (e) {
-                            console.warn('Could not query rooms for property resolution:', e);
+                            console.warn('Could not query rooms for apartment resolution:', e);
                         }
                     }
 
                     // Try apartments collection by apartmentAddress
-                    if (!resolved && req.apartmentAddress) {
+                    if ((!resolvedName || !resolvedAddress) && req.apartmentAddress) {
                         try {
                             const aptQuery = await firebaseDb.collection('apartments').where('apartmentAddress', '==', req.apartmentAddress).limit(1).get();
                             if (!aptQuery.empty) {
                                 const apt = aptQuery.docs[0].data();
-                                resolved = resolved || apt.apartmentName || apt.apartmentAddress || null;
+                                resolvedName = resolvedName || apt.apartmentName || apt.name || null;
+                                resolvedAddress = resolvedAddress || apt.apartmentAddress || apt.address || null;
                             }
                         } catch (e) {
-                            console.warn('Could not query apartments for property resolution:', e);
+                            console.warn('Could not query apartments for apartment resolution:', e);
                         }
                     }
 
-                    req.propertyName = resolved || req.roomNumber || 'N/A';
+                    req.apartmentName = resolvedName || '';
+                    req.apartmentAddress = resolvedAddress || '';
                     return req;
                 } catch (err) {
-                    console.warn('Error resolving property for request', req.id, err);
-                    req.propertyName = req.roomNumber || 'N/A';
+                    console.warn('Error resolving apartment for request', req.id, err);
+                    req.apartmentName = req.apartmentName || '';
+                    req.apartmentAddress = req.apartmentAddress || '';
                     return req;
                 }
             }));
@@ -8644,7 +8834,7 @@ class CasaLink {
 
             // If current user is tenant, show a hidden input with their id instead of a select
             const tenantOptions = tenants.map(tenant => `
-                <option value="${tenant.id}" data-room="${tenant.roomNumber}" data-apartment="${tenant.apartment || tenant.propertyName || tenant.property || 'N/A'}" data-tenant-json="${btoa(JSON.stringify(tenant))}">
+                <option value="${tenant.id}" data-room="${tenant.roomNumber}" data-apartment-id="${tenant.apartmentId || tenant.propertyId || tenant.rentalPropertyId || ''}" data-apartment-name="${tenant.apartmentName || tenant.apartment || tenant.propertyName || tenant.property || ''}" data-apartment-address="${tenant.apartmentAddress || tenant.rentalAddress || ''}" data-tenant-json="${btoa(JSON.stringify(tenant))}">
                     ${tenant.name} - ${tenant.roomNumber}${tenant.apartment ? ' (' + tenant.apartment + ')' : ''}
                 </option>
             `).join('');
@@ -9241,7 +9431,7 @@ class CasaLink {
                         <div style="font-size: 0.9rem;">
                             <div style="margin-bottom: 12px;">
                                 <strong>Tenant:</strong> ${request.tenantName} (${request.roomNumber})<br>
-                                <span style="margin-left: 20px; color: #666;"><strong>Apartment:</strong> ${request.propertyName || 'N/A'}</span>
+                                <span style="margin-left: 20px; color: #666;"><strong>Apartment:</strong> ${request.apartmentName || request.apartmentAddress || 'N/A'}</span>
                             </div>
                             <div><strong>Issue:</strong> ${request.title}</div>
                             <div><strong>Priority:</strong> <span class="status-badge ${this.getPriorityBadge(request.priority).split('"')[1]}">${request.priority}</span></div>
@@ -9641,7 +9831,7 @@ class CasaLink {
                         </div>
                         <div>
                             <strong>Apartment:</strong><br>
-                            ${request.propertyName || request.apartment || 'N/A'}
+                            ${request.apartmentName || request.apartmentAddress || request.apartment || 'N/A'}
                         </div>
                         <div>
                             <strong>Type:</strong><br>
@@ -10003,7 +10193,9 @@ class CasaLink {
                 tenantId: tenantSelect.value,
                 tenantName: selectedOption.text.split(' - ')[0],
                 roomNumber: selectedOption.getAttribute('data-room'),
-                propertyName: apartmentName,
+                apartmentId: selectedOption.getAttribute('data-apartment-id') || '',
+                apartmentName: selectedOption.getAttribute('data-apartment-name') || apartmentName,
+                apartmentAddress: selectedOption.getAttribute('data-apartment-address') || '',
                 landlordId: this.currentUser.uid,
                 type: document.getElementById('maintenanceType').value,
                 priority: document.getElementById('maintenancePriority').value,
@@ -22160,6 +22352,39 @@ class CasaLink {
                 console.log('⚠️ Active lease exists, updating instead...');
                 const existingLeaseId = existingLeaseQuery.docs[0].id;
 
+                // Resolve apartment information from room document for lease update
+                let leaseApartmentData = {};
+                if (room && room.apartmentId) {
+                    try {
+                        const apartmentDoc = await firebaseDb.collection('apartments').doc(room.apartmentId).get();
+                        if (apartmentDoc.exists) {
+                            const apartment = apartmentDoc.data();
+                            leaseApartmentData = {
+                                apartmentId: room.apartmentId,
+                                apartmentName: apartment.apartmentName || apartment.name || '',
+                                apartmentAddress: apartment.apartmentAddress || apartment.address || ''
+                            };
+                        } else {
+                            // Fallback: use room's apartment data if apartment doc not found
+                            leaseApartmentData = {
+                                apartmentId: room.apartmentId,
+                                apartmentName: room.apartmentName || '',
+                                apartmentAddress: room.apartmentAddress || ''
+                            };
+                        }
+                    } catch (error) {
+                        console.warn('⚠️ Could not resolve apartment data for lease update:', error);
+                        // Fallback: use room's apartment data
+                        if (room.apartmentId) {
+                            leaseApartmentData = {
+                                apartmentId: room.apartmentId,
+                                apartmentName: room.apartmentName || '',
+                                apartmentAddress: room.apartmentAddress || ''
+                            };
+                        }
+                    }
+                }
+
                 await firebaseDb.collection('leases').doc(existingLeaseId).update({
                     tenantName: tenantData.name,
                     tenantEmail: tenantData.email,
@@ -22181,7 +22406,10 @@ class CasaLink {
                     occupants: autoOccupants,
                     totalOccupants: autoTotal,
 
-                    updatedAt: new Date().toISOString()
+                    updatedAt: new Date().toISOString(),
+
+                    // Add apartment information
+                    ...leaseApartmentData
                 });
 
                 console.log('🏠 UPDATED lease occupant info:', {
@@ -22190,10 +22418,87 @@ class CasaLink {
                     totalOccupants: autoTotal
                 });
 
+                // Update tenant's user record with lease and apartment information for existing lease
+                let apartmentData = {};
+                if (room && room.apartmentId) {
+                    try {
+                        const apartmentDoc = await firebaseDb.collection('apartments').doc(room.apartmentId).get();
+                        if (apartmentDoc.exists) {
+                            const apartment = apartmentDoc.data();
+                            apartmentData = {
+                                apartmentId: room.apartmentId,
+                                apartmentName: apartment.apartmentName || apartment.name || '',
+                                apartmentAddress: apartment.apartmentAddress || apartment.address || ''
+                            };
+                        } else {
+                            // Fallback: use room's apartment data if apartment doc not found
+                            apartmentData = {
+                                apartmentId: room.apartmentId,
+                                apartmentName: room.apartmentName || '',
+                                apartmentAddress: room.apartmentAddress || ''
+                            };
+                        }
+                    } catch (error) {
+                        console.warn('⚠️ Could not resolve apartment data for tenant record:', error);
+                        // Fallback: use room's apartment data
+                        if (room.apartmentId) {
+                            apartmentData = {
+                                apartmentId: room.apartmentId,
+                                apartmentName: room.apartmentName || '',
+                                apartmentAddress: room.apartmentAddress || ''
+                            };
+                        }
+                    }
+                }
+
+                const tenantUpdateData = {
+                    leaseId: existingLeaseId,
+                    currentLease: existingLeaseId,
+                    roomNumber: tenantData.roomNumber,
+                    status: 'unverified',
+                    updatedAt: new Date().toISOString(),
+                    ...apartmentData
+                };
+
+                await firebaseDb.collection('users').doc(tenantId).update(tenantUpdateData);
+
                 return existingLeaseId;
             }
 
             // 🆕 Create NEW lease document
+            // First resolve apartment information from room document
+            let leaseApartmentData = {};
+            if (room && room.apartmentId) {
+                try {
+                    const apartmentDoc = await firebaseDb.collection('apartments').doc(room.apartmentId).get();
+                    if (apartmentDoc.exists) {
+                        const apartment = apartmentDoc.data();
+                        leaseApartmentData = {
+                            apartmentId: room.apartmentId,
+                            apartmentName: apartment.apartmentName || apartment.name || '',
+                            apartmentAddress: apartment.apartmentAddress || apartment.address || ''
+                        };
+                    } else {
+                        // Fallback: use room's apartment data if apartment doc not found
+                        leaseApartmentData = {
+                            apartmentId: room.apartmentId,
+                            apartmentName: room.apartmentName || '',
+                            apartmentAddress: room.apartmentAddress || ''
+                        };
+                    }
+                } catch (error) {
+                    console.warn('⚠️ Could not resolve apartment data for lease:', error);
+                    // Fallback: use room's apartment data
+                    if (room.apartmentId) {
+                        leaseApartmentData = {
+                            apartmentId: room.apartmentId,
+                            apartmentName: room.apartmentName || '',
+                            apartmentAddress: room.apartmentAddress || ''
+                        };
+                    }
+                }
+            }
+
             const leaseData = {
                 tenantId: tenantId,
                 tenantName: tenantData.name,
@@ -22237,7 +22542,10 @@ class CasaLink {
 
                 agreementViewed: false,
                 agreementAccepted: false,
-                agreementAcceptedDate: null
+                agreementAcceptedDate: null,
+
+                // Add apartment information
+                ...leaseApartmentData
             };
 
             console.log('🚨 LEASE CREATION - Occupants FINAL:', {
@@ -22251,14 +22559,50 @@ class CasaLink {
             const leaseRef = await firebaseDb.collection('leases').add(leaseData);
             console.log('✅ New lease created with ID:', leaseRef.id);
 
-            // Update tenant's user record
-            await firebaseDb.collection('users').doc(tenantId).update({
+            // Resolve apartment information from room document for tenant record
+            let apartmentData = {};
+            if (room && room.apartmentId) {
+                try {
+                    const apartmentDoc = await firebaseDb.collection('apartments').doc(room.apartmentId).get();
+                    if (apartmentDoc.exists) {
+                        const apartment = apartmentDoc.data();
+                        apartmentData = {
+                            apartmentId: room.apartmentId,
+                            apartmentName: apartment.apartmentName || apartment.name || '',
+                            apartmentAddress: apartment.apartmentAddress || apartment.address || ''
+                        };
+                    } else {
+                        // Fallback: use room's apartment data if apartment doc not found
+                        apartmentData = {
+                            apartmentId: room.apartmentId,
+                            apartmentName: room.apartmentName || '',
+                            apartmentAddress: room.apartmentAddress || ''
+                        };
+                    }
+                } catch (error) {
+                    console.warn('⚠️ Could not resolve apartment data for tenant record:', error);
+                    // Fallback: use room's apartment data
+                    if (room.apartmentId) {
+                        apartmentData = {
+                            apartmentId: room.apartmentId,
+                            apartmentName: room.apartmentName || '',
+                            apartmentAddress: room.apartmentAddress || ''
+                        };
+                    }
+                }
+            }
+
+            // Update tenant's user record with lease and apartment information
+            const tenantUpdateData = {
                 leaseId: leaseRef.id,
                 currentLease: leaseRef.id,
                 roomNumber: tenantData.roomNumber,
                 status: 'unverified',
-                updatedAt: new Date().toISOString()
-            });
+                updatedAt: new Date().toISOString(),
+                ...apartmentData
+            };
+
+            await firebaseDb.collection('users').doc(tenantId).update(tenantUpdateData);
 
             return leaseRef.id;
 

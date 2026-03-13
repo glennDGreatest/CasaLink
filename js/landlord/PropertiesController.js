@@ -889,6 +889,12 @@ window.PropertiesController = class PropertiesController {
             // remember current property id for later edits
             modal.dataset.propertyId = propertyId;
 
+            // clear tab contents for fresh load
+            const unitsList = document.getElementById('unitsList');
+            if (unitsList) unitsList.innerHTML = '';
+            const maintenanceList = document.getElementById('maintenanceList');
+            if (maintenanceList) maintenanceList.innerHTML = '';
+
             // Reset to loading state
             content.style.display = 'none';
             loading.style.display = 'flex';
@@ -1005,11 +1011,9 @@ window.PropertiesController = class PropertiesController {
                 }
             }
 
-            // Populate units tab
-            await this.populateUnitsTab(units);
+            // Populate units tab on tab switch
 
-            // Populate maintenance tab
-            await this.populateMaintenanceTab(maintenanceRequests);
+            // Populate maintenance tab on tab switch
 
             // Populate tenants tab
             const tenants = await this.fetchPropertyTenants(propertyId, property);
@@ -1051,57 +1055,21 @@ window.PropertiesController = class PropertiesController {
      */
     async fetchPropertyUnits(propertyId, propertyObj = {}) {
         try {
+            console.log('🏠 Fetching units for property details modal:', propertyId);
             await this.waitForFirebase();
-            let units = [];
-
-            // primary collection for new schema
-            const snapshot = await window.firebaseDb
-                .collection('units')
-                .where('propertyId', '==', propertyId)
-                .get();
-
-            units = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-            // also load legacy rooms from the rooms collection (via DataManager if available)
-            let legacyUnits = [];
-            if (window.DataManager && typeof DataManager.getLandlordUnits === 'function') {
-                const all = await DataManager.getLandlordUnits(this.currentUser.uid);
-                legacyUnits = all.filter(u =>
-                    u.apartmentId === propertyId ||
-                    u.propertyId === propertyId ||
-                    u.rentalPropertyId === propertyId ||
-                    u.apartmentAddress === propertyObj.apartmentAddress ||
-                    u.rentalAddress === propertyObj.apartmentAddress
-                );
-            } else {
-                // fallback direct query
-                const roomsSnap = await window.firebaseDb
-                    .collection('rooms')
-                    .where('apartmentId', '==', propertyId)
-                    .get();
-                legacyUnits = roomsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            }
-
-            // convert legacy rooms into unit-like shape if needed
-            legacyUnits = legacyUnits.map(u => ({
+            // query rooms collection by landlordId, then filter by apartmentAddress
+            const roomsSnap = await window.firebaseDb.collection('rooms').where('landlordId', '==', this.currentUser.uid).get();
+            let units = roomsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(u => u.apartmentAddress === propertyObj.apartmentAddress);
+            // convert to unit format
+            units = units.map(u => ({
                 ...u,
                 unitNumber: u.roomNumber || u.unitNumber || u.id,
                 isOccupied: u.isAvailable === false || u.status === 'occupied',
                 rent: u.monthlyRent || u.rent || 0
             }));
-
-            units = units.concat(legacyUnits);
-            // dedupe by id
-            const seen = new Set();
-            units = units.filter(u => {
-                if (seen.has(u.id)) return false;
-                seen.add(u.id);
-                return true;
-            });
-
             return units;
         } catch (error) {
-            console.error('Error fetching units:', error);
+            console.error('Error fetching property units:', error);
             return [];
         }
     }
@@ -1111,6 +1079,7 @@ window.PropertiesController = class PropertiesController {
      */
     async fetchPropertyMaintenance(propertyId, propertyObj = {}) {
         try {
+            console.log('🔧 Fetching maintenance for property details modal:', propertyId);
             await this.waitForFirebase();
             let requests = [];
 
@@ -1125,13 +1094,21 @@ window.PropertiesController = class PropertiesController {
                 requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             }
 
-            // filter to only those affecting this apartment/property
-            requests = requests.filter(r =>
-                r.propertyId === propertyId ||
-                r.apartmentId === propertyId ||
-                r.apartmentId === propertyObj.id ||
-                r.apartmentAddress === propertyObj.apartmentAddress
-            );
+            // Determine which units belong to this property (room numbers + unit IDs)
+            const units = await this.fetchPropertyUnits(propertyId, propertyObj);
+            const unitIds = units.map(u => u.id);
+            const roomNumbers = units.map(u => u.roomNumber || u.unitNumber).filter(Boolean);
+
+            // Filter maintenance requests for this property:
+            // 1) Owned by this property ID (apartmentId/propertyId)
+            // 2) Or matches this property's name/address AND a room number from this property
+            // 3) Or matches by unit/room ID
+            requests = requests.filter(r => {
+                const matchesByPropertyId = r.apartmentId === propertyId || r.propertyId === propertyId;
+                const matchesByNameAndRoom = (r.propertyName === propertyObj.apartmentName || r.propertyName === propertyObj.apartmentAddress) && roomNumbers.includes(r.roomNumber);
+                const matchesByUnitId = unitIds.includes(r.unitId) || unitIds.includes(r.roomId);
+                return matchesByPropertyId || matchesByNameAndRoom || matchesByUnitId;
+            });
 
             // sort descending by createdAt and take first 5
             requests.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -1351,6 +1328,20 @@ window.PropertiesController = class PropertiesController {
                 if (pane) {
                     pane.style.display = 'block';
                 }
+                if (tabName === 'units') {
+                    console.log('📋 Units tab clicked for property:', this.currentPropertyId);
+                    (async () => {
+                        const units = await this.fetchPropertyUnits(this.currentPropertyId, this.currentProperty);
+                        await this.populateUnitsTab(units);
+                    })();
+                }
+                if (tabName === 'maintenance') {
+                    console.log('🔧 Maintenance tab clicked for property:', this.currentPropertyId);
+                    (async () => {
+                        const maintenance = await this.fetchPropertyMaintenance(this.currentPropertyId, this.currentProperty);
+                        await this.populateMaintenanceTab(maintenance);
+                    })();
+                }
             });
         });
     }
@@ -1367,6 +1358,29 @@ window.PropertiesController = class PropertiesController {
         const modal = document.getElementById('propertyDetailsModal');
         if (modal) {
             modal.style.display = 'none';
+            // reset modal state for fresh open
+            modal.dataset.propertyId = '';
+            this.detailsEditing = false;
+            // reset tabs to overview
+            const tabButtons = modal.querySelectorAll('.property-tabs .tab-button');
+            tabButtons.forEach(btn => btn.classList.remove('active'));
+            const overviewBtn = modal.querySelector('.property-tabs .tab-button[data-tab="overview"]');
+            if (overviewBtn) overviewBtn.classList.add('active');
+            const tabPanes = modal.querySelectorAll('.property-tab-content .tab-pane');
+            tabPanes.forEach(pane => pane.style.display = 'none');
+            const overviewPane = modal.querySelector('.property-tab-content #tab-overview');
+            if (overviewPane) overviewPane.style.display = 'block';
+            // reset content areas
+            const contentEl = document.getElementById('propertyDetailsContent');
+            if (contentEl) contentEl.style.display = 'none';
+            const loadingEl = document.getElementById('propertyDetailsLoading');
+            if (loadingEl) loadingEl.style.display = 'block';
+            const errorEl = document.getElementById('propertyDetailsError');
+            if (errorEl) {
+                errorEl.style.display = 'none';
+                const msgEl = errorEl.querySelector('#propertyDetailsErrorMsg');
+                if (msgEl) msgEl.textContent = '';
+            }
         }
     }
 
