@@ -508,8 +508,8 @@
         <div class="modal-content modal-large property-details-modal">
             <div class="modal-header property-details-header">
                 <div class="property-header-info">
-                    <h3 id="propertyDetailsName">Property Name</h3>
-                    <p id="propertyDetailsAddress" class="property-details-address">Address</p>
+                    <h3 id="propertyDetailsName">Property Details</h3>
+                    <p id="propertyDetailsAddress" class="property-details-address"></p>
                 </div>
                 <button class="modal-close" id="propertyDetailsClose" onclick="if(window.propertiesController) window.propertiesController.closePropertyDetailsModal();">&times;</button>
             </div>
@@ -628,6 +628,13 @@
                             </div>
                         </div>
                         <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-layer-group"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Stories</div>
+                                <div class="metric-value" id="detailsMetricStories">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card">
                             <div class="metric-icon"><i class="fas fa-user-check"></i></div>
                             <div class="metric-info">
                                 <div class="metric-label">Occupancy Rate</div>
@@ -635,10 +642,17 @@
                             </div>
                         </div>
                         <div class="metric-card">
-                            <div class="metric-icon"><i class="fas fa-dollar-sign"></i></div>
+                            <div class="metric-icon"><i class="fas fa-calendar-alt"></i></div>
                             <div class="metric-info">
-                                <div class="metric-label">Monthly Revenue</div>
-                                <div class="metric-value" id="detailsMetricRevenue">-</div>
+                                <div class="metric-label">Expected Rent Collection</div>
+                                <div class="metric-value" id="detailsMetricExpectedRent">-</div>
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-icon"><i class="fas fa-wallet"></i></div>
+                            <div class="metric-info">
+                                <div class="metric-label">Actual Rent Collection</div>
+                                <div class="metric-value" id="detailsMetricActualRent">-</div>
                             </div>
                         </div>
                         <div class="metric-card">
@@ -654,17 +668,13 @@
                     <div class="property-info-grid">
                         <!-- original schema had a lot of fields we no longer collect,
                              only show rows that can be populated from Firestore or hide them below -->
-                        <div class="info-group" id="groupPropertyType">
-                            <label>Property Type</label>
-                            <span id="detailsPropertyType">-</span>
+                        <div class="info-group" id="groupPropertyName">
+                            <label>Name</label>
+                            <span id="detailsPropertyName">-</span>
                         </div>
-                        <div class="info-group" id="groupPropertyStatus">
-                            <label>Status</label>
-                            <span id="detailsPropertyStatus" class="status-badge">-</span>
-                        </div>
-                        <div class="info-group" id="groupPropertyStories">
-                            <label>Stories</label>
-                            <span id="detailsPropertyStories">-</span>
+                        <div class="info-group" id="groupPropertyAddress">
+                            <label>Address</label>
+                            <span id="detailsPropertyAddress">-</span>
                         </div>
                         <!-- the following metadata rows are added for auditing -->
                         <div class="info-group" id="groupPropertyCreated">

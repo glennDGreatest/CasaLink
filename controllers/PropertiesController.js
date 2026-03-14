@@ -79,6 +79,23 @@ class PropertiesController {
     }
 
     /**
+     * Format a date string, Date object, or Firestore timestamp for display.
+     */
+    formatDate(date) {
+        if (!date) return '-';
+        if (typeof date.toDate === 'function') {
+            date = date.toDate();
+        }
+        const parsed = new Date(date);
+        if (Number.isNaN(parsed.getTime())) return '-';
+        return parsed.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    }
+
+    /**
      * Search properties by name or address
      */
     searchProperties(query) {
@@ -399,6 +416,27 @@ class PropertiesController {
             // store id so other helpers can access it (edit, etc.)
             modal.dataset.propertyId = propertyId;
 
+            // Reset tab UI so every open starts on Overview (fresh state)
+            console.log('Resetting property details modal tabs to Overview');
+            const tabButtons = modal.querySelectorAll('.property-tabs .tab-button');
+            const tabPanes = modal.querySelectorAll('.property-tab-content .tab-pane');
+            tabButtons.forEach(b => b.classList.remove('active'));
+            tabPanes.forEach(p => p.style.display = 'none');
+            const overviewBtn = modal.querySelector('.property-tabs .tab-button[data-tab="overview"]');
+            if (overviewBtn) overviewBtn.classList.add('active');
+            const overviewPane = modal.querySelector('#tab-overview');
+            if (overviewPane) overviewPane.style.display = 'block';
+
+            // reset tab content placeholders
+            const unitsList = document.getElementById('unitsList');
+            if (unitsList) unitsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading units...</p>';
+            const maintenanceList = document.getElementById('maintenanceList');
+            if (maintenanceList) maintenanceList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading maintenance requests...</p>';
+            const tenantsList = document.getElementById('tenantsList');
+            if (tenantsList) tenantsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading tenants...</p>';
+            const activityList = document.getElementById('activityList');
+            if (activityList) activityList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading activity...</p>';
+
             // reset/loading state
             content && (content.style.display = 'none');
             loading && (loading.style.display = 'flex');
@@ -415,78 +453,229 @@ class PropertiesController {
                 content && (content.style.display = 'block');
                 return;
             }
-            nameEl.textContent = property.name || '';
-            const addressStr = `${property.address || ''}, ${property.city || ''}, ${property.state || ''} ${property.zipCode || ''}`;
-            addressEl.textContent = addressStr;
+            nameEl.textContent = 'Property Details';
+            addressEl.textContent = '';
 
-            // basic property grid
-            // basic property grid: map to apartment schema when present
-            const typeEl = document.getElementById('detailsPropertyType');
-            const typeGroup = document.getElementById('groupPropertyType');
-            if (typeEl && property.propertyType) {
-                typeEl.textContent = this.formatPropertyType ? this.formatPropertyType(property.propertyType) : property.propertyType;
-            } else if (typeGroup) {
-                typeGroup.style.display = 'none';
+            // Populate property info grid (name/address/rooms/landlord)
+            const displayName = property.apartmentName || property.name || property.propertyName || property.title || '';
+            const displayAddress = property.apartmentAddress || property.address || property.propertyAddress || property.location || '';
+            const roomsCount = property.numberOfRooms != null ? property.numberOfRooms : (property.totalUnits != null ? property.totalUnits : (property.numberOfUnits != null ? property.numberOfUnits : null));
+            const landlordName = property.landlordName || property.ownerName || property.owner || property.landlordEmail || '';
+            const createdAtValue = property.createdAt || property.created_at || property.createdOn || property.created || null;
+            const updatedAtValue = property.updatedAt || property.updated_at || property.updatedOn || property.updated || null;
+
+            const infoNameEl = document.getElementById('detailsPropertyName');
+            const infoNameGroup = document.getElementById('groupPropertyName');
+            if (infoNameEl && displayName) {
+                infoNameEl.textContent = displayName;
+            } else if (infoNameGroup) {
+                infoNameGroup.style.display = 'none';
             }
-            const statusBadge = document.getElementById('detailsPropertyStatus');
-            if (statusBadge) {
-                const isActive = property.isActive === true || property.status === 'active';
-                statusBadge.textContent = isActive ? 'Active' : 'Inactive';
-                statusBadge.className = isActive ? 'status-badge status-active' : 'status-badge status-inactive';
+
+            const infoAddressEl = document.getElementById('detailsPropertyAddress');
+            const infoAddressGroup = document.getElementById('groupPropertyAddress');
+            if (infoAddressEl && displayAddress) {
+                infoAddressEl.textContent = displayAddress;
+            } else if (infoAddressGroup) {
+                infoAddressGroup.style.display = 'none';
             }
-            // stories / floors mapping
-            const storiesEl = document.getElementById('detailsPropertyStories');
-            const storiesGroup = document.getElementById('groupPropertyStories');
-            if (storiesEl) {
-                if (property.numberOfFloors != null) {
-                    storiesEl.textContent = property.numberOfFloors;
-                } else if (property.numberOfStories != null) {
-                    storiesEl.textContent = property.numberOfStories;
-                } else if (storiesGroup) {
-                    storiesGroup.style.display = 'none';
-                }
+
+            // created/updated timestamps
+            const createdEl = document.getElementById('detailsPropertyCreated');
+            const updatedEl = document.getElementById('detailsPropertyUpdated');
+            if (createdEl) {
+                createdEl.textContent = createdAtValue ? this.formatDate(createdAtValue) : '-';
             }
+            if (updatedEl) {
+                updatedEl.textContent = updatedAtValue ? this.formatDate(updatedAtValue) : '-';
+            }
+
+            // Populate stories metric (moved to the metrics grid)
+            const storiesMetricEl = document.getElementById('detailsMetricStories');
+            if (storiesMetricEl) {
+                const storiesValue = property.numberOfFloors != null ? property.numberOfFloors : (property.numberOfStories != null ? property.numberOfStories : '-');
+                storiesMetricEl.textContent = storiesValue;
+            }
+
             // hide year built / sqft rows as they are not stored
             ['detailsPropertyYearBuilt','detailsPropertySqft'].forEach(id=>{
                 const el = document.getElementById(id);
                 if (el) el.closest('.info-group').style.display = 'none';
             });
 
-            // metrics calculations
-            const units = (typeof this.service.getPropertyUnits === 'function')
-                ? await this.service.getPropertyUnits(propertyId)
-                : [];
-            const occupiedUnits = (units || []).filter(u => u.isOccupied).length;
-            const occupancyRate = units && units.length > 0 ? Math.round((occupiedUnits / units.length) * 100) : 0;
+            // Metrics calculations (occupancy, expected/actual rent, maintenance)
+            const propertyNameForQuery = property.apartmentName || property.name || property.apartmentAddress || property.address || '';
+            const propertyAddressForQuery = property.apartmentAddress || property.address || '';
+            const landlordId = this.currentUser?.uid || this.currentUser?.id;
 
-            // total units – prefer numberOfRooms field
-            const unitsCount = property.numberOfRooms != null ? property.numberOfRooms : (units || []).length;
-            document.getElementById('detailsMetricUnits').textContent = unitsCount;
-            // occupancy rate – denominator uses numberOfRooms when available
-            let occupancyRateFinal = occupancyRate;
-            if (property.numberOfRooms) {
-                occupancyRateFinal = Math.round((occupiedUnits / property.numberOfRooms) * 100);
+            // --- Fetch units in the same way the unit layout uses (so occupancy matches) ---
+            let units = [];
+            try {
+                if (window.DataManager && typeof window.DataManager.getLandlordUnits === 'function') {
+                    const allUnits = await window.DataManager.getLandlordUnits(landlordId);
+                    units = (allUnits || []).filter(u => {
+                        return (u.apartmentId && u.apartmentId === propertyId) ||
+                            (u.propertyId && u.propertyId === propertyId) ||
+                            (propertyAddressForQuery && (u.apartmentAddress === propertyAddressForQuery || u.rentalAddress === propertyAddressForQuery));
+                    });
+                }
+            } catch (err) {
+                console.warn('⚠️ Error fetching units via DataManager:', err);
             }
-            document.getElementById('detailsMetricOccupancy').textContent = `${occupancyRateFinal}%`;
-            document.getElementById('detailsMetricRevenue').textContent = `₱${(property.monthlyRevenue || 0).toLocaleString()}`;
 
-            // maintenance requests
+            // Fallbacks: use service helper or legacy rooms collection
+            if (!units.length) {
+                if (typeof this.service.getPropertyUnits === 'function') {
+                    units = await this.service.getPropertyUnits(propertyId);
+                }
+            }
+
+            if (!units.length && window.firebaseDb) {
+                // Try to load from units collection directly (newer schema)
+                const unitQueries = [
+                    { field: 'propertyId', value: propertyId },
+                    { field: 'apartmentId', value: propertyId }
+                ];
+                for (const q of unitQueries) {
+                    if (!q.value) continue;
+                    const snapshot = await window.firebaseDb.collection('units').where(q.field, '==', q.value).get();
+                    if (!snapshot.empty) {
+                        units = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        break;
+                    }
+                }
+            }
+
+            // Make sure units have a normalized occupied status (like the unit layout)
+            units = units.map(u => ({
+                ...u,
+                status: (u.status || '').toLowerCase() === 'occupied' ? 'occupied' : (u.status || 'vacant'),
+                isAvailable: u.isAvailable !== undefined ? u.isAvailable : (u.status || '').toLowerCase() !== 'occupied'
+            }));
+
+            // --- Fetch leases for this property to compute occupancy / expected rent ---
+            let leases = [];
+            try {
+                if (window.DataManager && typeof window.DataManager.getLandlordLeases === 'function') {
+                    leases = await window.DataManager.getLandlordLeases(landlordId);
+                } else if (window.firebaseDb) {
+                    const snapshot = await window.firebaseDb.collection('leases').where('landlordId', '==', landlordId).get();
+                    leases = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                }
+            } catch (err) {
+                console.warn('⚠️ Error fetching leases for property stats:', err);
+            }
+
+            const leaseMatchesProperty = (lease) => {
+                if (!lease) return false;
+                if (propertyId && (lease.apartmentId === propertyId || lease.propertyId === propertyId || lease.rentalPropertyId === propertyId)) {
+                    return true;
+                }
+                if (propertyAddressForQuery) {
+                    if (lease.apartmentAddress === propertyAddressForQuery || lease.rentalAddress === propertyAddressForQuery) return true;
+                }
+                if (propertyNameForQuery && lease.apartmentName === propertyNameForQuery) return true;
+                return false;
+            };
+
+            const isActiveLease = (lease) => lease && lease.isActive !== false && (lease.status === 'active' || lease.status === 'verified' || !lease.status);
+
+            const propertyLeases = leases.filter(l => leaseMatchesProperty(l) && isActiveLease(l));
+            const occupiedUnits = propertyLeases.length;
+
+            // Total units should reflect numberOfRooms (or totalUnits) if available, otherwise fall back to fetched units
+            const totalUnits = property.numberOfRooms != null ? property.numberOfRooms : (property.totalUnits != null ? property.totalUnits : (units || []).length);
+            const unitsEl = document.getElementById('detailsMetricUnits');
+            if (unitsEl) unitsEl.textContent = totalUnits;
+
+            const occupancyRateFinal = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
+            const occupancyEl = document.getElementById('detailsMetricOccupancy');
+            if (occupancyEl) occupancyEl.textContent = `${occupancyRateFinal}%`;
+
+            // Expected rent: sum of monthly rent from active leases (fallback to unit rents)
+            let expectedRent = propertyLeases.reduce((sum, lease) => sum + (lease.monthlyRent || 0), 0);
+            if (!expectedRent && units && units.length) {
+                expectedRent = units.reduce((sum, u) => sum + (u.monthlyRent || u.rent || 0), 0);
+            }
+            const expectedEl = document.getElementById('detailsMetricExpectedRent');
+            if (expectedEl) expectedEl.textContent = `₱${(expectedRent || 0).toLocaleString()}`;
+
+            // Actual rent collection: sum of paid bills this month for this apartment
+            const actualEl = document.getElementById('detailsMetricActualRent');
+            if (actualEl) {
+                let actualRent = 0;
+                try {
+                    let bills = [];
+                    if (window.DataManager && typeof window.DataManager.getBillsForApartment === 'function') {
+                        bills = await window.DataManager.getBillsForApartment(landlordId, propertyNameForQuery);
+                    } else if (window.DataManager && typeof window.DataManager.getBills === 'function') {
+                        bills = await window.DataManager.getBills(landlordId);
+                    } else if (window.firebaseDb) {
+                        const snapshot = await window.firebaseDb.collection('bills').where('landlordId', '==', landlordId).get();
+                        bills = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    }
+
+                    // Filter bills to this property
+                    bills = bills.filter(b => {
+                        if (!b) return false;
+                        if (propertyId && (b.propertyId === propertyId || b.apartmentId === propertyId)) return true;
+                        if (propertyAddressForQuery && (b.apartmentAddress === propertyAddressForQuery || b.propertyAddress === propertyAddressForQuery)) return true;
+                        if (propertyNameForQuery && (b.apartment === propertyNameForQuery || b.apartmentName === propertyNameForQuery || b.propertyName === propertyNameForQuery)) return true;
+                        if (b.roomNumber && units.some(u => u.roomNumber && u.roomNumber === b.roomNumber)) return true;
+                        return false;
+                    });
+
+                    const now = new Date();
+                    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+                    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+                    const normalizeDate = (d) => {
+                        if (!d) return null;
+                        if (d.toDate) return d.toDate();
+                        return new Date(d);
+                    };
+                    const isThisMonth = (d) => d && d >= monthStart && d < monthEnd;
+
+                    actualRent = bills.reduce((sum, bill) => {
+                        const paidDate = normalizeDate(bill.paidDate);
+                        if (!isThisMonth(paidDate)) return sum;
+                        const paidAmount = (bill.paidAmount != null && bill.paidAmount !== '')
+                            ? bill.paidAmount
+                            : (bill.status === 'paid' ? bill.amount : 0);
+                        return sum + (paidAmount || 0);
+                    }, 0);
+                } catch (err) {
+                    console.warn('Unable to compute actual rent collection:', err);
+                }
+                actualEl.textContent = `₱${(actualRent || 0).toLocaleString()}`;
+            }
+
+            // Maintenance requests (open)
             let maintenanceRequests = [];
-            if (this.service.getPropertyMaintenance) {
-                maintenanceRequests = await this.service.getPropertyMaintenance(propertyId);
-            } else if (window.firebaseDb) {
-                const snapshot = await window.firebaseDb
-                    .collection('maintenance')
-                    .where('propertyId', '==', propertyId)
-                    .orderBy('createdAt', 'desc')
-                    .limit(5)
-                    .get();
-                maintenanceRequests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            try {
+                if (window.DataManager && typeof window.DataManager.getMaintenanceRequests === 'function') {
+                    maintenanceRequests = await window.DataManager.getMaintenanceRequests(landlordId);
+                } else if (window.firebaseDb) {
+                    const snapshot = await window.firebaseDb.collection('maintenance').where('landlordId', '==', landlordId).get();
+                    maintenanceRequests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                }
+            } catch (err) {
+                console.warn('⚠️ Error fetching maintenance requests:', err);
             }
-            const openMaintenance = (maintenanceRequests || []).filter(m => m.status !== 'completed').length;
+
+            const matchingMaintenance = maintenanceRequests.filter(m => {
+                if (!m) return false;
+                if (propertyId && (m.propertyId === propertyId || m.apartmentId === propertyId)) return true;
+                if (propertyAddressForQuery && (m.apartmentAddress === propertyAddressForQuery || m.propertyAddress === propertyAddressForQuery)) return true;
+                if (propertyNameForQuery && (m.apartment === propertyNameForQuery || m.apartmentName === propertyNameForQuery || m.propertyName === propertyNameForQuery)) return true;
+                if (m.roomNumber && units.some(u => u.roomNumber && u.roomNumber === m.roomNumber)) return true;
+                return false;
+            });
+            const openMaintenance = (matchingMaintenance || []).filter(m => m.status !== 'completed').length;
             document.getElementById('detailsMetricMaintenance').textContent = openMaintenance;
 
             // overview tab
+            const addressStr = property.apartmentAddress || property.address || property.propertyAddress || property.location || '';
             document.getElementById('detailsFullAddress').textContent = addressStr;
             const descEl = document.getElementById('detailsDescription');
             if (descEl) {
@@ -919,28 +1108,19 @@ class PropertiesController {
         }
 
         // tenants tab
+        // Use the users collection (role=tenant + apartmentId matches) so the activity tab can easily filter by tenant IDs.
+        let tenants = [];
         try {
-            let tenants = [];
             if (this.service.getPropertyTenants) {
                 tenants = await this.service.getPropertyTenants(propertyId);
             } else if (window.firebaseDb) {
                 const snapshot = await window.firebaseDb
-                    .collection('leases')
-                    .where('propertyId', '==', propertyId)
-                    .where('status', '==', 'active')
+                    .collection('users')
+                    .where('role', '==', 'tenant')
+                    .where('apartmentId', '==', propertyId)
                     .get();
 
-                const tenantIds = [...new Set(snapshot.docs.map(d => d.data().tenantId))];
-                for (const tenantId of tenantIds) {
-                    try {
-                        const tenantDoc = await window.firebaseDb.collection('users').doc(tenantId).get();
-                        if (tenantDoc.exists) {
-                            tenants.push({ id: tenantId, ...tenantDoc.data() });
-                        }
-                    } catch (e) {
-                        console.warn('Error fetching tenant:', e);
-                    }
-                }
+                tenants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             }
 
             const tenantsList = document.getElementById('tenantsList');
@@ -948,14 +1128,27 @@ class PropertiesController {
                 if (!tenants || tenants.length === 0) {
                     tenantsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No active tenants</p>';
                 } else {
-                    tenantsList.innerHTML = tenants.map(tenant => `
+                    tenantsList.innerHTML = tenants.map(tenant => {
+                        const age = tenant.age ? `Age: ${tenant.age}` : '';
+                        const occupation = tenant.occupation ? `Occupation: ${tenant.occupation}` : '';
+                        const phone = tenant.phone ? `Phone: ${tenant.phone}` : '';
+                        const extras = [age, occupation, phone].filter(Boolean).join(' · ');
+
+                        // Some user documents store a full `name` field instead of first/last.
+                        const displayName = (tenant.firstName || tenant.lastName)
+                            ? `${tenant.firstName || ''} ${tenant.lastName || ''}`.trim()
+                            : (tenant.name || '');
+
+                        return `
                         <div class="tenant-item">
                             <div class="tenant-info">
-                                <div class="tenant-name">${tenant.firstName || ''} ${tenant.lastName || ''}</div>
+                                <div class="tenant-name">${displayName}</div>
                                 <div class="tenant-unit">${tenant.email || ''}</div>
+                                ${extras ? `<div class="tenant-meta">${extras}</div>` : ''}
                             </div>
                         </div>
-                    `).join('');
+                    `;
+                    }).join('');
                 }
             }
         } catch (e) {
@@ -965,32 +1158,54 @@ class PropertiesController {
         // activity tab
         try {
             let activities = [];
+
+            // Determine which tenants are associated with this apartment (used to filter activities)
+            const tenantIds = (tenants || []).map(t => t.id).filter(Boolean);
+
             if (this.service.getPropertyActivity) {
                 activities = await this.service.getPropertyActivity(propertyId);
-            } else if (window.firebaseDb) {
-                const snapshot = await window.firebaseDb
-                    .collection('apartments')
-                    .doc(propertyId)
-                    .collection('activity')
-                    .orderBy('timestamp', 'desc')
-                    .limit(10)
-                    .get();
-                activities.push(...snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+            } else if (window.firebaseDb && tenantIds.length > 0) {
+                // Firestore "in" queries are limited to 10 items; chunk if needed
+                const chunked = [];
+                for (let i = 0; i < tenantIds.length; i += 10) {
+                    chunked.push(tenantIds.slice(i, i + 10));
+                }
+
+                for (const chunk of chunked) {
+                    const snapshot = await window.firebaseDb
+                        .collection('activities')
+                        .where('tenantId', 'in', chunk)
+                        .where('landlordId', '==', this.currentUser?.uid || '')
+                        .orderBy('createdAt', 'desc')
+                        .limit(20)
+                        .get();
+                    activities.push(...snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+                }
+
+                // ensure newest first
+                activities.sort((a, b) => {
+                    const aDate = new Date(a.createdAt?.toDate?.() || a.createdAt || 0).getTime();
+                    const bDate = new Date(b.createdAt?.toDate?.() || b.createdAt || 0).getTime();
+                    return bDate - aDate;
+                });
             }
+
             const activityList = document.getElementById('activityList');
             if (activityList) {
                 if (!activities || activities.length === 0) {
                     activityList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No activity recorded</p>';
                 } else {
                     activityList.innerHTML = activities.map(activity => {
-                        const date = activity.timestamp ? new Date(activity.timestamp.toDate?.() || activity.timestamp).toLocaleDateString() : '';
+                        const date = activity.createdAt ? new Date(activity.createdAt.toDate?.() || activity.createdAt).toLocaleDateString() : '';
+                        const title = activity.title || activity.action || 'Activity';
+                        const message = activity.message || activity.description || '';
                         return `
                             <div class="activity-item">
                                 <div class="activity-icon"><i class="fas fa-circle"></i></div>
                                 <div class="activity-content">
-                                    <div class="activity-title">${activity.action || 'Activity'}</div>
+                                    <div class="activity-title">${title}</div>
                                     <div class="activity-time">${date}</div>
-                                    ${activity.description ? `<div class="activity-description">${activity.description}</div>` : ''}
+                                    ${message ? `<div class="activity-description">${message}</div>` : ''}
                                 </div>
                             </div>
                         `;
@@ -1006,6 +1221,10 @@ class PropertiesController {
      * Wire up tab buttons inside property details modal.
      */
     _setupPropertyDetailsTabs() {
+        // Avoid binding duplicate listeners on repeated modal opens
+        if (this._propertyDetailsTabsInitialized) return;
+        this._propertyDetailsTabsInitialized = true;
+
         const tabButtons = document.querySelectorAll('.property-tabs .tab-button');
         const tabPanes = document.querySelectorAll('.property-tab-content .tab-pane');
 

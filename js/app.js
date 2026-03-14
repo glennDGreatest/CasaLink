@@ -1379,13 +1379,13 @@ class CasaLink {
         if (!maintenanceContainer) return;
 
         const addressEl = modal.querySelector('#propertyDetailsAddress');
-        const propertyAddress = addressEl?.textContent?.trim();
-        if (!propertyAddress) {
+        const propertyAddress = addressEl?.textContent?.trim() || this.currentApartmentAddress || modal.dataset.propertyAddress || '';
+        const propId = modal.dataset.propertyId || this.currentApartmentId;
+
+        if (!propId && !propertyAddress) {
             maintenanceContainer.innerHTML = `<p style="text-align:center; color:#999;">Unable to determine property address.</p>`;
             return;
         }
-
-        const propId = modal.dataset.propertyId;
 
         maintenanceContainer.innerHTML = `
             <div style="text-align:center; color:#999;">
