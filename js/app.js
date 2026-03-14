@@ -214,7 +214,7 @@ class CasaLink {
     // Validate if a page is appropriate for the current user role
     isValidPageForRole(page) {
         const landlordPages = ['dashboard', 'billing', 'maintenance', 'tenants', 'reports'];
-        const tenantPages = ['dashboard', 'tenantBilling', 'tenantMaintenance', 'tenantProfile'];
+        const tenantPages = ['dashboard', 'tenantBilling', 'tenantMaintenance', 'tenantProfile', 'tenantUnit'];
         
         if (this.currentRole === 'landlord') {
             return landlordPages.includes(page);
@@ -576,6 +576,10 @@ class CasaLink {
 
                 case 'tenantProfile':
                     pageContent = await this.getTenantProfilePage();
+                    break;
+
+                case 'tenantUnit':
+                    pageContent = await this.getTenantUnitManagementPage();
                     break;
 
                 case 'lease-management':
@@ -1159,6 +1163,139 @@ class CasaLink {
         } catch (error) {
             console.error('❌ Error loading tenant profile:', error);
             return this.getErrorDashboard('tenantProfile', error.message);
+        }
+    }
+
+
+
+    async getTenantUnitManagementPage() {
+        console.log('📋 Loading tenant unit management page...');
+
+        if (!this.currentUser) {
+            return this.getErrorDashboard('tenantUnit', 'User not authenticated');
+        }
+
+        try {
+            const lease = await DataManager.getTenantLease(this.currentUser.uid);
+
+            if (!lease) {
+                return `
+                    <div class="page-content">
+                        <div class="page-header">
+                            <h1 class="page-title">Unit Management</h1>
+                        </div>
+                        <div class="empty-state">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <h3>No Active Lease Found</h3>
+                            <p>We could not find an active lease tied to your account. Please contact your landlord for assistance.</p>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const occupants = Array.isArray(lease.occupants) ? lease.occupants : [];
+            const totalOccupants = lease.totalOccupants || occupants.length || 1;
+            const maxOccupants = lease.maxOccupants || totalOccupants;
+            const canAddOccupant = totalOccupants < maxOccupants;
+
+            const occupantsHtml = occupants.length > 0
+                ? occupants.map((name, idx) => `
+                    <div style="display:flex; align-items:center; justify-content: space-between; padding: 10px; border-bottom: 1px solid #eee;">
+                        <div>
+                            <div style="font-weight: 600;">${name}</div>
+                            <div style="font-size: 0.85rem; color: var(--dark-gray);">Occupant</div>
+                        </div>
+                        <div style="font-size: 0.8rem; color: var(--dark-gray);">
+                            ${idx === 0 ? 'Primary tenant' : ''}
+                        </div>
+                    </div>
+                `).join('')
+                : `
+                    <div class="empty-state" style="padding: 20px; text-align: center;">
+                        <i class="fas fa-user-friends"></i>
+                        <h3>No occupants yet</h3>
+                        <p>Add an occupant below to share the unit.</p>
+                    </div>
+                `;
+
+            const unitAddress = lease.rentalAddress || lease.apartmentAddress || '';
+            const roomNumber = lease.roomNumber || '';
+            const leaseStatus = lease.isActive ? 'Active' : 'Inactive';
+            const leasePeriod = lease.leaseStart ? `${new Date(lease.leaseStart).toLocaleDateString()} - ${new Date(lease.leaseEnd).toLocaleDateString()}` : 'N/A';
+
+            return `
+                <div class="page-content">
+                    <div class="page-header">
+                        <div>
+                            <h1 class="page-title">Unit Management</h1>
+                            <p style="color: var(--dark-gray); margin-top: 5px;">View your unit details and manage occupants.</p>
+                        </div>
+                    </div>
+
+                    <div class="card-group-title">Unit & Lease Details</div>
+                    <div class="card-group">
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">Unit</div>
+                                <div class="card-icon"><i class="fas fa-door-open"></i></div>
+                            </div>
+                            <div class="card-value">${roomNumber || 'N/A'}</div>
+                            <div class="card-subtitle">${unitAddress || 'No address available'}</div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">Lease Status</div>
+                                <div class="card-icon"><i class="fas fa-file-contract"></i></div>
+                            </div>
+                            <div class="card-value">${leaseStatus}</div>
+                            <div class="card-subtitle">${leasePeriod}</div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">Occupancy</div>
+                                <div class="card-icon"><i class="fas fa-users"></i></div>
+                            </div>
+                            <div class="card-value">${totalOccupants}/${maxOccupants}</div>
+                            <div class="card-subtitle">Current / Max</div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <div class="card-title">Monthly Rent</div>
+                                <div class="card-icon"><i class="fas fa-money-bill-wave"></i></div>
+                            </div>
+                            <div class="card-value">₱${(lease.monthlyRent || 0).toLocaleString('en-PH')}</div>
+                            <div class="card-subtitle">Rent amount</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <h3 style="margin: 0 0 15px 0; color: var(--text-dark);">Occupants</h3>
+                        <div id="occupantsList">
+                            ${occupantsHtml}
+                        </div>
+
+                        <form id="addOccupantForm" style="margin-top: 20px;">
+                            <div class="form-group">
+                                <label class="form-label">Add Occupant</label>
+                                <input id="occupantName" class="form-input" type="text" placeholder="Full name" ${!canAddOccupant ? 'disabled' : ''}>
+                            </div>
+                            <div class="form-group" style="display:flex; gap: 10px; align-items: center;">
+                                <button type="submit" class="btn btn-primary" ${!canAddOccupant ? 'disabled' : ''}>
+                                    <i class="fas fa-user-plus"></i> Add Occupant
+                                </button>
+                                ${!canAddOccupant ? '<span style="color: var(--danger); font-size: 0.9rem;">Maximum occupants reached.</span>' : ''}
+                            </div>
+                            <div id="addOccupantError" style="color: var(--danger); display: none; margin-top: 10px;"></div>
+                        </form>
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            console.error('❌ Error loading tenant unit page:', error);
+            return this.getErrorDashboard('tenantUnit', error.message);
         }
     }
 
@@ -7503,6 +7640,9 @@ class CasaLink {
                 // maintain row click handlers for detail modal
                 this.setupMaintenanceRowClickHandlers();
                 break;
+            case 'tenantUnit':
+                await this.setupTenantUnitPage();
+                break;
             case 'lease-management':                
                 this.setupLeaseManagementPage?.();
                 break;
@@ -7540,6 +7680,112 @@ class CasaLink {
         if (this.pendingTenantReload) {
             this.pendingTenantReload = false;
             setTimeout(() => this.loadTenantsData(), 50);
+        }
+    }
+
+    setupTenantUnitPage() {
+        // Prevent duplicate bindings if the form is re-rendered
+        const form = document.getElementById('addOccupantForm');
+        if (!form) return;
+
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            this.addOccupant();
+        });
+    }
+
+    async addOccupant() {
+        const nameInput = document.getElementById('occupantName');
+        const errorElement = document.getElementById('addOccupantError');
+
+        if (!nameInput) return;
+        if (errorElement) {
+            errorElement.style.display = 'none';
+            errorElement.textContent = '';
+        }
+
+        const name = nameInput.value?.trim();
+        if (!name) {
+            if (errorElement) {
+                errorElement.textContent = 'Please enter the name of the occupant.';
+                errorElement.style.display = 'block';
+            }
+            return;
+        }
+
+        try {
+            const lease = await DataManager.getTenantLease(this.currentUser.uid);
+            if (!lease) {
+                throw new Error('No active lease found.');
+            }
+
+            const occupants = Array.isArray(lease.occupants) ? [...lease.occupants] : [];
+            const totalOccupants = lease.totalOccupants || occupants.length || 1;
+            const maxOccupants = lease.maxOccupants || totalOccupants;
+
+            if (totalOccupants >= maxOccupants) {
+                throw new Error('Maximum occupants reached. Please contact your landlord to increase the limit.');
+            }
+
+            occupants.push(name);
+            const newTotal = Math.max(totalOccupants + 1, occupants.length);
+
+            // Update lease document with updated occupant list
+            await firebaseDb.collection('leases').doc(lease.id).update({
+                occupants,
+                totalOccupants: newTotal,
+                updatedAt: new Date().toISOString()
+            });
+
+            // Also update related documents for consistency (room occupancy info + user profile if linked)
+            try {
+                // Update room document, if linked by roomNumber
+                if (lease.roomNumber) {
+                    const roomQuery = await firebaseDb.collection('rooms')
+                        .where('roomNumber', '==', lease.roomNumber)
+                        .where('landlordId', '==', lease.landlordId)
+                        .limit(1)
+                        .get();
+
+                    if (!roomQuery.empty) {
+                        const roomDoc = roomQuery.docs[0];
+                        await roomDoc.ref.update({
+                            numberOfMembers: newTotal,
+                            occupiedBy: lease.tenantId || null,
+                            updatedAt: new Date().toISOString()
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not update room occupancy info:', e);
+            }
+
+            try {
+                // Update tenant user document if it exists (to keep user-facing lease info in sync)
+                if (lease.tenantId) {
+                    await firebaseDb.collection('users').doc(lease.tenantId).update({
+                        leaseOccupants: occupants,
+                        leaseTotalOccupants: newTotal,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            } catch (e) {
+                console.warn('Could not update tenant user document:', e);
+            }
+
+            this.showNotification('Occupant added successfully', 'success');
+
+            // Clear form input (avoid stale value while view reloads)
+            if (nameInput) nameInput.value = '';
+
+            // Reload the unit management page to reflect changes
+            setTimeout(() => this.showPage('tenantUnit'), 300);
+        } catch (error) {
+            console.error('Error adding occupant:', error);
+            if (errorElement) {
+                errorElement.textContent = error.message || 'Failed to add occupant';
+                errorElement.style.display = 'block';
+            }
         }
     }
 
@@ -16838,6 +17084,7 @@ class CasaLink {
                             <li><a href="#" class="active" data-page="dashboard"><i class="fas fa-th-large"></i> <span>Dashboard</span></a></li>
                             <li><a href="#" data-page="tenantBilling"><i class="fas fa-file-invoice-dollar"></i> <span>Billing & Payments</span></a></li>
                             <li><a href="#" data-page="tenantMaintenance"><i class="fas fa-tools"></i> <span>Maintenance</span></a></li>
+                            <li><a href="#" data-page="tenantUnit"><i class="fas fa-door-open"></i> <span>Unit Management</span></a></li>
                             <li><a href="#" data-page="tenantProfile"><i class="fas fa-user"></i> <span>My Profile</span></a></li>
                             <li><a href="#" id="logoutBtn"><i class="fas fa-sign-out-alt"></i> <span>Logout</span></a></li>
                         `}
