@@ -1205,8 +1205,11 @@ class CasaLink {
                             <div style="font-weight: 600;">${name}</div>
                             <div style="font-size: 0.85rem; color: var(--dark-gray);">Occupant</div>
                         </div>
-                        <div style="font-size: 0.8rem; color: var(--dark-gray);">
-                            ${idx === 0 ? 'Primary tenant' : ''}
+                        <div style="display:flex; align-items:center; gap: 10px;">
+                            <span style="font-size: 0.8rem; color: var(--dark-gray);">
+                                ${idx === 0 ? 'Primary tenant' : ''}
+                            </span>
+                            ${idx > 0 ? `<button class="btn btn-sm btn-outline-danger" onclick="casaLink.removeOccupant(${idx})" style="padding: 4px 10px;">Remove</button>` : ''}
                         </div>
                     </div>
                 `).join('')
@@ -7786,6 +7789,69 @@ class CasaLink {
                 errorElement.textContent = error.message || 'Failed to add occupant';
                 errorElement.style.display = 'block';
             }
+        }
+    }
+
+    async removeOccupant(index) {
+        try {
+            const lease = await DataManager.getTenantLease(this.currentUser.uid);
+            if (!lease) {
+                throw new Error('No active lease found.');
+            }
+
+            const occupants = Array.isArray(lease.occupants) ? [...lease.occupants] : [];
+            if (index <= 0 || index >= occupants.length) {
+                throw new Error('Cannot remove primary tenant or invalid occupant index.');
+            }
+
+            const removed = occupants.splice(index, 1);
+            const newTotal = Math.max(occupants.length, 1);
+
+            await firebaseDb.collection('leases').doc(lease.id).update({
+                occupants,
+                totalOccupants: newTotal,
+                updatedAt: new Date().toISOString()
+            });
+
+            // Update room document occupancy info (if applicable)
+            try {
+                if (lease.roomNumber) {
+                    const roomQuery = await firebaseDb.collection('rooms')
+                        .where('roomNumber', '==', lease.roomNumber)
+                        .where('landlordId', '==', lease.landlordId)
+                        .limit(1)
+                        .get();
+
+                    if (!roomQuery.empty) {
+                        const roomDoc = roomQuery.docs[0];
+                        await roomDoc.ref.update({
+                            numberOfMembers: newTotal,
+                            updatedAt: new Date().toISOString()
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not update room occupancy info:', e);
+            }
+
+            // Keep tenant user document in sync
+            try {
+                if (lease.tenantId) {
+                    await firebaseDb.collection('users').doc(lease.tenantId).update({
+                        leaseOccupants: occupants,
+                        leaseTotalOccupants: newTotal,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            } catch (e) {
+                console.warn('Could not update tenant user document:', e);
+            }
+
+            this.showNotification('Occupant removed successfully', 'success');
+            setTimeout(() => this.showPage('tenantUnit'), 300);
+        } catch (error) {
+            console.error('Error removing occupant:', error);
+            this.showNotification(error.message || 'Failed to remove occupant', 'error');
         }
     }
 
