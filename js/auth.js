@@ -1,6 +1,7 @@
 // js/auth.js - FIXED VERSION
 class AuthManager {
     static currentAuthUnsubscribe = null;
+    static creatingUserDoc = false; // Used to avoid logout while user document is still being created
 
     static adminEmails = [
         'admin@casalink.com',
@@ -453,6 +454,11 @@ class AuthManager {
     }
 
     static syncUserToDataManager(userData) {
+        // Ensure we have a uid for compatibility with other modules
+        if (userData && !userData.uid && userData.id) {
+            userData.uid = userData.id;
+        }
+
         // Set window.currentUser FIRST
         window.currentUser = userData;
         console.log('✅ window.currentUser set:', userData ? userData.email : 'null');
@@ -535,10 +541,53 @@ class AuthManager {
                         callback(enhancedUserData);
                     } else {
                         console.error('❌ User document not found in Firestore');
-                        // SYNC NULL TO DATA MANAGER - ADD THIS LINE
-                        this.syncUserToDataManager(null);
-                        await this.logout();
-                        callback(null);
+
+                        if (this.creatingUserDoc) {
+                            console.log('⏳ Waiting briefly for user document to be created...');
+                            // Wait briefly and then retry once before logging out.
+                            setTimeout(async () => {
+                                try {
+                                    const retryDoc = await firebaseDb.collection('users').doc(firebaseUser.uid).get();
+                                    if (retryDoc.exists) {
+                                        const userData = retryDoc.data();
+                                        const enhancedUserData = {
+                                            id: retryDoc.id,
+                                            uid: firebaseUser.uid,
+                                            email: userData.email,
+                                            name: userData.name || userData.email.split('@')[0],
+                                            role: userData.role,
+                                            isActive: userData.isActive !== false,
+                                            hasTemporaryPassword: userData.hasTemporaryPassword || false,
+                                            passwordChanged: userData.passwordChanged || false,
+                                            requiresPasswordChange: userData.requiresPasswordChange || false,
+                                            status: userData.status || 'active',
+                                            loginCount: userData.loginCount || 0,
+                                            lastLogin: userData.lastLogin,
+                                            createdAt: userData.createdAt,
+                                            updatedAt: userData.updatedAt,
+                                            landlordId: userData.landlordId,
+                                            roomNumber: userData.roomNumber,
+                                            properties: userData.properties || []
+                                        };
+                                        this.syncUserToDataManager(enhancedUserData);
+                                        callback(enhancedUserData);
+                                        return;
+                                    }
+                                } catch (retryError) {
+                                    console.warn('⚠️ Retry fetch for user document failed:', retryError);
+                                }
+
+                                console.error('❌ User document still missing after retry, logging out');
+                                this.syncUserToDataManager(null);
+                                await this.logout();
+                                callback(null);
+                            }, 1500);
+                        } else {
+                            // SYNC NULL TO DATA MANAGER - ADD THIS LINE
+                            this.syncUserToDataManager(null);
+                            await this.logout();
+                            callback(null);
+                        }
                     }
                 } catch (error) {
                     console.error('❌ Error fetching user data in auth listener:', error);
@@ -787,6 +836,131 @@ class AuthManager {
         if (errorElement) {
             errorElement.textContent = message;
             errorElement.style.display = 'block';
+        }
+    }
+
+    /**
+     * Create a landlord account and store relevant profile information in Firestore.
+     * This includes payment QR codes and bank details used by tenants.
+     *
+     * @param {object} options
+     * @param {string} options.email
+     * @param {string} options.password
+     * @param {string} options.name
+     * @param {string} [options.phone]
+     * @param {File|null} [options.gcashQrFile]
+     * @param {File|null} [options.mayaQrFile]
+     * @param {string} [options.bankAccountName]
+     * @param {string} [options.bankAccountNumber]
+     * @returns {Promise<object>} Landlord user profile data
+     */
+    static async createLandlordAccount({
+        email,
+        password,
+        name,
+        phone = '',
+        gcashQrFile = null,
+        mayaQrFile = null,
+        bankAccountName = '',
+        bankAccountNumber = ''
+    }) {
+        try {
+            console.log('🛠️ Creating landlord account for:', email);
+
+            // Mark that we are creating a user doc so auth listener doesn't logout too early
+            this.creatingUserDoc = true;
+
+            const userCredential = await firebaseAuth.createUserWithEmailAndPassword(email, password);
+            const user = userCredential.user;
+            const userId = user.uid;
+            const now = new Date().toISOString();
+
+            // Helper to convert a file into a base64 data URL
+            const fileToBase64 = (file) => {
+                if (!file) return Promise.resolve(null);
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(new Error('Failed to read file for base64 conversion'));
+                    reader.readAsDataURL(file);
+                });
+            };
+
+            const uploadResults = {};
+            if (gcashQrFile) {
+                try {
+                    uploadResults.gcashQrBase64 = await fileToBase64(gcashQrFile);
+                } catch (e) {
+                    console.warn('⚠️ Failed to convert GCash QR to base64, skipping:', e);
+                    uploadResults.gcashQrBase64 = null;
+                }
+            }
+            if (mayaQrFile) {
+                try {
+                    uploadResults.mayaQrBase64 = await fileToBase64(mayaQrFile);
+                } catch (e) {
+                    console.warn('⚠️ Failed to convert Maya QR to base64, skipping:', e);
+                    uploadResults.mayaQrBase64 = null;
+                }
+            }
+
+            const userDoc = {
+                id: userId,
+                uid: userId,
+                email,
+                name: name || email.split('@')[0],
+                role: 'landlord',
+                phone: phone || '',
+                profileImage: null,
+                createdAt: now,
+                updatedAt: now,
+                isActive: true,
+                metadata: {},
+                loginCount: 0,
+                lastLogin: null,
+                bankAccountName: bankAccountName || '',
+                bankAccountNumber: bankAccountNumber || '',
+                // Store QR codes as base64 to avoid storage/CORS issues
+                gcashQrBase64: uploadResults.gcashQrBase64 || null,
+                mayaQrBase64: uploadResults.mayaQrBase64 || null
+            };
+
+            // Remove undefined fields to avoid Firestore issues
+            Object.keys(userDoc).forEach(key => {
+                if (userDoc[key] === undefined) {
+                    delete userDoc[key];
+                }
+            });
+
+            await firebaseDb.collection('users').doc(userId).set(userDoc);
+            console.log('✅ Landlord account created in Firestore:', email);
+
+            // In case auth listener logged out because the doc wasn't present yet, re-sign-in
+            try {
+                if (!firebaseAuth.currentUser || firebaseAuth.currentUser.uid !== userId) {
+                    await firebaseAuth.signInWithEmailAndPassword(email, password);
+                }
+            } catch (reloginError) {
+                console.warn('⚠️ Failed to re-login after creating user doc:', reloginError);
+            }
+
+            // Sync user state for the application
+            this.syncUserToDataManager({
+                id: userId,
+                ...userDoc
+            });
+            this.toggleAdminLink(null);
+
+            return {
+                id: userId,
+                ...userDoc
+            };
+        } catch (error) {
+            console.error('❌ Landlord account creation failed:', error);
+            throw error;
+        } finally {
+            // Mark creation complete so auth listener can act normally
+            this.creatingUserDoc = false;
         }
     }
 

@@ -582,6 +582,10 @@ class CasaLink {
                     pageContent = await this.getTenantUnitManagementPage();
                     break;
 
+                case 'archive':
+                    pageContent = await this.getArchivePage();
+                    break;
+
                 case 'lease-management':
                     this.setupLeaseManagementPage?.();
                     pageContent = await this.getLeaseManagementPage();
@@ -1302,6 +1306,177 @@ class CasaLink {
         }
     }
 
+    async getArchivePage() {
+        console.log('📦 Loading archive page...');
+
+        try {
+            await this.loadArchiveData();
+
+            return `
+                <div class="page-content">
+                    <div class="page-header">
+                        <div>
+                            <h1 class="page-title">Archive</h1>
+                            <p style="color: var(--dark-gray); margin-top: 5px;">View and restore deleted tenants, leases, and properties.</p>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 20px; display: flex; gap: 12px; flex-wrap: wrap;">
+                        <button class="btn btn-outline-primary" data-archive-filter="all">All</button>
+                        <button class="btn btn-outline-primary" data-archive-filter="tenant">Tenants</button>
+                        <button class="btn btn-outline-primary" data-archive-filter="lease">Leases</button>
+                        <button class="btn btn-outline-primary" data-archive-filter="property">Properties</button>
+                    </div>
+
+                    <div id="archiveTableContainer">
+                        ${this.renderArchiveTable(this.archiveData || [])}
+                    </div>
+                </div>
+            `;
+        } catch (error) {
+            console.error('Error loading archive page:', error);
+            return this.getErrorDashboard('archive', error.message);
+        }
+    }
+
+    async loadArchiveData() {
+        console.log('📦 Loading archived items...');
+
+        if (!this.currentUser) {
+            throw new Error('User not authenticated');
+        }
+
+        this.archiveData = await DataManager.getArchivedItems(null, { landlordId: this.currentUser?.uid });
+
+        // If we are currently on archive page, rerender
+        const container = document.getElementById('archiveTableContainer');
+        if (container) {
+            container.innerHTML = this.renderArchiveTable(this.archiveData);
+            this.setupArchiveActions();
+        }
+
+        return this.archiveData;
+    }
+
+    renderArchiveTable(items) {
+        if (!items || items.length === 0) {
+            return `
+                <div class="empty-state">
+                    <i class="fas fa-archive"></i>
+                    <h3>No archived items</h3>
+                    <p>Deleted tenants, leases, and properties will appear here.</p>
+                </div>
+            `;
+        }
+
+        const rows = items.map(item => {
+            const typeLabel = item.type ? item.type.charAt(0).toUpperCase() + item.type.slice(1) : 'Item';
+            const title = item.data?.name || item.data?.tenantName || item.data?.apartmentName || item.data?.apartmentAddress || item.originalId;
+            const date = item.archivedAt ? new Date(item.archivedAt).toLocaleString() : 'Unknown';
+
+            return `
+                <tr data-archive-id="${item.id}" data-archive-type="${item.type}">
+                    <td>${typeLabel}</td>
+                    <td>${title || 'N/A'}</td>
+                    <td>${date}</td>
+                    <td>
+                        <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.restoreArchivedItem('${item.id}')">
+                            <i class="fas fa-undo"></i> Restore
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); casaLink.permanentlyDeleteArchivedItem('${item.id}')">
+                            <i class="fas fa-trash"></i> Delete
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        return `
+            <div class="table-container" style="overflow-x:auto;">
+                <table class="tenants-table" style="min-width: 900px;">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Title</th>
+                            <th>Archived At</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    setupArchiveActions() {
+        const filterButtons = document.querySelectorAll('[data-archive-filter]');
+        if (!filterButtons || filterButtons.length === 0) return;
+
+        filterButtons.forEach(btn => {
+            btn.onclick = (e) => {
+                const filter = btn.getAttribute('data-archive-filter');
+                this.filterArchive(filter);
+            };
+        });
+
+        // Set default active filter (All)
+        this.updateArchiveFilterUI('all');
+    }
+
+    updateArchiveFilterUI(activeFilter) {
+        const filterButtons = document.querySelectorAll('[data-archive-filter]');
+        filterButtons.forEach(btn => {
+            const filter = btn.getAttribute('data-archive-filter');
+            btn.classList.toggle('active', filter === activeFilter);
+        });
+    }
+
+    filterArchive(filter) {
+        if (!this.archiveData) return;
+
+        let filtered = this.archiveData;
+        if (filter && filter !== 'all') {
+            filtered = filtered.filter(item => item.type === filter);
+        }
+
+        const container = document.getElementById('archiveTableContainer');
+        if (container) {
+            container.innerHTML = this.renderArchiveTable(filtered);
+        }
+
+        // Update the UI to reflect the selected filter button
+        this.updateArchiveFilterUI(filter || 'all');
+    }
+
+    async restoreArchivedItem(archiveId) {
+        try {
+            this.showNotification('Restoring item...', 'info');
+            await DataManager.restoreArchivedItem(archiveId);
+            await this.loadArchiveData();
+            await this.loadTenantsData();
+            // Refresh other views if necessary
+            await this.showPage(this.currentPage);
+            this.showNotification('Item restored successfully', 'success');
+        } catch (error) {
+            console.error('Error restoring archived item:', error);
+            this.showNotification('Failed to restore item: ' + error.message, 'error');
+        }
+    }
+
+    async permanentlyDeleteArchivedItem(archiveId) {
+        try {
+            if (!confirm('This will permanently delete this record and cannot be undone. Continue?')) return;
+            this.showNotification('Permanently deleting item...', 'info');
+            await DataManager.permanentlyDeleteArchivedItem(archiveId);
+            await this.loadArchiveData();
+            this.showNotification('Item permanently deleted', 'success');
+        } catch (error) {
+            console.error('Error permanently deleting archived item:', error);
+            this.showNotification('Failed to delete item: ' + error.message, 'error');
+        }
+    }
 
 
     // Add this method - returns just the dashboard content, not the full layout
@@ -7645,6 +7820,9 @@ class CasaLink {
                 break;
             case 'tenantUnit':
                 await this.setupTenantUnitPage();
+                break;
+            case 'archive':
+                await this.loadArchiveData();
                 break;
             case 'lease-management':                
                 this.setupLeaseManagementPage?.();
@@ -17144,6 +17322,7 @@ class CasaLink {
                             <li><a href="#" data-page="maintenance"><i class="fas fa-tools"></i> <span>Maintenance</span></a></li>
                             <li><a href="#" data-page="tenants"><i class="fas fa-users"></i> <span>Tenant Management</span></a></li>
                             <li><a href="#" data-page="lease-management"><i class="fas fa-file-contract"></i> <span>Lease Management</span></a></li>
+                            <li><a href="#" data-page="archive"><i class="fas fa-archive"></i> <span>Archive</span></a></li>
                             <li><a href="#" data-page="reports"><i class="fas fa-chart-pie"></i> <span>Reports</span></a></li>
                             <li><a href="#" id="logoutBtn"><i class="fas fa-sign-out-alt"></i> <span>Logout</span></a></li>
                         ` : `
@@ -17274,7 +17453,7 @@ class CasaLink {
                     </div>
                     
                     <div style="text-align: center; margin-top: 20px; color: var(--dark-gray);">
-                        <small>Don't have an account? Contact your landlord for credentials.</small>
+                        <small>Don't have an account? <a id="showSignupBtn" style="color: var(--royal-blue); text-decoration: underline; cursor: pointer;">Sign up as landlord</a></small>
                     </div>
 
                     <div class="admin-login-link" style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
@@ -17333,6 +17512,14 @@ class CasaLink {
 
             // Add active class to clicked option
             roleOption.classList.add('active');
+            return;
+        }
+
+        // Show landlord signup modal
+        if (e.target.id === 'showSignupBtn' || e.target.closest('#showSignupBtn')) {
+            e.preventDefault();
+            e.stopPropagation();
+            this.showLandlordSignupModal();
             return;
         }
 
@@ -17460,6 +17647,183 @@ class CasaLink {
         } else {
             this.loginInProgress = false;
         }
+    }
+
+    async handleLandlordSignup(modal) {
+        const errorElement = modal.querySelector('#signupError');
+        const setError = (msg) => {
+            if (errorElement) {
+                errorElement.textContent = msg;
+                errorElement.style.display = msg ? 'block' : 'none';
+            }
+        };
+
+        setError('');
+
+        const email = modal.querySelector('#signupEmail')?.value.trim();
+        const password = modal.querySelector('#signupPassword')?.value;
+        const confirmPassword = modal.querySelector('#signupConfirmPassword')?.value;
+        const name = modal.querySelector('#signupName')?.value.trim();
+        const phone = modal.querySelector('#signupPhone')?.value.trim();
+        const bankAccountName = modal.querySelector('#signupBankName')?.value.trim();
+        const bankAccountNumber = modal.querySelector('#signupBankNumber')?.value.trim();
+        const gcashQrFile = modal.querySelector('#gcashQrInput')?.files?.[0] || null;
+        const mayaQrFile = modal.querySelector('#mayaQrInput')?.files?.[0] || null;
+
+        if (!email || !password || !confirmPassword || !name) {
+            setError('Please fill out all required fields.');
+            return;
+        }
+
+        if (password !== confirmPassword) {
+            setError('Passwords do not match.');
+            return;
+        }
+
+        if (password.length < 6) {
+            setError('Password must be at least 6 characters.');
+            return;
+        }
+
+        if (!gcashQrFile || !mayaQrFile || !bankAccountName || !bankAccountNumber) {
+            setError('Please provide both QR codes and bank account details.');
+            return;
+        }
+
+        const submitBtn = modal.querySelector('#modalSubmit');
+        const originalBtnText = submitBtn ? submitBtn.innerHTML : 'Create Account';
+
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
+        }
+
+        try {
+            const user = await AuthManager.createLandlordAccount({
+                email,
+                password,
+                name,
+                phone,
+                gcashQrFile,
+                mayaQrFile,
+                bankAccountName,
+                bankAccountNumber
+            });
+
+            this.currentUser = user;
+            this.currentRole = user.role;
+            this.authListenerEnabled = true;
+
+            this.showNotification('Landlord account created successfully! Redirecting...', 'success');
+            ModalManager.closeModal(modal);
+
+            setTimeout(() => {
+                this.showDashboard();
+            }, 300);
+
+        } catch (error) {
+            console.error('Landlord signup error:', error);
+            const errorMsg = error?.message || 'Failed to create account';
+            setError(errorMsg);
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalBtnText;
+            }
+        }
+    }
+
+    showLandlordSignupModal() {
+        const modalContent = `
+            <div style="max-width: 100%;">
+                <div id="signupError" style="display:none; color: #e74c3c; margin-bottom: 12px;"></div>
+
+                <div class="form-group">
+                    <label class="form-label">Full Name <span style="color:#e74c3c;">*</span></label>
+                    <input type="text" id="signupName" class="form-input" placeholder="John Doe">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Email <span style="color:#e74c3c;">*</span></label>
+                    <input type="email" id="signupEmail" class="form-input" placeholder="you@example.com">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Password <span style="color:#e74c3c;">*</span></label>
+                    <input type="password" id="signupPassword" class="form-input" placeholder="Enter a strong password">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Confirm Password <span style="color:#e74c3c;">*</span></label>
+                    <input type="password" id="signupConfirmPassword" class="form-input" placeholder="Re-enter password">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Phone (optional)</label>
+                    <input type="text" id="signupPhone" class="form-input" placeholder="09XXXXXXXXX">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">GCash QR Code <span style="color:#e74c3c;">*</span></label>
+                    <input type="file" id="gcashQrInput" accept="image/*">
+                    <div id="gcashQrPreview" style="margin-top: 10px; display: none;"></div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Maya QR Code <span style="color:#e74c3c;">*</span></label>
+                    <input type="file" id="mayaQrInput" accept="image/*">
+                    <div id="mayaQrPreview" style="margin-top: 10px; display: none;"></div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Bank Account Name <span style="color:#e74c3c;">*</span></label>
+                    <input type="text" id="signupBankName" class="form-input" placeholder="Account Name">
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Bank Account Number <span style="color:#e74c3c;">*</span></label>
+                    <input type="text" id="signupBankNumber" class="form-input" placeholder="Account Number">
+                </div>
+
+                <div style="font-size: 12px; color: #5f6368; margin-top: 12px;">
+                    By creating an account you agree that tenants will be able to view your payment QR codes and bank details for rent payments.
+                </div>
+            </div>
+        `;
+
+        const modal = ModalManager.openModal(modalContent, {
+            title: 'Landlord Sign Up',
+            width: '520px',
+            submitText: 'Create Account',
+            cancelText: 'Cancel',
+            onSubmit: async () => {
+                await this.handleLandlordSignup(modal);
+            }
+        });
+
+        const setupPreview = (inputId, previewId) => {
+            const input = modal.querySelector(`#${inputId}`);
+            const preview = modal.querySelector(`#${previewId}`);
+            if (!input || !preview) return;
+
+            input.addEventListener('change', () => {
+                const file = input.files?.[0];
+                if (!file) {
+                    preview.style.display = 'none';
+                    preview.innerHTML = '';
+                    return;
+                }
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    preview.style.display = 'block';
+                    preview.innerHTML = `<img src="${e.target.result}" style="max-width: 100%; max-height: 180px; border: 1px solid #ddd; border-radius: 8px;" />`;
+                };
+                reader.readAsDataURL(file);
+            });
+        };
+
+        setupPreview('gcashQrInput', 'gcashQrPreview');
+        setupPreview('mayaQrInput', 'mayaQrPreview');
     }
 
     ensureLoginPage() {
@@ -19188,6 +19552,19 @@ class CasaLink {
             
             const bill = { id: billDoc.id, ...DataManager.normalizeBill(billDoc.data()) };
 
+            // Load landlord profile (used for payment QR codes / bank details)
+            let landlordProfile = {};
+            if (bill.landlordId) {
+                try {
+                    const landlordDoc = await firebaseDb.collection('users').doc(bill.landlordId).get();
+                    if (landlordDoc.exists) {
+                        landlordProfile = { id: landlordDoc.id, ...landlordDoc.data() };
+                    }
+                } catch (landlordError) {
+                    console.warn('Could not fetch landlord profile:', landlordError);
+                }
+            }
+
             // Build bill details section
             const billDetailsHTML = `
                 <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #162660;">
@@ -19250,7 +19627,7 @@ class CasaLink {
                     // Get selected method and render form
                     selectedMethod = card.getAttribute('data-method-id');
                     const dynamicFormFields = modal.querySelector('#dynamicFormFields');
-                    const formHTML = PaymentFormManager.generatePaymentFormFields(selectedMethod, bill);
+                    const formHTML = PaymentFormManager.generatePaymentFormFields(selectedMethod, bill, landlordProfile);
                     dynamicFormFields.innerHTML = formHTML;
                     dynamicFormFields.style.display = 'block';
                     
@@ -20449,17 +20826,34 @@ class CasaLink {
     }
 
     async deleteLease(leaseId) {
-        if (!confirm('Are you sure you want to delete this lease? This action cannot be undone.')) {
+        if (!confirm('Are you sure you want to delete this lease? This action will archive it for recovery.')) {
             return;
         }
         
         try {
-            await DataManager.deleteLease(leaseId);
-            showNotification('Lease deleted successfully', 'success');
+            await DataManager.archiveLease(leaseId, { reason: 'deleted by landlord' });
+            showNotification('Lease archived successfully', 'success');
             showSection('lease-management'); // Refresh the view
         } catch (error) {
-            console.error('Error deleting lease:', error);
-            showNotification('Error deleting lease', 'error');
+            console.error('Error archiving lease:', error);
+            showNotification('Error archiving lease', 'error');
+        }
+    }
+
+    async deleteTenant(tenantId) {
+        if (!confirm('Are you sure you want to delete this tenant? This action will archive the tenant and associated leases.')) {
+            return;
+        }
+
+        try {
+            await DataManager.archiveTenant(tenantId, { reason: 'deleted by landlord' });
+            showNotification('Tenant archived successfully', 'success');
+            if (this.currentPage === 'tenants') {
+                await this.loadTenantsData();
+            }
+        } catch (error) {
+            console.error('Error archiving tenant:', error);
+            showNotification('Error archiving tenant', 'error');
         }
     }
 
@@ -23837,6 +24231,19 @@ class CasaLink {
             
             const bill = { id: billDoc.id, ...DataManager.normalizeBill(billDoc.data()) };
 
+            // Load landlord profile (used for showing payment QR codes / bank details)
+            let landlordProfile = {};
+            if (bill.landlordId) {
+                try {
+                    const landlordDoc = await firebaseDb.collection('users').doc(bill.landlordId).get();
+                    if (landlordDoc.exists) {
+                        landlordProfile = { id: landlordDoc.id, ...landlordDoc.data() };
+                    }
+                } catch (landlordError) {
+                    console.warn('Could not fetch landlord profile:', landlordError);
+                }
+            }
+
             // Build bill details section
             const billDetailsHTML = `
                 <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid #162660;">
@@ -23899,7 +24306,7 @@ class CasaLink {
                     // Get selected method and render form
                     selectedMethod = card.getAttribute('data-method-id');
                     const dynamicFormFields = modal.querySelector('#dynamicFormFields');
-                    const formHTML = PaymentFormManager.generatePaymentFormFields(selectedMethod, bill);
+                    const formHTML = PaymentFormManager.generatePaymentFormFields(selectedMethod, bill, landlordProfile);
                     dynamicFormFields.innerHTML = formHTML;
                     dynamicFormFields.style.display = 'block';
                     

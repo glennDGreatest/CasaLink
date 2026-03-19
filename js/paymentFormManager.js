@@ -53,7 +53,7 @@ class PaymentFormManager {
     /**
      * Generate form fields based on payment method
      */
-    static generatePaymentFormFields(paymentMethod, bill) {
+    static generatePaymentFormFields(paymentMethod, bill, landlord = {}) {
         let fieldsHTML = '';
 
         switch(paymentMethod) {
@@ -61,13 +61,13 @@ class PaymentFormManager {
                 fieldsHTML = this.generateCashForm(bill);
                 break;
             case 'gcash':
-                fieldsHTML = this.generateGCashForm(bill);
+                fieldsHTML = this.generateGCashForm(bill, landlord);
                 break;
             case 'maya':
-                fieldsHTML = this.generateMayaForm(bill);
+                fieldsHTML = this.generateMayaForm(bill, landlord);
                 break;
             case 'bank_transfer':
-                fieldsHTML = this.generateBankTransferForm(bill);
+                fieldsHTML = this.generateBankTransferForm(bill, landlord);
                 break;
             default:
                 fieldsHTML = '<p style="color: #5f6368;">Please select a payment method</p>';
@@ -149,7 +149,9 @@ class PaymentFormManager {
     /**
      * GCash payment form
      */
-    static generateGCashForm(bill) {
+    static generateGCashForm(bill, landlord = {}) {
+        const gcashQrUrl = landlord.gcashQrBase64 || landlord.gcashQrUrl || 'icons/payments/gcash.png';
+
         return `
             <div class="payment-form-section">
                 <div class="payment-form-section-title">
@@ -169,7 +171,7 @@ class PaymentFormManager {
                     GCash QR Code
                 </div>
                 <div class="qr-code-container">
-                    <img src="icons/payments/gcash.png" alt="GCash QR Code" class="qr-code-image">
+                    <img src="${gcashQrUrl}" alt="GCash QR Code" class="qr-code-image">
                     <p style="font-size: 12px; color: #5f6368; margin: 0;">Scan this QR code with your GCash App</p>
                 </div>
             </div>
@@ -230,7 +232,9 @@ class PaymentFormManager {
     /**
      * Maya payment form
      */
-    static generateMayaForm(bill) {
+    static generateMayaForm(bill, landlord = {}) {
+        const mayaQrUrl = landlord.mayaQrBase64 || landlord.mayaQrUrl || 'icons/payments/maya.png';
+
         return `
             <div class="payment-form-section">
                 <div class="payment-form-section-title">
@@ -250,7 +254,7 @@ class PaymentFormManager {
                     Maya QR Code
                 </div>
                 <div class="qr-code-container">
-                    <img src="icons/payments/maya.png" alt="Maya QR Code" class="qr-code-image">
+                    <img src="${mayaQrUrl}" alt="Maya QR Code" class="qr-code-image">
                     <p style="font-size: 12px; color: #5f6368; margin: 0;">Scan this QR code with your Maya App</p>
                 </div>
             </div>
@@ -311,7 +315,10 @@ class PaymentFormManager {
     /**
      * Bank Transfer payment form
      */
-    static generateBankTransferForm(bill) {
+    static generateBankTransferForm(bill, landlord = {}) {
+        const bankAccountNumber = landlord.bankAccountNumber || '1234567890';
+        const bankAccountName = landlord.bankAccountName || 'Landlord Name Test';
+
         return `
             <div class="payment-form-section">
                 <div class="payment-form-section-title">
@@ -333,11 +340,11 @@ class PaymentFormManager {
                 <div class="bank-details-box">
                     <div class="bank-detail-item">
                         <div class="bank-detail-label">Account Number</div>
-                        <div class="bank-detail-value">1234567890</div>
+                        <div class="bank-detail-value">${bankAccountNumber}</div>
                     </div>
                     <div class="bank-detail-item">
                         <div class="bank-detail-label">Account Name</div>
-                        <div class="bank-detail-value">Landlord Name Test</div>
+                        <div class="bank-detail-value">${bankAccountName}</div>
                     </div>
                 </div>
             </div>

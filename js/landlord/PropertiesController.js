@@ -2082,30 +2082,11 @@ window.PropertiesController = class PropertiesController {
             deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Deleting...';
             deleteBtn.disabled = true;
 
-            // Delete property and associated units
-            const batch = window.firebaseDb.batch();
+            // Archive property and all related units/leases
+            await DataManager.archiveProperty(this.deleteConfirmPropertyId, { reason: 'deleted by landlord' });
 
-            // Delete property
-            batch.delete(window.firebaseDb.collection(this._collection).doc(this.deleteConfirmPropertyId));
-
-            // Delete associated units (field may be propertyId or apartmentId)
-            const unitsCollection = window.firebaseDb.collection('units');
-            let unitsSnapshot = await unitsCollection
-                .where('propertyId', '==', this.deleteConfirmPropertyId)
-                .get();
-            if (unitsSnapshot.empty) {
-                unitsSnapshot = await unitsCollection
-                    .where('apartmentId', '==', this.deleteConfirmPropertyId)
-                    .get();
-            }
-            unitsSnapshot.docs.forEach(doc => {
-                batch.delete(doc.ref);
-            });
-
-            await batch.commit();
-
-            console.log('✅ Property deleted:', this.deleteConfirmPropertyId);
-            this.showToast('Property deleted successfully', 'success');
+            console.log('✅ Property archived:', this.deleteConfirmPropertyId);
+            this.showToast('Property archived successfully', 'success');
 
             // Reload and close
             await this.loadProperties();

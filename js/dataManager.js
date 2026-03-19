@@ -223,10 +223,9 @@ class DataManager {
                 .where('landlordId', '==', landlordId)
                 .get();
             
-            const tenants = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return { ...data, id: doc.id };
-            });
+            const tenants = snapshot.docs
+                .map(doc => ({ ...doc.data(), id: doc.id }))
+                .filter(t => !t.archived);
             
             console.log('✅ Tenants loaded:', tenants.length);
             return tenants;
@@ -262,10 +261,10 @@ class DataManager {
                 .get();
             
             // convert to Property model so that name/address/etc are normalized
-            const apartments = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return new Property(Object.assign({ id: doc.id }, data));
-            });
+            const apartments = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(a => !a.archived)
+                .map(data => new Property(data));
             
             console.log('✅ Apartments loaded:', apartments.length);
             return apartments;
@@ -2215,10 +2214,9 @@ class DataManager {
                 .orderBy('createdAt', 'desc')
                 .get();
             
-            return querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            return querySnapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(l => !l.archived);
         } catch (error) {
             console.error('Error getting landlord leases:', error);
             return [];
@@ -2622,7 +2620,210 @@ class DataManager {
     }
 
     static async deleteTenant(tenantId) {
-        await firebaseDb.doc(`tenants/${tenantId}`).delete();
+        // Soft-delete by archiving the tenant record (preserves history)
+        return this.archiveTenant(tenantId, { reason: 'deleted by landlord' });
+    }
+
+    static async archiveDocument(collection, docId, type, options = {}) {
+        try {
+            const docRef = firebaseDb.collection(collection).doc(docId);
+            const docSnap = await docRef.get();
+            if (!docSnap.exists) {
+                throw new Error(`Document not found: ${collection}/${docId}`);
+            }
+
+            const data = docSnap.data();
+            const userId = (this.user && this.user.uid) || (typeof window !== 'undefined' && window.currentUser && window.currentUser.uid) || null;
+            const archivedAt = new Date().toISOString();
+
+            const archivePayload = {
+                originalCollection: collection,
+                originalId: docId,
+                type,
+                data,
+                archivedAt,
+                archivedBy: userId,
+                ...options
+            };
+
+            await firebaseDb.collection('archive').add(archivePayload);
+            await docRef.update({ archived: true, archivedAt, archivedBy: userId });
+
+            return archivePayload;
+        } catch (error) {
+            console.error('Error archiving document:', collection, docId, error);
+            throw error;
+        }
+    }
+
+    static async getArchivedItems(type = null, filters = {}) {
+        try {
+            const { landlordId, tenantId, userId } = filters || {};
+
+            // Default to current logged-in user if no filters provided
+            const currentUserId = (typeof window !== 'undefined' && window.currentUser ? window.currentUser.uid : null);
+
+            const effectiveLandlordId = landlordId || currentUserId;
+            const effectiveTenantId = tenantId || currentUserId;
+
+            let query = firebaseDb.collection('archive').orderBy('archivedAt', 'desc');
+
+            if (type) {
+                query = query.where('type', '==', type);
+            }
+
+            // For landlords, filter archived items related to their properties/leases/tenants
+            if (effectiveLandlordId) {
+                query = query.where('data.landlordId', '==', effectiveLandlordId);
+            }
+
+            // For tenant-specific views, optionally limit by tenantId
+            if (!effectiveLandlordId && effectiveTenantId) {
+                query = query.where('data.tenantId', '==', effectiveTenantId);
+            }
+
+            const snap = await query.get();
+            return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        } catch (error) {
+            console.error('Error fetching archived items:', error);
+            return [];
+        }
+    }
+
+    static async restoreArchivedItem(archiveId) {
+        try {
+            const archiveRef = firebaseDb.collection('archive').doc(archiveId);
+            const archiveSnap = await archiveRef.get();
+            if (!archiveSnap.exists) throw new Error('Archive entry not found');
+
+            const archive = archiveSnap.data();
+            const { originalCollection, originalId, data } = archive;
+            if (!originalCollection || !originalId) throw new Error('Invalid archive entry');
+
+            const docRef = firebaseDb.collection(originalCollection).doc(originalId);
+            await docRef.set({ ...data, archived: false, restoredAt: new Date().toISOString() }, { merge: true });
+            await archiveRef.delete();
+
+            return { originalCollection, originalId };
+        } catch (error) {
+            console.error('Error restoring archived item:', error);
+            throw error;
+        }
+    }
+
+    static async permanentlyDeleteArchivedItem(archiveId) {
+        try {
+            const archiveRef = firebaseDb.collection('archive').doc(archiveId);
+            const archiveSnap = await archiveRef.get();
+            if (!archiveSnap.exists) throw new Error('Archive entry not found');
+
+            const archive = archiveSnap.data();
+            const { originalCollection, originalId } = archive;
+
+            if (originalCollection && originalId) {
+                await firebaseDb.collection(originalCollection).doc(originalId).delete();
+            }
+
+            await archiveRef.delete();
+            return true;
+        } catch (error) {
+            console.error('Error permanently deleting archived item:', error);
+            throw error;
+        }
+    }
+
+    static async archiveTenant(tenantId, options = {}) {
+        try {
+            const archivePayload = await this.archiveDocument('users', tenantId, 'tenant', options);
+
+            // Archive active leases for the tenant
+            const leasesSnap = await firebaseDb.collection('leases')
+                .where('tenantId', '==', tenantId)
+                .where('isActive', '==', true)
+                .get();
+
+            for (const leaseDoc of leasesSnap.docs) {
+                const leaseId = leaseDoc.id;
+                await this.archiveLease(leaseId, { reason: 'tenant archived' });
+            }
+
+            return archivePayload;
+        } catch (error) {
+            console.error('Error archiving tenant:', error);
+            throw error;
+        }
+    }
+
+    static async archiveLease(leaseId, options = {}) {
+        try {
+            const archivePayload = await this.archiveDocument('leases', leaseId, 'lease', options);
+
+            // Mark lease as inactive
+            await firebaseDb.collection('leases').doc(leaseId).update({ isActive: false });
+
+            // Update related room occupancy if possible
+            const lease = archivePayload.data || {};
+            const roomNumber = lease.roomNumber;
+            const landlordId = lease.landlordId;
+
+            if (roomNumber && landlordId) {
+                const roomQuery = await firebaseDb.collection('rooms')
+                    .where('roomNumber', '==', roomNumber)
+                    .where('landlordId', '==', landlordId)
+                    .limit(1)
+                    .get();
+
+                if (!roomQuery.empty) {
+                    const roomDoc = roomQuery.docs[0];
+                    await roomDoc.ref.update({
+                        isAvailable: true,
+                        occupiedBy: null,
+                        occupiedAt: null,
+                        numberOfMembers: 0,
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            }
+
+            return archivePayload;
+        } catch (error) {
+            console.error('Error archiving lease:', error);
+            throw error;
+        }
+    }
+
+    static async archiveProperty(propertyId, options = {}) {
+        try {
+            const archivePayload = await this.archiveDocument('apartments', propertyId, 'property', options);
+
+            // Archive associated rooms/units
+            const roomSnapshot = await firebaseDb.collection('rooms')
+                .where('apartmentId', '==', propertyId)
+                .get();
+            for (const roomDoc of roomSnapshot.docs) {
+                await this.archiveDocument('rooms', roomDoc.id, 'room', { reason: 'property archived' });
+                await roomDoc.ref.update({
+                    isAvailable: true,
+                    occupiedBy: null,
+                    occupiedAt: null,
+                    numberOfMembers: 0,
+                    updatedAt: new Date().toISOString()
+                });
+            }
+
+            // Archive associated leases
+            const leaseSnapshot = await firebaseDb.collection('leases')
+                .where('apartmentId', '==', propertyId)
+                .get();
+            for (const leaseDoc of leaseSnapshot.docs) {
+                await this.archiveLease(leaseDoc.id, { reason: 'property archived' });
+            }
+
+            return archivePayload;
+        } catch (error) {
+            console.error('Error archiving property:', error);
+            throw error;
+        }
     }
 
     // ===== DATA MIGRATIONS =====
