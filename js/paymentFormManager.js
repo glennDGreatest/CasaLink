@@ -316,6 +316,7 @@ class PaymentFormManager {
      * Bank Transfer payment form
      */
     static generateBankTransferForm(bill, landlord = {}) {
+        const bankName = landlord.bankName || 'Bank Name';
         const bankAccountNumber = landlord.bankAccountNumber || '1234567890';
         const bankAccountName = landlord.bankAccountName || 'Landlord Name Test';
 
@@ -338,6 +339,10 @@ class PaymentFormManager {
                     Landlord Bank Details
                 </div>
                 <div class="bank-details-box">
+                        <div class="bank-detail-item">
+                        <div class="bank-detail-label">Bank</div>
+                        <div class="bank-detail-value">${bankName}</div>
+                    </div>
                     <div class="bank-detail-item">
                         <div class="bank-detail-label">Account Number</div>
                         <div class="bank-detail-value">${bankAccountNumber}</div>

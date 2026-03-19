@@ -848,6 +848,7 @@ class AuthManager {
      * @param {string} options.password
      * @param {string} options.name
      * @param {string} [options.phone]
+     * @param {string} [options.bankName]
      * @param {File|null} [options.gcashQrFile]
      * @param {File|null} [options.mayaQrFile]
      * @param {string} [options.bankAccountName]
@@ -859,6 +860,7 @@ class AuthManager {
         password,
         name,
         phone = '',
+        bankName = '',
         gcashQrFile = null,
         mayaQrFile = null,
         bankAccountName = '',
@@ -911,6 +913,7 @@ class AuthManager {
                 name: name || email.split('@')[0],
                 role: 'landlord',
                 phone: phone || '',
+                bankName: bankName || '',
                 profileImage: null,
                 createdAt: now,
                 updatedAt: now,

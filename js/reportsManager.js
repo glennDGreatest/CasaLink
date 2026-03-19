@@ -19,52 +19,73 @@ class ReportsManager {
     }
 
     async getPredictiveData(financialReports = {}, maintenanceReports = {}) {
+        // If PredictiveAnalytics is not initialized, return basic placeholders
+        if (!this.predictiveAnalytics) {
+            return {
+                revenueForecast: {},
+                occupancyForecast: {},
+                maintenanceForecast: {},
+                tenantChurn: [],
+                rentOptimization: [],
+                latePaymentRisk: [],
+                maintenanceTriage: [],
+                tenantSentiment: { label: 'neutral', confidence: 0, score: 0 },
+                anomalies: ['None detected'],
+                recommendations: [{ text: 'Predictive analytics not available.', priority: 'low' }]
+            };
+        }
+
         // fetch base forecasts
-        const [revenueForecast, occupancyTrend, maintenanceCosts] = await Promise.all([
+        const [revenueForecast, occupancyForecast, maintenanceForecast] = await Promise.all([
             this.predictiveAnalytics.predictRevenueForecast(6),
             this.predictiveAnalytics.predictOccupancyTrend(6),
             this.predictiveAnalytics.predictMaintenanceCosts(6)
         ]);
 
-        // tenant churn probabilities via ML model
+        // Logistic regression predictions
         let tenantChurn = [];
-        if (this.predictiveAnalytics && typeof this.predictiveAnalytics.predictTenantChurn === 'function') {
-            tenantChurn = await this.predictiveAnalytics.predictTenantChurn();
+        let rentOptimization = [];
+        let latePaymentRisk = [];
+        let maintenanceTriage = [];
+        let tenantSentiment = { label: 'neutral', confidence: 0, score: 0 };
+
+        if (this.predictiveAnalytics) {
+            if (typeof this.predictiveAnalytics.predictTenantChurn === 'function') {
+                tenantChurn = await this.predictiveAnalytics.predictTenantChurn();
+            }
+            if (typeof this.predictiveAnalytics.predictRentUnderMarket === 'function') {
+                rentOptimization = await this.predictiveAnalytics.predictRentUnderMarket();
+            }
+            if (typeof this.predictiveAnalytics.predictLatePaymentRisk === 'function') {
+                latePaymentRisk = await this.predictiveAnalytics.predictLatePaymentRisk();
+            }
+            if (typeof this.predictiveAnalytics.predictMaintenanceTriage === 'function') {
+                maintenanceTriage = await this.predictiveAnalytics.predictMaintenanceTriage();
+            }
+            if (typeof this.predictiveAnalytics.predictTenantSentiment === 'function') {
+                tenantSentiment = await this.predictiveAnalytics.predictTenantSentiment();
+            }
         }
-        if (tenantChurn.length === 0) {
+
+        // Fallback mock results when data is unavailable
+        if (!tenantChurn || tenantChurn.length === 0) {
             tenantChurn = [
-                { unit: '2A', probability: 85, reason: "Hasn't paid in 2 weeks" },
-                { unit: '4C', probability: 45, reason: 'Late payments twice' },
-                { unit: '1B', probability: 12, reason: 'Long-term, always paid' }
+                { unit: '2A', tenant: 'Tenant A', probability: 82, riskLevel: 'HIGH', reason: "Hasn't paid in 2 weeks" },
+                { unit: '4C', tenant: 'Tenant B', probability: 48, riskLevel: 'MEDIUM', reason: 'Late payments twice' },
+                { unit: '1B', tenant: 'Tenant C', probability: 12, riskLevel: 'LOW', reason: 'Long-term, on time' }
             ];
         }
-
-        // recommendations built off churn, forecasts, and rent suggestions
-        const recommendations = [];
-        tenantChurn.forEach(c => {
-            if (c.probability > 60) {
-                recommendations.push({ text: `Reach out to tenant in ${c.unit} (${c.probability}% churn risk)`, priority: 'high' });
-            }
-        });
-        if (maintenanceCosts && maintenanceCosts.monthlyPredictions) {
-            const avg = maintenanceCosts.monthlyPredictions.reduce((a,b)=>a+b,0)/maintenanceCosts.monthlyPredictions.length;
-            if (avg > 2500) recommendations.push({ text: 'Budget for higher maintenance in coming months', priority: 'medium' });
+        if (!rentOptimization || rentOptimization.length === 0) {
+            rentOptimization = [{ unit: '101', probability: 68, suggestedIncrease: 1200, riskLevel: 'MEDIUM' }];
         }
-        if (revenueForecast && revenueForecast.growthRate && parseFloat(revenueForecast.growthRate) < 0) {
-            recommendations.push({ text: 'Review pricing strategy to improve revenue', priority: 'low' });
+        if (!latePaymentRisk || latePaymentRisk.length === 0) {
+            latePaymentRisk = [{ tenant: 'Tenant A', unit: '2A', probability: 52, riskLevel: 'MEDIUM' }];
         }
-        if (recommendations.length === 0) {
-            recommendations.push({ text: 'No issues detected; keep monitoring.', priority: 'low' });
+        if (!maintenanceTriage || maintenanceTriage.length === 0) {
+            maintenanceTriage = [{ id: 'req-123', title: 'Leaky faucet', priority: 'URGENT', confidence: 70, responseTime: 'Within 24 hours' }];
         }
-
-        // rent optimization suggestions
-        let optimizationSuggestion = null;
-        if (this.predictiveAnalytics && typeof this.predictiveAnalytics.suggestRentAdjustments === 'function') {
-            const opts = await this.predictiveAnalytics.suggestRentAdjustments();
-            if (opts && opts.length) optimizationSuggestion = opts[0];
-        }
-        if (!optimizationSuggestion) {
-            optimizationSuggestion = { text: 'No optimization needed', confidence: 0 };
+        if (!tenantSentiment) {
+            tenantSentiment = { label: 'neutral', confidence: 50, score: 0 };
         }
 
         // anomaly detection
@@ -72,35 +93,54 @@ class ReportsManager {
         if (this.predictiveAnalytics && typeof this.predictiveAnalytics.detectAnomalies === 'function') {
             anomalies = await this.predictiveAnalytics.detectAnomalies(financialReports, maintenanceReports);
         }
-        if (!anomalies.length) {
+        if (!anomalies || !anomalies.length) {
             anomalies = ['None detected'];
         }
 
-        // seasonal patterns (simple placeholder, could be derived from data)
-        const seasonal = [
-            'Maintenance peaks in August (AC issues)',
-            'Vacancies highest in December',
-            'Rent collections slowest in January'
-        ];
+        // Build actionable recommendations based on ML outputs
+        const recommendations = [];
 
-        // sentiment analysis on any textual feedback (e.g. maintenance request notes)
-        let sentiment = { score: 0, label: 'neutral' };
-        if (this.predictiveAnalytics && typeof this.predictiveAnalytics.analyzeSentiment === 'function') {
-            const reqs = await this.dataManager.getMaintenanceRequests(this.currentUser.uid) || [];
-            const text = reqs.map(r => r.notes || r.description || '').join(' ');
-            sentiment = this.predictiveAnalytics.analyzeSentiment(text);
+        tenantChurn.forEach(c => {
+            if (c.probability > 70) {
+                recommendations.push({ text: `Proactively reach out to ${c.tenant || 'tenant'} in ${c.unit} (${c.probability}% churn risk)`, priority: 'high' });
+            }
+        });
+
+        rentOptimization.forEach(r => {
+            if (r.probability > 60 && r.suggestedIncrease) {
+                recommendations.push({ text: `Rent for unit ${r.unit} appears under market; consider increasing by ₱${r.suggestedIncrease}`, priority: 'medium' });
+            }
+        });
+
+        latePaymentRisk.forEach(r => {
+            if (r.probability > 40) {
+                recommendations.push({ text: `Monitor payments from ${r.tenant || 'tenant'} (${r.probability}% late payment risk)`, priority: 'medium' });
+            }
+        });
+
+        if (maintenanceTriage.some(m => m.priority === 'EMERGENCY')) {
+            recommendations.push({ text: 'Address emergency maintenance request(s) immediately.', priority: 'high' });
+        }
+
+        if (tenantSentiment.label === 'negative') {
+            recommendations.push({ text: 'Follow up with tenants showing negative sentiment to prevent churn.', priority: 'high' });
+        }
+
+        if (recommendations.length === 0) {
+            recommendations.push({ text: 'No urgent actions detected; continue monitoring.', priority: 'low' });
         }
 
         return {
             revenueForecast,
-            occupancyTrend,
-            maintenanceCosts,
+            occupancyForecast,
+            maintenanceForecast,
             tenantChurn,
-            recommendations,
+            rentOptimization,
+            latePaymentRisk,
+            maintenanceTriage,
+            tenantSentiment,
             anomalies,
-            seasonal,
-            optimizationSuggestion,
-            sentiment
+            recommendations
         };
     }
 
@@ -271,19 +311,29 @@ class ReportsManager {
                 const fr = await this.getFinancialReports('last6months');
                 const pr = await this.getPropertyReports();
                 const tr = await this.getTenantReports();
+                const revenueSeries = fr.monthlyRevenue.currentYear || [];
+                const lastRevenue = revenueSeries.slice(-1)[0] || 0;
+                const priorRevenue = revenueSeries.slice(-2, -1)[0] || lastRevenue;
+                const revenueGrowth = priorRevenue ? ((lastRevenue - priorRevenue) / priorRevenue) * 100 : 0;
+
+                const maintenanceSeries = (tr.maintenance && tr.maintenance.total) || [];
+                const lastMaintenance = maintenanceSeries.slice(-1)[0] || 0;
+                const priorMaintenance = maintenanceSeries.slice(-2, -1)[0] || lastMaintenance;
+                const maintenanceTrend = priorMaintenance ? ((lastMaintenance - priorMaintenance) / priorMaintenance) * 100 : 0;
+
                 return {
-                    monthlyRevenue: fr.monthlyRevenue.currentYear.reduce((a,b)=>a+b,0),
-                    revenueGrowth: 0,
-                    occupancyRate: pr.occupancy ? Math.round((pr.occupancy.occupied / (pr.occupancy.occupied + pr.occupancy.vacant))*100) : 0,
+                    monthlyRevenue: revenueSeries.reduce((a, b) => a + b, 0),
+                    revenueGrowth: Math.round(revenueGrowth * 10) / 10,
+                    occupancyRate: pr.occupancy ? Math.round((pr.occupancy.occupied / (pr.occupancy.occupied + pr.occupancy.vacant)) * 100) : 0,
                     occupancyTrend: 0,
                     collectionRate: fr.collectionRate.collected,
                     collectionTrend: 0,
-                    maintenanceCost: tr.maintenance.total ? tr.maintenance.total.slice(-1)[0] : 0,
-                    maintenanceTrend: 0,
+                    maintenanceCost: lastMaintenance,
+                    maintenanceTrend: Math.round(maintenanceTrend * 10) / 10,
                     renewalRate: tr.retention.renewed,
                     renewalTrend: 0,
                     vacantUnits: pr.occupancy ? pr.occupancy.vacant : 0,
-                    totalUnits: pr.occupancy ? (pr.occupancy.occupied+pr.occupancy.vacant) : 0
+                    totalUnits: pr.occupancy ? (pr.occupancy.occupied + pr.occupancy.vacant) : 0
                 };
             } catch(err){
                 console.warn('quick metrics live failure', err);

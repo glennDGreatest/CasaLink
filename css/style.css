@@ -83,6 +83,72 @@
     z-index: 2;
 }
 
+.forecast-section {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin: 1.5rem 0;
+    border: 1px solid rgba(0,0,0,0.08);
+}
+
+.forecast-cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+}
+
+.forecast-card {
+    background: rgba(250, 250, 250, 0.95);
+    border-radius: 10px;
+    padding: 1rem;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+}
+
+.forecast-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.forecast-card-header h4 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.forecast-algo {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    background: rgba(22, 38, 96, 0.08);
+    color: #162660;
+    font-weight: 600;
+}
+
+.forecast-content {
+    font-size: 0.9rem;
+    color: #2d3748;
+}
+
+.forecast-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+}
+
+.forecast-subtitle {
+    font-size: 0.85rem;
+    color: #718096;
+    margin-bottom: 0.5rem;
+}
+
+.forecast-note {
+    font-size: 0.8rem;
+    color: #4a5568;
+}
+
 .predictive-card {
     background: rgba(255, 255, 255, 0.95);
     border-radius: 8px;

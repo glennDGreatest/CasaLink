@@ -678,154 +678,30 @@ class CasaLink {
                     </div>
                 </div>
 
-
                 <!-- Executive Summary (top 5 KPIs with trends) -->
-                <div class="quick-stats-row" id="executiveSummary">
-                    <!-- Metrics will be injected by JS based on ReportsManager.getQuickMetrics() -->
-                </div>
+                <div class="quick-stats-row" id="executiveSummary"></div>
 
-                <!-- AI Predictions Dashboard -->
+                <!-- ML Predictions -->
                 <div class="predictive-section" id="aiPredictionsDashboard">
                     <div class="section-title">
-                        <i class="fas fa-crystal-ball"></i> Predictive Analytics
-                        <span class="beta-badge">AI-Powered</span>
+                        <i class="fas fa-crystal-ball"></i> ML Predictions
+                        <span class="beta-badge">Logistic Regression</span>
                     </div>
-
-                    <div class="predictive-cards-grid" id="predictionsGrid">
-                        <!-- dynamic prediction cards injected by JS -->
-                    </div>
+                    <div class="predictive-cards-grid" id="predictionsGrid"></div>
                 </div>
 
-
-                <!-- Financial Deep Dive -->
-                <div class="charts-grid" id="financialDeepDive">
-                    <!-- Row 1 -->
-                    <div class="chart-card large">
-                        <div class="chart-header">
-                            <h3>Monthly Revenue Trend & Forecast</h3>
-                            <div class="chart-actions">
-                                <div style="display:flex; gap:8px; align-items:center;">
-                                    <select class="filter-select" id="revenuePeriod">
-                                        <option value="last30days">Last 30 Days</option>
-                                        <option value="lastQuarter">Last Quarter</option>
-                                        <option value="last6months">Last 6 Months</option>
-                                        <option value="last12months">Last 12 Months</option>
-                                        <option value="yeartodate">Year to Date</option>
-                                        <option value="custom">Custom Range...</option>
-                                    </select>
-                                    <button class="btn btn-sm btn-outline-secondary" id="compareModeBtn" title="Compare two periods"><i class="fas fa-exchange-alt"></i></button>
-                                </div>
-                                <input type="text" id="customDateRange" placeholder="MM/DD/YYYY - MM/DD/YYYY" style="display:none; margin-top:5px; width:100%;"/>
-                            </div>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="revenueTrendChart"></canvas>
-                        </div>
+                <!-- Forecasts & Trends -->
+                <div class="forecast-section" id="forecastSection">
+                    <div class="section-title">
+                        <i class="fas fa-chart-line"></i> Forecasts & Trends
                     </div>
-
-
-                    <div class="chart-card">
-                        <div class="chart-header">
-                            <h3>Payment Methods</h3>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="paymentMethodsChart"></canvas>
-                        </div>
-                    </div>
-
-
-                    <!-- Row 2 -->
-                    <div class="chart-card">
-                        <div class="chart-header">
-                            <h3>Revenue per Unit</h3>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="revenuePerUnitChart"></canvas>
-                        </div>
-                    </div>
-
-
-                    <div class="chart-card">
-                        <div class="chart-header">
-                            <h3>Occupancy Status & Forecast</h3>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="occupancyChart"></canvas>
-                        </div>
-                    </div>
-
-
-                    <div class="chart-card">
-                        <div class="chart-header">
-                            <h3>Late Payments</h3>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="latePaymentsChart"></canvas>
-                        </div>
-                    </div>
-
-
-                    <!-- Row 3 - Additional Metrics -->
-                    <div class="chart-card">
-                        <div class="chart-header">
-                            <h3>Maintenance Costs & Forecast</h3>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="maintenanceCostsChart"></canvas>
-                        </div>
-                    </div>
-
-
-                    <div class="chart-card">
-                        <div class="chart-header">
-                            <h3>Tenant Retention</h3>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="retentionChart"></canvas>
-                        </div>
-                    </div>
-
-
-                    <div class="chart-card">
-                        <div class="chart-header">
-                            <h3>Rent vs Market</h3>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="rentComparisonChart"></canvas>
-                        </div>
-                    </div>
+                    <div class="forecast-cards-grid" id="forecastCards"></div>
                 </div>
 
-
-                <!-- Operational Metrics -->
-                <div class="operational-metrics" id="operationalMetrics">
-                    <!-- Empty for now, dynamically filled from propertyReports and tenantReports -->
-                </div>
-
-                <!-- AI Recommendations -->
-                <div class="ai-recommendations" id="aiRecommendationsContainer">
-                    <!-- recommendations list inserted by JS -->
-                </div>
-
-                <!-- Comparative Analysis -->
-                <div class="comparative-analysis" id="comparativeAnalysis">
-                    <!-- Could hold side-by-side charts or KPI comparisons -->
-                </div>
-
-                <!-- New benchmarking/trend/smart-goals sections -->
-                <div class="benchmarking-section" id="benchmarkingSection">
-                    <div class="section-title">🏆 Benchmarking</div>
-                    <div class="benchmark-grid" id="benchmarkGrid"></div>
-                </div>
-
-                <div class="trend-analysis" id="trendAnalysis">
-                    <div class="section-title">📉 Trend Analysis</div>
-                    <div class="trend-content" id="trendContent"></div>
-                </div>
-
-                <div class="smart-goals" id="smartGoals">
-                    <div class="section-title">🎯 Smart Goals</div>
-                    <div class="goals-content" id="goalsContent"></div>
+                <!-- Actionable Recommendations -->
+                <div class="recommendations-section" id="recommendationsSection">
+                    <div class="section-title">Recommendations</div>
+                    <div class="recommendations-list" id="recommendationsList"></div>
                 </div>
             </div>
         `;
@@ -7331,37 +7207,6 @@ class CasaLink {
         if (pdfBtn) pdfBtn.addEventListener('click', (e) => { e.preventDefault(); doExport('PDF'); });
         if (excelBtn) excelBtn.addEventListener('click', (e) => { e.preventDefault(); doExport('Excel'); });
         
-        // Period filter and compare mode
-        const periodFilter = document.getElementById('revenuePeriod');
-        const customInput = document.getElementById('customDateRange');
-        const compareBtn = document.getElementById('compareModeBtn');
-        if (periodFilter) {
-            periodFilter.addEventListener('change', (e) => {
-                const val = e.target.value;
-                if (val === 'custom') {
-                    if (customInput) customInput.style.display = 'block';
-                } else {
-                    if (customInput) customInput.style.display = 'none';
-                    this.refreshReportsData(val);
-                }
-            });
-        }
-        if (customInput) {
-            customInput.addEventListener('keydown', (evt) => {
-                if (evt.key === 'Enter') {
-                    const range = customInput.value.trim();
-                    if (range) {
-                        this.refreshReportsData(range);
-                    }
-                }
-            });
-        }
-        if (compareBtn) {
-            compareBtn.addEventListener('click', () => {
-                alert('Compare mode coming soon - select two periods to display side-by-side.');
-            });
-        }
-        
         // Immediately load data for first render
         this.refreshReportsData();
     }
@@ -7422,20 +7267,8 @@ class CasaLink {
             // update UI
             this.populateExecutiveSummary(quickMetrics);
             this.populatePredictions(predictiveData);
-            this.populateOperationalMetrics(propertyReports, tenantReports);
+            this.populateForecastCards(predictiveData);
             this.populateRecommendations(predictiveData.recommendations || []);
-
-            // populate additional analytical sections
-            this.populateBenchmarking(quickMetrics);
-            this.populateTrendAnalysis(quickMetrics);
-            this.populateSmartGoals(quickMetrics);
-
-            // initialize charts with fetched data
-            this.initializeReportsCharts({
-                financialReports,
-                propertyReports,
-                tenantReports
-            });
 
             if (refreshBtn) {
                 refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
@@ -7485,127 +7318,107 @@ class CasaLink {
         if (!grid) return;
         grid.innerHTML = '';
 
-        // revenue, occupancy, maintenance from data
-        if (data.revenueForecast) {
+        const addCard = (title, icon, bodyHtml) => {
             const card = document.createElement('div');
             card.className = 'predictive-card';
             card.innerHTML = `
                 <div class="predictive-card-header">
-                    <h4><i class="fas fa-chart-line"></i> Revenue Forecast</h4>
-                    <span class="confidence-badge">${data.revenueForecast.accuracy||''}% Accurate</span>
+                    <h4><i class="${icon}"></i> ${title}</h4>
+                    <span class="recommendation-badge">Logistic Regression</span>
                 </div>
                 <div class="prediction-content">
-                    <div class="prediction-value">₱<span>${(data.revenueForecast.nextMonth||0).toLocaleString()}</span></div>
-                    <div class="prediction-label">Next Month Prediction</div>
-                    <div class="prediction-trend ${data.revenueForecast.trend>=0?'positive':'negative'}">
-                        <i class="fas fa-arrow-${data.revenueForecast.trend>=0?'up':'down'}"></i>
-                        <span>${data.revenueForecast.trend||0}% vs current
-                    </div>
+                    ${bodyHtml}
                 </div>
             `;
             grid.appendChild(card);
-        }
-        if (data.occupancyTrend) {
+        };
+
+        // Tenant Churn Risk
+        const churnRows = (data.tenantChurn || []).slice(0, 5).map(t => {
+            return `<div><strong>${t.tenant || t.unit || 'Unknown'}</strong>: ${t.probability}% (${t.riskLevel || ''})${t.reason ? ` – ${t.reason}` : ''}</div>`;
+        }).join('');
+        addCard('Tenant Churn Risk', 'fas fa-user-clock', churnRows || '<div>No churn data available</div>');
+
+        // Rent Optimization
+        const rentRows = (data.rentOptimization || []).slice(0, 5).map(r => {
+            return `<div><strong>${r.unit}</strong>: ${r.probability}% risk - ${r.suggestedIncrease ? `Increase by ₱${r.suggestedIncrease}` : 'Market rate'}</div>`;
+        }).join('');
+        addCard('Rent Optimization', 'fas fa-dollar-sign', rentRows || '<div>No under-market units detected</div>');
+
+        // Late Payment Risk
+        const lateRows = (data.latePaymentRisk || []).slice(0, 5).map(r => {
+            return `<div><strong>${r.tenant || r.unit}</strong>: ${r.probability}% (${r.riskLevel})</div>`;
+        }).join('');
+        addCard('Late Payment Risk', 'fas fa-exclamation-triangle', lateRows || '<div>No high risk tenants detected</div>');
+
+        // Maintenance Triage
+        const triageRows = (data.maintenanceTriage || []).slice(0, 5).map(r => {
+            return `<div><strong>${r.title}</strong> – ${r.priority} (confidence ${r.confidence || 0}%)</div>`;
+        }).join('');
+        addCard('Maintenance Triage', 'fas fa-tools', triageRows || '<div>No maintenance requests available</div>');
+
+        // Tenant Sentiment
+        const sentiment = data.tenantSentiment || { label: 'neutral', confidence: 0, score: 0 };
+        addCard('Tenant Sentiment', 'fas fa-smile', `<div>${sentiment.label.toUpperCase()} (${sentiment.confidence}% confidence)</div><div>Score: ${sentiment.score}</div>`);
+    }
+
+    populateForecastCards(data = {}) {
+        const container = document.getElementById('forecastCards');
+        if (!container) return;
+        container.innerHTML = '';
+
+        const addCard = (title, subtitle, value, note, algorithm) => {
             const card = document.createElement('div');
-            card.className = 'predictive-card';
+            card.className = 'forecast-card';
             card.innerHTML = `
-                <div class="predictive-card-header">
-                    <h4><i class="fas fa-home"></i> Occupancy Forecast</h4>
-                    <span class="confidence-badge">${data.occupancyTrend.accuracy||''}% Accurate</span>
+                <div class="forecast-card-header">
+                    <h4>${title}</h4>
+                    <span class="forecast-algo">${algorithm}</span>
                 </div>
-                <div class="prediction-content">
-                    <div class="prediction-value"><span>${data.occupancyTrend.nextMonth||0}</span>%</div>
-                    <div class="prediction-label">Next Month Prediction</div>
-                    <div class="prediction-risk">
-                        <i class="fas fa-exclamation-triangle"></i>
-                        <span>${data.occupancyTrend.atRiskUnits||0}</span> units at risk
-                    </div>
+                <div class="forecast-content">
+                    <div class="forecast-value">${value}</div>
+                    <div class="forecast-subtitle">${subtitle}</div>
+                    <div class="forecast-note">${note}</div>
                 </div>
             `;
-            grid.appendChild(card);
-        }
-        if (data.maintenanceCosts) {
-            const card = document.createElement('div');
-            card.className = 'predictive-card';
-            card.innerHTML = `
-                <div class="predictive-card-header">
-                    <h4><i class="fas fa-tools"></i> Maintenance Forecast</h4>
-                    <span class="confidence-badge">${data.maintenanceCosts.accuracy||''}% Accurate</span>
-                </div>
-                <div class="prediction-content">
-                    <div class="prediction-value">₱<span>${(data.maintenanceCosts.nextMonth||0).toLocaleString()}</span></div>
-                    <div class="prediction-label">Next Month Prediction</div>
-                    <div class="prediction-trend warning">
-                        <i class="fas fa-arrow-up"></i>
-                        <span>${data.maintenanceCosts.trend||0}% vs average
-                    </div>
-                </div>
-            `;
-            grid.appendChild(card);
-        }
-        // additional insights
-        if (data.tenantChurn && data.tenantChurn.length) {
-            const churnCard = document.createElement('div');
-            churnCard.className = 'predictive-card machine-insight';
-            churnCard.innerHTML = `
-                <div class="predictive-card-header">
-                    <h4>Tenant Churn Probability</h4>
-                </div>
-                <div class="prediction-content">
-                    ${data.tenantChurn.map(t =>
-                        `<div>${t.unit}: ${t.probability}%${t.reason ? ' – ' + t.reason : ''}</div>`
-                    ).join('')}
-                </div>
-            `;
-            grid.appendChild(churnCard);
-        }
-        if (data.revenueForecast && data.revenueForecast.optimizationSuggestion) {
-            const opt = data.revenueForecast.optimizationSuggestion;
-            const optCard = document.createElement('div');
-            optCard.className = 'predictive-card machine-insight';
-            optCard.innerHTML = `
-                <div class="predictive-card-header"><h4>Rent Optimization</h4></div>
-                <div class="prediction-content">
-                    <div>${opt.unit ? opt.unit + ': ' : ''}${opt.recommendation || opt.text || ''}</div>
-                    ${opt.probability ? `<div>Confidence: ${opt.probability}%</div>` : ''}
-                </div>
-            `;
-            grid.appendChild(optCard);
-        }
-        if (data.anomalies && data.anomalies.length) {
-            const anomalyCard = document.createElement('div');
-            anomalyCard.className = 'predictive-card machine-insight';
-            anomalyCard.innerHTML = `
-                <div class="predictive-card-header"><h4>Anomaly Detection</h4></div>
-                <div class="prediction-content">
-                    ${data.anomalies.map(a => `<div>• ${a}</div>`).join('')}
-                </div>
-            `;
-            grid.appendChild(anomalyCard);
-        }
-        if (data.seasonal && data.seasonal.length) {
-            const seasonalCard = document.createElement('div');
-            seasonalCard.className = 'predictive-card machine-insight';
-            seasonalCard.innerHTML = `
-                <div class="predictive-card-header"><h4>Seasonal Patterns</h4></div>
-                <div class="prediction-content">
-                    ${data.seasonal.map(s => `<div>• ${s}</div>`).join('')}
-                </div>
-            `;
-            grid.appendChild(seasonalCard);
-        }
-        if (data.sentiment) {
-            const sentimentCard = document.createElement('div');
-            sentimentCard.className = 'predictive-card machine-insight';
-            sentimentCard.innerHTML = `
-                <div class="predictive-card-header"><h4>Tenant Sentiment</h4></div>
-                <div class="prediction-content">
-                    <div>Overall: ${data.sentiment.label} (${data.sentiment.score})</div>
-                </div>
-            `;
-            grid.appendChild(sentimentCard);
-        }
-        // remaining cards can be added by calling populateRecommendations separately
+            container.appendChild(card);
+        };
+
+        const revenue = data.revenueForecast || {};
+        addCard(
+            'Revenue Forecast',
+            'Next month estimate',
+            `₱${(revenue.nextMonthPrediction || 0).toLocaleString()}`,
+            `Confidence: ${Math.round((revenue.confidence || 0) * 100)}%`,
+            'Weighted Moving Average'
+        );
+
+        const occupancy = data.occupancyForecast || data.occupancyTrend || {};
+        addCard(
+            'Occupancy Forecast',
+            'Projected occupancy',
+            `${(occupancy.predictions ? occupancy.predictions[0] : occupancy.currentOccupancy || 0)}%`,
+            `At-risk units: ${occupancy.atRiskUnits || 0}`,
+            'Lease expiry counting'
+        );
+
+        const maintenance = data.maintenanceForecast || data.maintenanceCosts || {};
+        addCard(
+            'Maintenance Forecast',
+            'Next month estimate',
+            `₱${(maintenance.nextMonthPrediction || (maintenance.monthlyPredictions ? maintenance.monthlyPredictions[0] : 0)).toLocaleString()}`,
+            `Confidence: ${Math.round((maintenance.confidence || 0) * 100)}%`,
+            'Seasonal average + trend'
+        );
+
+        const anomalies = (data.anomalies || []).slice(0, 3).join('<br>') || 'No anomalies detected';
+        addCard(
+            'Anomaly Detection',
+            'Unusual patterns in payments/maintenance',
+            anomalies,
+            '',
+            'Z-score outlier detection'
+        );
     }
 
     populateOperationalMetrics(propertyReports = {}, tenantReports = {}) {
@@ -7638,10 +7451,10 @@ class CasaLink {
     }
 
     populateRecommendations(list = []) {
-        const cont = document.getElementById('aiRecommendationsContainer');
+        const cont = document.getElementById('recommendationsSection');
         if (!cont) return;
-        cont.innerHTML = '<div class="section-title">AI Recommendations</div>\n<div class="recommendations-list" id="aiRecommendationsList"></div>';
-        const listEl = cont.querySelector('#aiRecommendationsList');
+        cont.innerHTML = '<div class="section-title">Recommendations</div>\n<div class="recommendations-list" id="recommendationsList"></div>';
+        const listEl = cont.querySelector('#recommendationsList');
         listEl.innerHTML = '';
         list.forEach(rec => {
             const item = document.createElement('div');
@@ -7693,12 +7506,13 @@ class CasaLink {
             this.showNotification('Preparing report export...', 'info');
             
             // Fetch data for report
+            const landlordId = this.currentUser?.uid || this.currentUser?.id;
             const [tenants, leases, rooms, bills, maintenance] = await Promise.all([
-                DataManager.getTenants(this.currentUser.uid),
-                DataManager.getLandlordLeases(this.currentUser.uid),
-                this.getAllRooms(),
-                DataManager.getBills(this.currentUser.uid),
-                DataManager.getMaintenanceRequests(this.currentUser.uid)
+                DataManager.getTenants(landlordId),
+                DataManager.getLandlordLeases(landlordId),
+                DataManager.getLandlordUnits(landlordId),
+                DataManager.getBills(landlordId),
+                DataManager.getMaintenanceRequests(landlordId)
             ]);
             
             const currentDate = new Date();
@@ -11049,13 +10863,14 @@ class CasaLink {
         try {
             this.showNotification('Generating comprehensive report...', 'info');
             
-            // Fetch data for all apartments
+            // Fetch data only for the logged-in landlord
+            const landlordId = this.currentUser?.uid || this.currentUser?.id;
             const [tenants, leases, rooms, bills, maintenance] = await Promise.all([
-                DataManager.getTenants(this.currentUser.uid),
-                DataManager.getLandlordLeases(this.currentUser.uid),
-                this.getAllRooms(),
-                DataManager.getBills(this.currentUser.uid),
-                DataManager.getMaintenanceRequests(this.currentUser.uid)
+                DataManager.getTenants(landlordId),
+                DataManager.getLandlordLeases(landlordId),
+                DataManager.getLandlordUnits(landlordId),
+                DataManager.getBills(landlordId),
+                DataManager.getMaintenanceRequests(landlordId)
             ]);
             
             // Get unique apartments
@@ -17664,34 +17479,59 @@ class CasaLink {
         const password = modal.querySelector('#signupPassword')?.value;
         const confirmPassword = modal.querySelector('#signupConfirmPassword')?.value;
         const name = modal.querySelector('#signupName')?.value.trim();
-        const phone = modal.querySelector('#signupPhone')?.value.trim();
+        const rawPhone = modal.querySelector('#signupPhone')?.value.trim() || '';
+        const bankName = modal.querySelector('#signupBank')?.value.trim();
         const bankAccountName = modal.querySelector('#signupBankName')?.value.trim();
         const bankAccountNumber = modal.querySelector('#signupBankNumber')?.value.trim();
         const gcashQrFile = modal.querySelector('#gcashQrInput')?.files?.[0] || null;
         const mayaQrFile = modal.querySelector('#mayaQrInput')?.files?.[0] || null;
 
+        const submitBtn = modal.querySelector('#modalSubmit');
+        const originalBtnText = submitBtn ? submitBtn.innerHTML : 'Create Account';
+
+        const highlightButtonError = () => {
+            if (!submitBtn) return;
+            submitBtn.style.backgroundColor = '#e74c3c';
+            submitBtn.style.borderColor = '#c0392b';
+            setTimeout(() => {
+                submitBtn.style.backgroundColor = '';
+                submitBtn.style.borderColor = '';
+            }, 1800);
+        };
+
+        // Normalize phone input to +63 format if provided
+        let phone = rawPhone;
+        if (phone) {
+            phone = phone.replace(/\D/g, '');
+            if (phone.startsWith('0')) phone = phone.slice(1);
+            if (phone.startsWith('63')) phone = phone.slice(2);
+            phone = phone.slice(0, 10);
+            if (phone) phone = `+63${phone}`;
+        }
+
         if (!email || !password || !confirmPassword || !name) {
             setError('Please fill out all required fields.');
+            highlightButtonError();
             return;
         }
 
         if (password !== confirmPassword) {
             setError('Passwords do not match.');
+            highlightButtonError();
             return;
         }
 
         if (password.length < 6) {
             setError('Password must be at least 6 characters.');
+            highlightButtonError();
             return;
         }
 
-        if (!gcashQrFile || !mayaQrFile || !bankAccountName || !bankAccountNumber) {
-            setError('Please provide both QR codes and bank account details.');
+        if (!bankName || !gcashQrFile || !mayaQrFile || !bankAccountName || !bankAccountNumber) {
+            setError('Please provide all required payment/bank details.');
+            highlightButtonError();
             return;
         }
-
-        const submitBtn = modal.querySelector('#modalSubmit');
-        const originalBtnText = submitBtn ? submitBtn.innerHTML : 'Create Account';
 
         if (submitBtn) {
             submitBtn.disabled = true;
@@ -17704,6 +17544,7 @@ class CasaLink {
                 password,
                 name,
                 phone,
+                bankName,
                 gcashQrFile,
                 mayaQrFile,
                 bankAccountName,
@@ -17760,7 +17601,11 @@ class CasaLink {
 
                 <div class="form-group">
                     <label class="form-label">Phone (optional)</label>
-                    <input type="text" id="signupPhone" class="form-input" placeholder="09XXXXXXXXX">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="padding: 10px 12px; background: #f1f3f4; border: 1px solid #dcdcdc; border-radius: 6px 0 0 6px; font-size: 0.95rem;">+63</span>
+                        <input type="tel" id="signupPhone" class="form-input" placeholder="9123456789" maxlength="10" inputmode="numeric" pattern="[0-9]*" style="border-radius: 0 6px 6px 0;">
+                    </div>
+                    <div style="font-size: 12px; color: #5f6368; margin-top: 6px;">Enter your mobile number without the leading 0 (e.g., 9123456789).</div>
                 </div>
 
                 <div class="form-group">
@@ -17773,6 +17618,55 @@ class CasaLink {
                     <label class="form-label">Maya QR Code <span style="color:#e74c3c;">*</span></label>
                     <input type="file" id="mayaQrInput" accept="image/*">
                     <div id="mayaQrPreview" style="margin-top: 10px; display: none;"></div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Bank Name <span style="color:#e74c3c;">*</span></label>
+                    <select id="signupBank" class="form-input">
+                        <option value="">-- Select bank --</option>
+                        <option>AllBank (Allied Banking Corporation)</option>
+                        <option>BDO Network Bank</option>
+                        <option>BDO Unibank (BDO)</option>
+                        <option>BPI (Bank of the Philippine Islands)</option>
+                        <option>BPI Direct BanKo</option>
+                        <option>Cantilan Bank</option>
+                        <option>CARD Bank</option>
+                        <option>China Bank</option>
+                        <option>China Bank Savings</option>
+                        <option>CIMB Bank Philippines</option>
+                        <option>Citibank Philippines (integrated with UnionBank)</option>
+                        <option>Citystate Savings Bank</option>
+                        <option>Development Bank of the Philippines (DBP)</option>
+                        <option>Dungganon Bank</option>
+                        <option>EastWest Bank</option>
+                        <option>GoTyme Bank</option>
+                        <option>HSBC Philippines</option>
+                        <option>Komo (EastWest Rural Bank)</option>
+                        <option>Land Bank of the Philippines</option>
+                        <option>LifeBank (Rural Bank of San Jose, Batangas)</option>
+                        <option>MariBank</option>
+                        <option>Maya Bank</option>
+                        <option>Maybank Philippines</option>
+                        <option>Metrobank (Metropolitan Bank & Trust Company)</option>
+                        <option>Netbank (Netbank Mobile)</option>
+                        <option>Overseas Filipino Bank</option>
+                        <option>Ownbank</option>
+                        <option>Philippine Business Bank</option>
+                        <option>Philippine National Bank (PNB)</option>
+                        <option>Philippine Veterans Bank</option>
+                        <option>Producers Savings Bank</option>
+                        <option>RCBC (Rizal Commercial Banking Corporation)</option>
+                        <option>RCBC Savings Bank</option>
+                        <option>Robinsons Bank (merging with BPI)</option>
+                        <option>Rural Bank of Guinobatan (RBG)</option>
+                        <option>Security Bank</option>
+                        <option>Sterling Bank of Asia</option>
+                        <option>Tonik Digital Bank</option>
+                        <option>UCPB (United Coconut Planters Bank)</option>
+                        <option>UnionBank (Union Bank of the Philippines)</option>
+                        <option>UnionDigital Bank</option>
+                        <option>UNObank</option>
+                    </select>
                 </div>
 
                 <div class="form-group">
@@ -17824,6 +17718,33 @@ class CasaLink {
 
         setupPreview('gcashQrInput', 'gcashQrPreview');
         setupPreview('mayaQrInput', 'mayaQrPreview');
+
+        // Clear validation highlights when user edits fields
+        const clearValidationState = () => {
+            const errorEl = modal.querySelector('#signupError');
+            if (errorEl) {
+                errorEl.style.display = 'none';
+                errorEl.textContent = '';
+            }
+            const submitBtn = modal.querySelector('#modalSubmit');
+            if (submitBtn) {
+                submitBtn.style.backgroundColor = '';
+                submitBtn.style.borderColor = '';
+            }
+        };
+
+        const watchedFields = modal.querySelectorAll('#signupName, #signupEmail, #signupPassword, #signupConfirmPassword, #signupPhone, #signupBank, #signupBankName, #signupBankNumber');
+        watchedFields.forEach(field => field.addEventListener('input', clearValidationState));
+        const fileFields = modal.querySelectorAll('#gcashQrInput, #mayaQrInput');
+        fileFields.forEach(field => field.addEventListener('change', clearValidationState));
+
+        // Restrict phone input to digits only (max 10 digits) for Philippine mobile
+        const phoneInput = modal.querySelector('#signupPhone');
+        if (phoneInput) {
+            phoneInput.addEventListener('input', (e) => {
+                e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+            });
+        }
     }
 
     ensureLoginPage() {
@@ -22235,7 +22156,10 @@ class CasaLink {
                     <div class="form-group">
                         <label class="form-label">Additional Member ${i} - Full Name</label>
                         <input type="text" id="memberName${i}" class="form-input" placeholder="Enter full name">
-                        <small style="color: var(--dark-gray);">Optional - enter if this member will be staying with you</small>
+                        <small style="color: var(--dark-gray);">
+                            <strong>If no additional member yet, leave this BLANK.</strong>
+                            Optional - enter if this member will be staying with you.
+                        </small>
                     </div>
                 `;
             }
