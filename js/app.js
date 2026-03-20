@@ -20823,6 +20823,14 @@ class CasaLink {
             await DataManager.archiveLease(leaseId, { reason: 'deleted by landlord' });
             showNotification('Lease archived successfully', 'success');
             showSection('lease-management'); // Refresh the view
+            // Refresh unit layout/dashboard to reflect freed room
+            try {
+                this._layoutAlreadyLoaded = false;
+                await this.loadAndDisplayUnitLayoutInDashboard();
+                if (typeof this.loadDashboardDataForSelectedApartment === 'function') await this.loadDashboardDataForSelectedApartment();
+            } catch (e) {
+                console.warn('Failed to refresh layout after lease archive:', e);
+            }
         } catch (error) {
             console.error('Error archiving lease:', error);
             showNotification('Error archiving lease', 'error');
@@ -20841,6 +20849,14 @@ class CasaLink {
             showNotification('Tenant removed and lease archived successfully', 'success');
             if (this.currentPage === 'tenants') {
                 await this.loadTenantsData();
+            }
+            // Refresh unit layout/dashboard to reflect freed room
+            try {
+                this._layoutAlreadyLoaded = false;
+                await this.loadAndDisplayUnitLayoutInDashboard();
+                if (typeof this.loadDashboardDataForSelectedApartment === 'function') await this.loadDashboardDataForSelectedApartment();
+            } catch (e) {
+                console.warn('Failed to refresh layout after tenant archive:', e);
             }
         } catch (error) {
             console.error('Error deleting tenant:', error);
@@ -23101,9 +23117,12 @@ class CasaLink {
                     roomsQuery = roomsQuery.where('landlordId', '==', tenantData.landlordId);
                 }
 
-                // Scope by selected apartment/address when available
+                // Scope by selected apartment/address or explicit apartmentId when available
                 if (this.currentApartmentId) {
                     roomsQuery = roomsQuery.where('apartmentId', '==', this.currentApartmentId);
+                } else if (tenantData.apartmentId || tenantData.propertyId) {
+                    const aid = tenantData.apartmentId || tenantData.propertyId;
+                    roomsQuery = roomsQuery.where('apartmentId', '==', aid);
                 } else if (tenantData.rentalAddress) {
                     roomsQuery = roomsQuery.where('apartmentAddress', '==', tenantData.rentalAddress);
                 }

@@ -2771,12 +2771,20 @@ class DataManager {
                 const roomNumber = leaseData.roomNumber;
                 const landlordId = leaseData.landlordId;
 
-                if (roomNumber && landlordId) {
-                    const roomQuery = await firebaseDb.collection('rooms')
+                    if (roomNumber && landlordId) {
+                    // Prefer to match by apartment/property when available to avoid
+                    // colliding rooms that share the same roomNumber across
+                    // different apartments owned by the same landlord.
+                    let roomQueryRef = firebaseDb.collection('rooms')
                         .where('roomNumber', '==', roomNumber)
-                        .where('landlordId', '==', landlordId)
-                        .limit(1)
-                        .get();
+                        .where('landlordId', '==', landlordId);
+
+                    if (leaseData && (leaseData.apartmentId || leaseData.propertyId)) {
+                        const aid = leaseData.apartmentId || leaseData.propertyId;
+                        roomQueryRef = roomQueryRef.where('apartmentId', '==', aid);
+                    }
+
+                    const roomQuery = await roomQueryRef.limit(1).get();
 
                     if (!roomQuery.empty) {
                         const roomDoc = roomQuery.docs[0];
@@ -2837,11 +2845,16 @@ class DataManager {
                 }, { merge: true });
 
                 if (leaseData.roomNumber && leaseData.landlordId) {
-                    const roomQuery = await firebaseDb.collection('rooms')
+                    let roomQueryRef = firebaseDb.collection('rooms')
                         .where('roomNumber', '==', leaseData.roomNumber)
-                        .where('landlordId', '==', leaseData.landlordId)
-                        .limit(1)
-                        .get();
+                        .where('landlordId', '==', leaseData.landlordId);
+
+                    if (leaseData.apartmentId || leaseData.propertyId) {
+                        const aid = leaseData.apartmentId || leaseData.propertyId;
+                        roomQueryRef = roomQueryRef.where('apartmentId', '==', aid);
+                    }
+
+                    const roomQuery = await roomQueryRef.limit(1).get();
 
                     if (!roomQuery.empty) {
                         const roomDoc = roomQuery.docs[0];
@@ -2885,11 +2898,16 @@ class DataManager {
             const tenantId = leaseData.tenantId;
 
             if (roomNumber && landlordId) {
-                const roomQuery = await firebaseDb.collection('rooms')
+                let roomQueryRef = firebaseDb.collection('rooms')
                     .where('roomNumber', '==', roomNumber)
-                    .where('landlordId', '==', landlordId)
-                    .limit(1)
-                    .get();
+                    .where('landlordId', '==', landlordId);
+
+                if (leaseData && (leaseData.apartmentId || leaseData.propertyId)) {
+                    const aid = leaseData.apartmentId || leaseData.propertyId;
+                    roomQueryRef = roomQueryRef.where('apartmentId', '==', aid);
+                }
+
+                const roomQuery = await roomQueryRef.limit(1).get();
 
                 if (!roomQuery.empty) {
                     const roomInfo = roomQuery.docs[0].data();
@@ -2908,11 +2926,16 @@ class DataManager {
             }, { merge: true });
 
             if (roomNumber && landlordId) {
-                const roomQuery = await firebaseDb.collection('rooms')
+                let roomQueryRef = firebaseDb.collection('rooms')
                     .where('roomNumber', '==', roomNumber)
-                    .where('landlordId', '==', landlordId)
-                    .limit(1)
-                    .get();
+                    .where('landlordId', '==', landlordId);
+
+                if (leaseData && (leaseData.apartmentId || leaseData.propertyId)) {
+                    const aid = leaseData.apartmentId || leaseData.propertyId;
+                    roomQueryRef = roomQueryRef.where('apartmentId', '==', aid);
+                }
+
+                const roomQuery = await roomQueryRef.limit(1).get();
 
                 if (!roomQuery.empty) {
                     await roomQuery.docs[0].ref.update({
@@ -3038,11 +3061,16 @@ class DataManager {
             const landlordId = lease.landlordId;
 
             if (roomNumber && landlordId) {
-                const roomQuery = await firebaseDb.collection('rooms')
+                let roomQueryRef = firebaseDb.collection('rooms')
                     .where('roomNumber', '==', roomNumber)
-                    .where('landlordId', '==', landlordId)
-                    .limit(1)
-                    .get();
+                    .where('landlordId', '==', landlordId);
+
+                if (lease && (lease.apartmentId || lease.propertyId)) {
+                    const aid = lease.apartmentId || lease.propertyId;
+                    roomQueryRef = roomQueryRef.where('apartmentId', '==', aid);
+                }
+
+                const roomQuery = await roomQueryRef.limit(1).get();
 
                 if (!roomQuery.empty) {
                     const roomDoc = roomQuery.docs[0];
