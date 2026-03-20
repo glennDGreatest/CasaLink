@@ -225,9 +225,9 @@ class DataManager {
             
             const tenants = snapshot.docs
                 .map(doc => ({ ...doc.data(), id: doc.id }))
-                .filter(t => !t.archived);
+                .filter(t => !t.archived && t.isActive === true);
             
-            console.log('✅ Tenants loaded:', tenants.length);
+            console.log('✅ Tenants loaded (active only):', tenants.length);
             return tenants;
         } catch (error) {
             console.error('❌ Error getting tenants:', error);
@@ -2171,10 +2171,12 @@ class DataManager {
                 .orderBy('createdAt', 'desc')
                 .get();
             
-            return querySnapshot.docs.map(doc => ({ 
-                id: doc.id, 
-                ...doc.data() 
-            }));
+            const tenants = querySnapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(tenant => !tenant.archived && tenant.isActive === true);
+
+            console.log('✅ DataManager.getTenants loaded active tenants:', tenants.length);
+            return tenants;
         } catch (error) {
             console.error('❌ DataManager.getTenants error:', error);
             return [];
@@ -2194,12 +2196,11 @@ class DataManager {
                 .orderBy('createdAt', 'desc')
                 .get();
 
-            const tenants = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return { ...data, id: doc.id };
-            });
+            const tenants = snapshot.docs
+                .map(doc => ({ ...doc.data(), id: doc.id }))
+                .filter(tenant => !tenant.archived && tenant.isActive === true);
 
-            console.log('✅ Tenants loaded from `users` collection:', tenants.length);
+            console.log('✅ Tenants loaded from `users` collection (active only):', tenants.length);
             return tenants;
         } catch (error) {
             console.error('❌ Error getting tenants from users collection:', error);
@@ -2647,7 +2648,19 @@ class DataManager {
             };
 
             await firebaseDb.collection('archive').add(archivePayload);
-            await docRef.update({ archived: true, archivedAt, archivedBy: userId });
+
+            // Mark the document as archived and disable access if it is a user account
+            const updateFields = {
+                archived: true,
+                archivedAt,
+                archivedBy: userId
+            };
+
+            if (collection === 'users') {
+                updateFields.isActive = false;
+            }
+
+            await docRef.update(updateFields);
 
             return archivePayload;
         } catch (error) {
@@ -2697,6 +2710,17 @@ class DataManager {
             if (!archiveSnap.exists) throw new Error('Archive entry not found');
 
             const archive = archiveSnap.data();
+            if (!archive || !archive.type) throw new Error('Invalid archive entry');
+
+            if (archive.type === 'tenant') {
+                return await this.restoreArchivedTenant(archiveId);
+            }
+
+            if (archive.type === 'lease') {
+                return await this.restoreArchivedLease(archiveId);
+            }
+
+            // Default behavior for other types is to unarchive the original document
             const { originalCollection, originalId, data } = archive;
             if (!originalCollection || !originalId) throw new Error('Invalid archive entry');
 
@@ -2707,6 +2731,204 @@ class DataManager {
             return { originalCollection, originalId };
         } catch (error) {
             console.error('Error restoring archived item:', error);
+            throw error;
+        }
+    }
+
+    static async restoreArchivedTenant(archiveId) {
+        try {
+            const archiveRef = firebaseDb.collection('archive').doc(archiveId);
+            const archiveSnap = await archiveRef.get();
+            if (!archiveSnap.exists) throw new Error('Archive entry not found');
+
+            const archive = archiveSnap.data();
+            if (!archive || archive.type !== 'tenant') throw new Error('Archive entry is not a tenant record');
+
+            const tenantData = archive.data || {};
+            const originalCollection = archive.originalCollection;
+            const originalId = archive.originalId;
+
+            // Determine tenant user ID for lease lookup
+            let tenantUserId = originalId;
+            if (originalCollection === 'tenants') {
+                tenantUserId = tenantData.userId || tenantData.tenantId || tenantData.uid || originalId;
+            }
+            if (!tenantUserId && tenantData.id) {
+                tenantUserId = tenantData.id;
+            }
+            if (!tenantUserId) {
+                throw new Error('Unable to determine tenant user ID for restoration');
+            }
+
+            // Validate lease room availability before performing any restoration
+            const leaseArchivesQuery = await firebaseDb.collection('archive')
+                .where('type', '==', 'lease')
+                .where('data.tenantId', '==', tenantUserId)
+                .get();
+
+            for (const leaseArchiveDoc of leaseArchivesQuery.docs) {
+                const leaseData = leaseArchiveDoc.data().data || {};
+                const roomNumber = leaseData.roomNumber;
+                const landlordId = leaseData.landlordId;
+
+                if (roomNumber && landlordId) {
+                    const roomQuery = await firebaseDb.collection('rooms')
+                        .where('roomNumber', '==', roomNumber)
+                        .where('landlordId', '==', landlordId)
+                        .limit(1)
+                        .get();
+
+                    if (!roomQuery.empty) {
+                        const roomDoc = roomQuery.docs[0];
+                        const roomInfo = roomDoc.data();
+
+                        if (roomInfo.isAvailable === false && roomInfo.occupiedBy && roomInfo.occupiedBy !== tenantUserId) {
+                            throw new Error('Restoring tenant impossible, the room he/she previously rented is now occupied.');
+                        }
+                    }
+                }
+            }
+
+            const restoredTenant = {
+                ...tenantData,
+                archived: false,
+                isActive: true,
+                restoredAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+
+            // Restore main tenant record (users or tenants) and preserve the archived tenant
+            if (originalCollection) {
+                await firebaseDb.collection(originalCollection).doc(originalId)
+                    .set(restoredTenant, { merge: true });
+            }
+
+            // Also restore old legacy tenant collection record if it exists
+            if (originalCollection !== 'tenants') {
+                try {
+                    const legacyTenantDoc = await firebaseDb.collection('tenants').doc(tenantUserId).get();
+                    if (legacyTenantDoc.exists) {
+                        await firebaseDb.collection('tenants').doc(tenantUserId).set({
+                            ...legacyTenantDoc.data(),
+                            archived: false,
+                            restoredAt: new Date().toISOString()
+                        }, { merge: true });
+                    }
+                } catch (e) {
+                    // Not critical if legacy document doesn't exist
+                }
+            }
+
+            // Save restored user state into users collection (ensures lookup works for tenant list)
+            await firebaseDb.collection('users').doc(tenantUserId).set(restoredTenant, { merge: true });
+
+            // If there are lease archives for this tenant, restore each one and mark room occupied.
+            for (const leaseArchiveDoc of leaseArchivesQuery.docs) {
+                const leaseArchive = leaseArchiveDoc.data();
+                const leaseId = leaseArchive.originalId;
+                const leaseData = leaseArchive.data || {};
+
+                await firebaseDb.collection('leases').doc(leaseId).set({
+                    ...leaseData,
+                    archived: false,
+                    isActive: true,
+                    restoredAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                }, { merge: true });
+
+                if (leaseData.roomNumber && leaseData.landlordId) {
+                    const roomQuery = await firebaseDb.collection('rooms')
+                        .where('roomNumber', '==', leaseData.roomNumber)
+                        .where('landlordId', '==', leaseData.landlordId)
+                        .limit(1)
+                        .get();
+
+                    if (!roomQuery.empty) {
+                        const roomDoc = roomQuery.docs[0];
+                        await roomDoc.ref.update({
+                            isAvailable: false,
+                            occupiedBy: tenantUserId,
+                            occupiedAt: leaseData.leaseStart ? new Date(leaseData.leaseStart).toISOString() : new Date().toISOString(),
+                            numberOfMembers: leaseData.totalOccupants || (roomDoc.data().numberOfMembers || 1),
+                            updatedAt: new Date().toISOString()
+                        });
+                    }
+                }
+
+                await leaseArchiveDoc.ref.delete();
+            }
+
+            // Finally remove archived tenant entry
+            await archiveRef.delete();
+
+            return { originalCollection, originalId };
+        } catch (error) {
+            console.error('Error restoring archived tenant:', error);
+            throw error;
+        }
+    }
+
+    static async restoreArchivedLease(archiveId) {
+        try {
+            const archiveRef = firebaseDb.collection('archive').doc(archiveId);
+            const archiveSnap = await archiveRef.get();
+            if (!archiveSnap.exists) throw new Error('Archive entry not found');
+
+            const archive = archiveSnap.data();
+            if (!archive || archive.type !== 'lease') throw new Error('Archive entry is not a lease record');
+
+            const leaseData = archive.data || {};
+            const leaseId = archive.originalId;
+
+            const roomNumber = leaseData.roomNumber;
+            const landlordId = leaseData.landlordId;
+            const tenantId = leaseData.tenantId;
+
+            if (roomNumber && landlordId) {
+                const roomQuery = await firebaseDb.collection('rooms')
+                    .where('roomNumber', '==', roomNumber)
+                    .where('landlordId', '==', landlordId)
+                    .limit(1)
+                    .get();
+
+                if (!roomQuery.empty) {
+                    const roomInfo = roomQuery.docs[0].data();
+                    if (roomInfo.isAvailable === false && roomInfo.occupiedBy && roomInfo.occupiedBy !== tenantId) {
+                        throw new Error('Restoring lease impossible, the room is now occupied by another tenant.');
+                    }
+                }
+            }
+
+            await firebaseDb.collection('leases').doc(leaseId).set({
+                ...leaseData,
+                archived: false,
+                isActive: true,
+                restoredAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            }, { merge: true });
+
+            if (roomNumber && landlordId) {
+                const roomQuery = await firebaseDb.collection('rooms')
+                    .where('roomNumber', '==', roomNumber)
+                    .where('landlordId', '==', landlordId)
+                    .limit(1)
+                    .get();
+
+                if (!roomQuery.empty) {
+                    await roomQuery.docs[0].ref.update({
+                        isAvailable: false,
+                        occupiedBy: tenantId || null,
+                        occupiedAt: leaseData.leaseStart ? new Date(leaseData.leaseStart).toISOString() : new Date().toISOString(),
+                        updatedAt: new Date().toISOString()
+                    });
+                }
+            }
+
+            await archiveRef.delete();
+
+            return { originalCollection: 'leases', originalId: leaseId };
+        } catch (error) {
+            console.error('Error restoring archived lease:', error);
             throw error;
         }
     }
@@ -2734,20 +2956,64 @@ class DataManager {
 
     static async archiveTenant(tenantId, options = {}) {
         try {
-            const archivePayload = await this.archiveDocument('users', tenantId, 'tenant', options);
+            // Determine if this ID corresponds to a tenant document in the legacy "tenants" collection.
+            // If so, archive that record too (so it disappears from the Tenant Management list).
+            let tenantDoc = null;
+            let tenantUserId = tenantId;
 
-            // Archive active leases for the tenant
-            const leasesSnap = await firebaseDb.collection('leases')
-                .where('tenantId', '==', tenantId)
-                .where('isActive', '==', true)
-                .get();
+            try {
+                tenantDoc = await firebaseDb.collection('tenants').doc(tenantId).get();
+                if (tenantDoc.exists) {
+                    const tenantData = tenantDoc.data() || {};
+                    // Prefer an explicit auth user link if present
+                    tenantUserId = tenantData.userId || tenantData.uid || tenantData.tenantId || tenantId;
 
-            for (const leaseDoc of leasesSnap.docs) {
-                const leaseId = leaseDoc.id;
-                await this.archiveLease(leaseId, { reason: 'tenant archived' });
+                    await this.archiveDocument('tenants', tenantId, 'tenant', options);
+                }
+            } catch (innerErr) {
+                // Not critical if no tenant document exists in legacy collection
+                console.warn('Could not archive tenant record from tenants collection:', innerErr);
             }
 
-            return archivePayload;
+            // Archive the auth/user record if it exists (helps prevent login)
+            try {
+                const userDocRef = firebaseDb.collection('users').doc(tenantUserId);
+                const userDoc = await userDocRef.get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data() || {};
+
+                    // Archive the user document for history, if not already archived.
+                    if (!userData.archived) {
+                        await this.archiveDocument('users', tenantUserId, 'tenant', options);
+                    }
+
+                    // Ensure user is disabled and marked archived regardless of prior state.
+                    await userDocRef.update({
+                        isActive: false,
+                        archived: true,
+                        archivedAt: new Date().toISOString(),
+                        archivedBy: (this.user && this.user.uid) || (typeof window !== 'undefined' && window.currentUser && window.currentUser.uid) || null
+                    });
+                }
+            } catch (innerErr) {
+                console.warn('Could not archive auth user record for tenant:', innerErr);
+            }
+
+            // Archive active leases for the tenant (by auth user id if available)
+            try {
+                const leasesSnap = await firebaseDb.collection('leases')
+                    .where('tenantId', '==', tenantUserId)
+                    .where('isActive', '==', true)
+                    .get();
+
+                for (const leaseDoc of leasesSnap.docs) {
+                    await this.archiveLease(leaseDoc.id, { reason: 'tenant archived', ...options });
+                }
+            } catch (innerErr) {
+                console.warn('Could not archive leases for tenant:', innerErr);
+            }
+
+            return { tenantId, tenantUserId };
         } catch (error) {
             console.error('Error archiving tenant:', error);
             throw error;
@@ -2758,8 +3024,13 @@ class DataManager {
         try {
             const archivePayload = await this.archiveDocument('leases', leaseId, 'lease', options);
 
-            // Mark lease as inactive
-            await firebaseDb.collection('leases').doc(leaseId).update({ isActive: false });
+            // Mark lease as inactive and archived
+            await firebaseDb.collection('leases').doc(leaseId).update({
+                isActive: false,
+                status: 'archived',
+                archived: true,
+                archivedAt: new Date().toISOString()
+            });
 
             // Update related room occupancy if possible
             const lease = archivePayload.data || {};

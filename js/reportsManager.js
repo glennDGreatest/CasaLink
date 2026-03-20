@@ -3,6 +3,9 @@ class ReportsManager {
     constructor(dataManager) {
         this.dataManager = dataManager;
         this.currentUser = null;
+        this.realTimeUnsubscribers = [];
+        this._refreshTimeout = null;
+        this.realTimeActive = false;
     }
 
     async init(user) {
@@ -14,6 +17,9 @@ class ReportsManager {
             this.predictiveAnalytics = new PredictiveAnalytics(this.dataManager);
             await this.predictiveAnalytics.init();
         }
+
+        // Start listening for real-time updates so the reports view stays fresh
+        this.setupRealTimeListeners();
 
         return this;
     }
@@ -91,7 +97,7 @@ class ReportsManager {
         // anomaly detection
         let anomalies = [];
         if (this.predictiveAnalytics && typeof this.predictiveAnalytics.detectAnomalies === 'function') {
-            anomalies = await this.predictiveAnalytics.detectAnomalies(financialReports, maintenanceReports);
+            anomalies = await this.predictiveAnalytics.detectAnomalies(financialReports, (maintenanceReports && maintenanceReports.maintenance) || {});
         }
         if (!anomalies || !anomalies.length) {
             anomalies = ['None detected'];
@@ -583,13 +589,81 @@ class ReportsManager {
     // Real-time Data Updates
     setupRealTimeListeners() {
         console.log('📡 Setting up real-time reports listeners');
-        // In real app, this would set up Firebase listeners for real-time updates
+
+        this.realTimeActive = false;
+
+        const landlordId = this.currentUser?.uid || this.currentUser?.id;
+        if (!landlordId || typeof firebaseDb === 'undefined') {
+            console.warn('⚠️ Real-time listeners not initialized (missing landlordId or firebaseDb)');
+            if (window.casaLink && typeof window.casaLink.setLiveUpdateStatus === 'function') {
+                window.casaLink.setLiveUpdateStatus(false);
+            }
+            return;
+        }
+
+        // Helper to debounce refresh to avoid rapid rerenders
+        const scheduleRefresh = () => {
+            if (this._refreshTimeout) clearTimeout(this._refreshTimeout);
+            this._refreshTimeout = setTimeout(() => {
+                if (window.casaLink && typeof window.casaLink.refreshReportsData === 'function') {
+                    // Trigger refresh with an indicator that it came from a live update.
+                    window.casaLink.refreshReportsData(undefined, true);
+                }
+            }, 800);
+        };
+
+        const updateLiveIndicator = (enabled) => {
+            this.realTimeActive = enabled;
+            if (window.casaLink && typeof window.casaLink.setLiveUpdateStatus === 'function') {
+                window.casaLink.setLiveUpdateStatus(enabled);
+            }
+        };
+
+        const attachListener = (collection, queryFn) => {
+            try {
+                const query = queryFn(firebaseDb.collection(collection));
+                const unsubscribe = query.onSnapshot(snapshot => {
+                    console.log(`📡 Real-time update detected for ${collection} (${snapshot.size} docs)`);
+                    updateLiveIndicator(true);
+                    scheduleRefresh();
+                }, err => {
+                    console.warn(`⚠️ Real-time listener error for ${collection}:`, err);
+                });
+                this.realTimeUnsubscribers.push(unsubscribe);
+            } catch (err) {
+                console.warn('⚠️ Failed to attach real-time listener for', collection, err);
+            }
+        };
+
+        // Collections that affect reports data
+        attachListener('bills', col => col.where('landlordId', '==', landlordId));
+        attachListener('leases', col => col.where('landlordId', '==', landlordId));
+        attachListener('payments', col => col.where('landlordId', '==', landlordId));
+        attachListener('maintenance', col => col.where('landlordId', '==', landlordId));
+        attachListener('rooms', col => col.where('landlordId', '==', landlordId));
+
+        // If listeners were successfully attached, consider live updates enabled
+        if (this.realTimeUnsubscribers.length > 0) {
+            updateLiveIndicator(true);
+        }
     }
 
     // Cleanup
     destroy() {
         console.log('🧹 Cleaning up reports manager');
-        // Clean up any listeners or intervals
+        if (window.casaLink && typeof window.casaLink.setLiveUpdateStatus === 'function') {
+            window.casaLink.setLiveUpdateStatus(false);
+        }
+        this.realTimeActive = false;
+
+        if (this._refreshTimeout) {
+            clearTimeout(this._refreshTimeout);
+            this._refreshTimeout = null;
+        }
+        this.realTimeUnsubscribers.forEach(unsub => {
+            try { unsub(); } catch (e) { /* ignore */ }
+        });
+        this.realTimeUnsubscribers = [];
     }
 }
 

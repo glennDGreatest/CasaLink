@@ -1118,6 +1118,8 @@ class PropertiesController {
                     .collection('users')
                     .where('role', '==', 'tenant')
                     .where('apartmentId', '==', propertyId)
+                    .where('isActive', '==', true)
+                    .where('archived', '==', false)
                     .get();
 
                 tenants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));

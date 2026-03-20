@@ -107,6 +107,29 @@ class DataService {
     }
   }
 
+  /**
+   * Soft-delete (archive) a tenant and related data.
+   * Uses DataManager.archiveTenant to ensure leases are archived and rooms freed up.
+   * @param {string} tenantId
+   */
+  async deleteTenant(tenantId) {
+    try {
+      if (typeof DataManager !== 'undefined' && typeof DataManager.archiveTenant === 'function') {
+        return await DataManager.archiveTenant(tenantId, { reason: 'deleted by landlord' });
+      }
+
+      // Fallback: mark the user record as inactive/archived
+      await this.firebaseService.update('users', tenantId, {
+        archived: true,
+        isActive: false,
+        archivedAt: new Date().toISOString()
+      });
+    } catch (error) {
+      console.error('Error deleting tenant:', error);
+      throw error;
+    }
+  }
+
   // ===== PROPERTY OPERATIONS =====
 
   /**
@@ -216,17 +239,45 @@ class DataService {
    */
   async getPropertyTenants(propertyId) {
     try {
-      // gather tenantIds from active leases matching the property/apartment
-      let leaseSnapshot = await this.firebaseService.query('leases', [['propertyId', '==', propertyId], ['status', '==', 'active']]);
+      // gather tenantIds from active, non-archived leases matching the property/apartment
+      let leaseSnapshot = await this.firebaseService.query('leases', [
+        ['propertyId', '==', propertyId],
+        ['status', '==', 'active'],
+        ['isActive', '==', true],
+        ['archived', '==', false]
+      ]);
+
       if (leaseSnapshot.empty) {
-        leaseSnapshot = await this.firebaseService.query('leases', [['apartmentId', '==', propertyId], ['status', '==', 'active']]);
+        leaseSnapshot = await this.firebaseService.query('leases', [
+          ['apartmentId', '==', propertyId],
+          ['status', '==', 'active'],
+          ['isActive', '==', true],
+          ['archived', '==', false]
+        ]);
       }
-      const tenantIds = [...new Set(leaseSnapshot.docs.map(doc => doc.data().tenantId))];
+
+      if (leaseSnapshot.empty) {
+        leaseSnapshot = await this.firebaseService.query('leases', [
+          ['rentalPropertyId', '==', propertyId],
+          ['status', '==', 'active'],
+          ['isActive', '==', true],
+          ['archived', '==', false]
+        ]);
+      }
+
+      const tenantIds = [...new Set(leaseSnapshot.docs.map(doc => doc.data().tenantId).filter(Boolean))];
       const tenants = [];
+
       for (const tenantId of tenantIds) {
         const userDoc = await this.firebaseService.read('users', tenantId);
-        if (userDoc) tenants.push(new User(userDoc.data()));
+        if (!userDoc) continue;
+
+        const userData = userDoc.data();
+        if (!userData || userData.archived || userData.isActive === false) continue;
+
+        tenants.push(new User(userData));
       }
+
       return tenants;
     } catch (error) {
       console.error('Error getting apartment tenants:', error);

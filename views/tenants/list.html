@@ -317,7 +317,6 @@
                         <td>
                             <div class="actions">
                                 <button class="btn-action view-btn">View</button>
-                                <button class="btn-action edit-btn">Edit</button>
                                 <button class="btn-action danger delete-btn">Delete</button>
                             </div>
                         </td>
@@ -337,11 +336,6 @@
                     }
                 });
 
-                row.querySelector('.edit-btn')?.addEventListener('click', () => {
-                    if (window.tenantsController) {
-                        window.tenantsController.openEditTenantModal(tenantId);
-                    }
-                });
 
                 row.querySelector('.delete-btn')?.addEventListener('click', () => {
                     if (confirm('Are you sure you want to delete this tenant?')) {

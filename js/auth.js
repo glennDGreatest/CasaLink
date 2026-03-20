@@ -42,6 +42,12 @@ class AuthManager {
                     hasTemporaryPassword: userData.hasTemporaryPassword,
                     passwordChanged: userData.passwordChanged 
                 });
+
+                // Prevent archived/deactivated accounts from logging in
+                if (userData.archived || userData.isActive === false) {
+                    await firebaseAuth.signOut();
+                    throw new Error('This account has been deactivated. Please contact your landlord.');
+                }
                 
                 // Role verification
                 if (userData.role !== role) {
@@ -277,6 +283,16 @@ class AuthManager {
                             role: userData.role,
                             isAdmin: userData.isAdmin
                         });
+
+                        // Prevent archived or deactivated users from remaining logged in
+                        if (userData.archived || userData.isActive === false) {
+                            console.warn('🚫 Archived/deactivated user detected; signing out');
+                            this.syncUserToDataManager(null);
+                            this.toggleAdminLink(null);
+                            await this.logout();
+                            callback(null);
+                            return;
+                        }
                         
                         // Sync to DataManager
                         this.syncUserToDataManager(userData);
@@ -307,139 +323,7 @@ class AuthManager {
         });
     }
 
-     static async login(email, password, role) {
-        try {
-            if (!window.firebaseAuth) {
-                throw new Error('Firebase Auth not initialized');
-            }
-            
-            console.log('🔄 Login process started...', { email, role });
-            
-            // Clear any existing session first
-            await firebaseAuth.signOut();
-            
-            const userCredential = await firebaseAuth.signInWithEmailAndPassword(email, password);
-            const user = userCredential.user;
-            
-            console.log('Firebase auth success, user:', user.uid);
-            
-            // Check if user exists in Firestore
-            const userDoc = await firebaseDb.collection('users').doc(user.uid).get();
-            
-            if (userDoc.exists) {
-                // Existing user - normal login
-                const userData = userDoc.data();
-                
-                console.log('📊 User login stats:', { 
-                    loginCount: userData.loginCount, 
-                    hasTemporaryPassword: userData.hasTemporaryPassword,
-                    passwordChanged: userData.passwordChanged 
-                });
-                
-                // Role verification
-                if (userData.role !== role) {
-                    await firebaseAuth.signOut();
-                    throw new Error(`This account is registered as a ${userData.role}. Please select "${userData.role}" when logging in.`);
-                }
-                
-                // Check for password change requirement
-                let requiresPasswordChange = false;
-                if (userData.role === 'tenant' && userData.hasTemporaryPassword && !userData.passwordChanged) {
-                    if (userData.loginCount === 0) {
-                        requiresPasswordChange = true;
-                        console.log('🔐 FIRST real tenant login - password change REQUIRED');
-                    } else {
-                        console.log('✅ Subsequent login - no password change required');
-                    }
-                }
-                
-                // Check admin status
-                const isAdmin = await this.checkAdminStatus(user.uid);
-                
-                // Update login count
-                const newLoginCount = (userData.loginCount || 0) + 1;
-                const updates = {
-                    loginCount: newLoginCount,
-                    lastLogin: new Date().toISOString()
-                };
-                
-                console.log('🔄 Updated login count:', newLoginCount);
-                
-                // Update the user document
-                await firebaseDb.collection('users').doc(user.uid).update(updates);
-                
-                // Prepare response with admin status
-                const responseData = {
-                    id: userDoc.id,
-                    ...userData,
-                    uid: user.uid,
-                    requiresPasswordChange: requiresPasswordChange,
-                    isAdmin: isAdmin,
-                    adminRole: isAdmin ? 'admin' : null
-                };
-                
-                // Sync to DataManager
-                this.syncUserToDataManager(responseData);
-                
-                // Toggle admin link visibility
-                this.toggleAdminLink(responseData);
-                
-                return responseData;
-                
-            } else {
-                // NEW USER - Auto-create tenant account
-                console.log('New user detected, auto-creating tenant account...');
-                
-                // Check if this email is in admin list
-                const isAdminEmail = this.adminEmails.includes(email.toLowerCase());
-                
-                // Create user data
-                const newUserData = {
-                    email: email,
-                    name: email.split('@')[0],
-                    role: isAdminEmail ? 'admin' : 'tenant', // Set role based on email
-                    createdAt: new Date().toISOString(),
-                    isActive: true,
-                    hasTemporaryPassword: true,
-                    loginCount: 1,
-                    passwordChanged: false,
-                    lastLogin: new Date().toISOString(),
-                    isAdmin: isAdminEmail // Add admin flag
-                };
-                
-                await firebaseDb.collection('users').doc(user.uid).set(newUserData);
-                
-                console.log('Auto-created account with first login, isAdmin:', isAdminEmail);
-                
-                const userResponse = {
-                    id: user.uid,
-                    ...newUserData,
-                    uid: user.uid,
-                    requiresPasswordChange: true,
-                    isAdmin: isAdminEmail,
-                    adminRole: isAdminEmail ? 'admin' : null
-                };
-                
-                // Sync to DataManager
-                this.syncUserToDataManager(userResponse);
-                
-                // Toggle admin link visibility
-                this.toggleAdminLink(userResponse);
-                
-                return userResponse;
-            }
-            
-        } catch (error) {
-            console.error('Login error details:', error);
-            this.syncUserToDataManager(null);
-            this.toggleAdminLink(null);
-            await firebaseAuth.signOut();
-            throw error;
-        }
-    }
-
-    setUser(user) {
-        this.user = user;
+     setUser(user) {        this.user = user;
         console.log('👤 DataManager user set:', user ? user.email : 'null');
         
         if (user) {

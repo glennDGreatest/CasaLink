@@ -675,10 +675,15 @@ class CasaLink {
                         <button class="btn btn-primary" id="refreshReportsBtn">
                             <i class="fas fa-sync-alt"></i> Refresh Data
                         </button>
+                        <div id="liveUpdateIndicator" class="live-update-indicator" title="Live updates enabled">Live</div>
                     </div>
                 </div>
 
-                <!-- Executive Summary (top 5 KPIs with trends) -->
+                <!-- Executive Summary (top KPIs with trends) -->
+                <div class="section-title">
+                    <i class="fas fa-tachometer-alt"></i> Executive Summary
+                </div>
+                <p class="section-description">Snapshot of key metrics – revenue, occupancy, collections, and maintenance performance – updated live as data changes.</p>
                 <div class="quick-stats-row" id="executiveSummary"></div>
 
                 <!-- ML Predictions -->
@@ -687,6 +692,7 @@ class CasaLink {
                         <i class="fas fa-crystal-ball"></i> ML Predictions
                         <span class="beta-badge">Logistic Regression</span>
                     </div>
+                    <p class="section-description">Machine-learned risk and opportunity signals based on historical tenant, payment, and maintenance behavior.</p>
                     <div class="predictive-cards-grid" id="predictionsGrid"></div>
                 </div>
 
@@ -695,12 +701,14 @@ class CasaLink {
                     <div class="section-title">
                         <i class="fas fa-chart-line"></i> Forecasts & Trends
                     </div>
+                    <p class="section-description">Heuristic forecasts derived from past trends to help you plan revenue, occupancy, and maintenance spending.</p>
                     <div class="forecast-cards-grid" id="forecastCards"></div>
                 </div>
 
                 <!-- Actionable Recommendations -->
                 <div class="recommendations-section" id="recommendationsSection">
                     <div class="section-title">Recommendations</div>
+                    <p class="section-description">Actionable suggestions derived from predictions and detected anomalies.</p>
                     <div class="recommendations-list" id="recommendationsList"></div>
                 </div>
             </div>
@@ -1250,15 +1258,17 @@ class CasaLink {
             const title = item.data?.name || item.data?.tenantName || item.data?.apartmentName || item.data?.apartmentAddress || item.originalId;
             const date = item.archivedAt ? new Date(item.archivedAt).toLocaleString() : 'Unknown';
 
+            const restoreButton = item.type === 'tenant'
+                ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.restoreArchivedItem('${item.id}')"><i class="fas fa-undo"></i> Restore</button>`
+                : `<button class="btn btn-sm btn-secondary" disabled title="Only tenant restoration is allowed in this view"><i class="fas fa-undo"></i> Restore</button>`;
+
             return `
                 <tr data-archive-id="${item.id}" data-archive-type="${item.type}">
                     <td>${typeLabel}</td>
                     <td>${title || 'N/A'}</td>
                     <td>${date}</td>
                     <td>
-                        <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.restoreArchivedItem('${item.id}')">
-                            <i class="fas fa-undo"></i> Restore
-                        </button>
+                        ${restoreButton}
                         <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); casaLink.permanentlyDeleteArchivedItem('${item.id}')">
                             <i class="fas fa-trash"></i> Delete
                         </button>
@@ -1332,6 +1342,7 @@ class CasaLink {
             await DataManager.restoreArchivedItem(archiveId);
             await this.loadArchiveData();
             await this.loadTenantsData();
+            await this.refreshUnitLayout();
             // Refresh other views if necessary
             await this.showPage(this.currentPage);
             this.showNotification('Item restored successfully', 'success');
@@ -3509,10 +3520,28 @@ class CasaLink {
     }
 
     
+    showToast(message, type = 'info') {
+        try {
+            if (typeof ToastManager !== 'undefined' && typeof ToastManager.showToast === 'function') {
+                ToastManager.showToast(message, type);
+            } else if (typeof this.showNotification === 'function') {
+                // showNotification may use 'error'/'success' categories with same style
+                this.showNotification(message, type);
+            } else if (typeof window.notificationManager !== 'undefined' && typeof window.notificationManager[type] === 'function') {
+                window.notificationManager[type](message);
+            } else {
+                console.log(`[${type.toUpperCase()}] ${message}`);
+            }
+        } catch (err) {
+            console.warn('Toast fallback failed:', err);
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+    }
+
     refreshUnitLayout() {
         console.log('🔃 Refreshing unit layout...');
         
-        ToastManager.showToast('Refreshing unit data...', 'info');
+        this.showToast('Refreshing unit data...', 'info');
         
         // Find the currently open unit layout modal
         const modal = document.querySelector('.modal-overlay .modal-content');
@@ -3527,11 +3556,11 @@ class CasaLink {
             .then(units => {
                 console.log('📊 Refreshed units:', units.length);
                 this.updateUnitLayout(units, modal.closest('.modal-overlay'));
-                ToastManager.showToast('Unit layout refreshed successfully!', 'success');
+                this.showToast('Unit layout refreshed successfully!', 'success');
             })
             .catch(error => {
                 console.error('❌ Error refreshing unit layout:', error);
-                ToastManager.showToast('Error refreshing unit data.', 'error');
+                this.showToast('Error refreshing unit data.', 'error');
             });
     }
 
@@ -7211,6 +7240,20 @@ class CasaLink {
         this.refreshReportsData();
     }
 
+    pulseLiveUpdateIndicator() {
+        const indicator = document.getElementById('liveUpdateIndicator');
+        if (!indicator || indicator.classList.contains('disabled')) return;
+        indicator.classList.add('pulse');
+        setTimeout(() => indicator.classList.remove('pulse'), 1100);
+    }
+
+    setLiveUpdateStatus(enabled) {
+        const indicator = document.getElementById('liveUpdateIndicator');
+        if (!indicator) return;
+        indicator.classList.toggle('disabled', !enabled);
+        indicator.title = enabled ? 'Live updates enabled' : 'Live updates not available';
+    }
+
     initializeReportsCharts(data = {}) {
         console.log('🎨 Initializing reports charts with data', data);
         
@@ -7228,8 +7271,12 @@ class CasaLink {
         }, 200);
     }
 
-    async refreshReportsData(period = 'last6months') {
-        console.log('🔄 Refreshing reports data with period', period);
+    async refreshReportsData(period = 'last6months', triggeredByLiveUpdate = false) {
+        console.log('🔄 Refreshing reports data with period', period, 'liveUpdate:', triggeredByLiveUpdate);
+        this.setLiveUpdateStatus(!!(window.reportsManager && window.reportsManager.realTimeActive));
+        if (triggeredByLiveUpdate) {
+            this.pulseLiveUpdateIndicator();
+        }
         const refreshBtn = document.getElementById('refreshReportsBtn');
         if (refreshBtn) {
             const originalText = refreshBtn.innerHTML;
@@ -7874,7 +7921,10 @@ class CasaLink {
                 ...t,
                 isActive: !!t.isActive,
                 status: (t.status || 'unverified').toString().toLowerCase()
-            }));
+            }))
+            // Filter to only active accounts in Tenant Management table
+            .filter(t => t.isActive === true);
+
             // sort tenants by creation date (most recent first)
             tenants = tenants.sort((a, b) => {
                 const da = new Date(a.updatedAt || a.createdAt || 0);
@@ -8404,11 +8454,8 @@ class CasaLink {
                                 </td>
                                 <td>
                                     <div class="action-buttons">
-                                        <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.editTenant('${tenant.id}')">
-                                            <i class="fas fa-edit"></i>
-                                        </button>
-                                        <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.sendMessage('${tenant.id}')">
-                                            <i class="fas fa-envelope"></i>
+                                        <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.viewTenant('${tenant.id}')">
+                                            <i class="fas fa-eye"></i>
                                         </button>
                                         <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); casaLink.deleteTenant('${tenant.id}')">
                                             <i class="fas fa-trash"></i>
@@ -20762,19 +20809,21 @@ class CasaLink {
     }
 
     async deleteTenant(tenantId) {
-        if (!confirm('Are you sure you want to delete this tenant? This action will archive the tenant and associated leases.')) {
+        if (!confirm('Are you sure you want to delete this tenant? This will mark their lease as archived, free up the room, and hide them from the tenant list.')) {
             return;
         }
 
         try {
+            // Archive tenant record + related leases (will also free up the room)
             await DataManager.archiveTenant(tenantId, { reason: 'deleted by landlord' });
-            showNotification('Tenant archived successfully', 'success');
+
+            showNotification('Tenant removed and lease archived successfully', 'success');
             if (this.currentPage === 'tenants') {
                 await this.loadTenantsData();
             }
         } catch (error) {
-            console.error('Error archiving tenant:', error);
-            showNotification('Error archiving tenant', 'error');
+            console.error('Error deleting tenant:', error);
+            showNotification('Failed to remove tenant. Please try again.', 'error');
         }
     }
 

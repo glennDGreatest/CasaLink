@@ -1212,15 +1212,10 @@ window.PropertiesController = class PropertiesController {
 
             // Populate maintenance tab on tab switch
 
-            // Populate tenants tab
+            // Populate tenants tab (only active tenants)
             const tenants = await this.fetchPropertyTenants(propertyId, property);
             if (loadToken !== this._propertyDetailsModalLoadToken) return;
             await this.populateTenantsTab(tenants);
-
-            // Populate activity tab
-            const activities = await this.fetchPropertyActivity(propertyId);
-            if (loadToken !== this._propertyDetailsModalLoadToken) return;
-            await this.populateActivityTab(activities);
 
             // Setup tab switching
             this.setupPropertyDetailsTabs();
@@ -1340,17 +1335,19 @@ window.PropertiesController = class PropertiesController {
             const snapshot = await tenantQuery.get();
             tenants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-            // Filter by property linkage (prefer apartmentId)
+            // Filter by active status and property linkage (prefer apartmentId)
             const propertyAddress = propertyObj.apartmentAddress || propertyObj.address || '';
-            return tenants.filter(t => {
-                if (t.apartmentId && propertyId) {
-                    return t.apartmentId === propertyId;
-                }
-                if (propertyAddress) {
-                    return t.apartmentAddress === propertyAddress || t.rentalAddress === propertyAddress;
-                }
-                return false;
-            });
+            return tenants
+                .filter(t => t.isActive === true && !t.archived)
+                .filter(t => {
+                    if (t.apartmentId && propertyId) {
+                        return t.apartmentId === propertyId;
+                    }
+                    if (propertyAddress) {
+                        return t.apartmentAddress === propertyAddress || t.rentalAddress === propertyAddress;
+                    }
+                    return false;
+                });
         } catch (error) {
             console.error('Error fetching property tenants:', error);
             return [];
@@ -1515,7 +1512,11 @@ window.PropertiesController = class PropertiesController {
                 try {
                     const tenantDoc = await window.firebaseDb.collection('users').doc(tenantId).get();
                     if (tenantDoc.exists) {
-                        tenants.push({ id: tenantId, ...tenantDoc.data() });
+                        const tenantData = tenantDoc.data();
+                        // Only include active unarchived tenants
+                        if (tenantData && tenantData.isActive === true && !tenantData.archived) {
+                            tenants.push({ id: tenantId, ...tenantData });
+                        }
                     }
                 } catch (e) {
                     console.warn('Error fetching tenant:', e);
