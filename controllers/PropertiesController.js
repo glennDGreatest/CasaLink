@@ -703,7 +703,8 @@ class PropertiesController {
             }
 
             // populate tabs (units, maintenance, tenants, activity)
-            await this._populatePropertyDetailsTabs(propertyId, units, maintenanceRequests);
+            // pass the full property object so tab population can match by name/address
+            await this._populatePropertyDetailsTabs(propertyId, units, maintenanceRequests, property);
 
             // tab switching helper
             this._setupPropertyDetailsTabs();
@@ -1060,7 +1061,7 @@ class PropertiesController {
      * @param {Array} units
      * @param {Array} maintenanceRequests
      */
-    async _populatePropertyDetailsTabs(propertyId, units, maintenanceRequests) {
+    async _populatePropertyDetailsTabs(propertyId, units, maintenanceRequests, property) {
         // units tab
         const unitsList = document.getElementById('unitsList');
         if (unitsList) {
@@ -1110,23 +1111,121 @@ class PropertiesController {
         // tenants tab
         // Use the users collection (role=tenant + apartmentId matches) so the activity tab can easily filter by tenant IDs.
         let tenants = [];
-        try {
-            if (this.service.getPropertyTenants) {
-                tenants = await this.service.getPropertyTenants(propertyId);
-            } else if (window.firebaseDb) {
-                const snapshot = await window.firebaseDb
-                    .collection('users')
-                    .where('role', '==', 'tenant')
-                    .where('apartmentId', '==', propertyId)
-                    .where('isActive', '==', true)
-                    .where('archived', '==', false)
-                    .get();
+            try {
+                if (this.service.getPropertyTenants) {
+                    tenants = await this.service.getPropertyTenants(propertyId);
+                } else if (window.DataManager && typeof window.DataManager.getTenantsForLandlord === 'function') {
+                    // prefer DataManager helper when available
+                    const landlordId = this.currentUser?.uid || this.currentUser?.id;
+                    const allTenants = await window.DataManager.getTenantsForLandlord(landlordId);
+                    tenants = (allTenants || []).filter(t => {
+                        if (!t) return false;
+                        // treat missing isActive as active, exclude archived
+                        if (t.archived === true) return false;
+                        if (t.isActive === false) return false;
+                        // match by common fields
+                        if (t.apartmentId === propertyId || t.propertyId === propertyId) return true;
+                        if (t.apartment === propertyId || t.apartmentName === propertyId) return true;
+                        // also allow matching by stored apartment name/address when available
+                        if (t.apartmentName && property && (t.apartmentName === property.apartmentName || t.apartmentName === property.name)) return true;
+                        if (t.apartmentAddress && property && (t.apartmentAddress === property.apartmentAddress || t.apartmentAddress === property.address)) return true;
+                        return false;
+                    });
+                } else if (window.firebaseDb) {
+                    // Firestore composite/index issues can cause strict chained where() queries
+                    // to miss records. Query by role and filter client-side for robustness.
+                    const snapshot = await window.firebaseDb
+                        .collection('users')
+                        .where('role', '==', 'tenant')
+                        .get();
 
-                tenants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            }
+                    tenants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                    // client-side filter: treat missing isActive as active, exclude archived
+                    tenants = tenants.filter(t => {
+                        if (!t) return false;
+                        if (t.archived === true) return false;
+                        if (t.isActive === false) return false;
+
+                        // direct id references
+                        if (t.apartmentId === propertyId || t.propertyId === propertyId) return true;
+
+                        // common alternate fields (some tenants store apartment name/address)
+                        if (t.apartmentName && property && (t.apartmentName === property.apartmentName || t.apartmentName === property.name)) return true;
+                        if (t.apartmentAddress && property && (t.apartmentAddress === property.apartmentAddress || t.apartmentAddress === property.address)) return true;
+
+                        // fallback: match by unit/room number if both present
+                        if (t.roomNumber && Array.isArray(units) && units.some(u => u.roomNumber && u.roomNumber === t.roomNumber && (u.propertyId === propertyId || u.apartmentId === propertyId))) return true;
+
+                        return false;
+                    });
+                }
 
             const tenantsList = document.getElementById('tenantsList');
             if (tenantsList) {
+                // Fallback: if no tenants found in `users`, try leases (some flows write tenants to `leases`/`tenants` first)
+                if ((!tenants || tenants.length === 0) && window.firebaseDb) {
+                    try {
+                        const leaseQueries = [
+                            { field: 'propertyId', value: propertyId },
+                            { field: 'apartmentId', value: propertyId },
+                            { field: 'rentalPropertyId', value: propertyId }
+                        ];
+
+                        let leaseDocs = [];
+                        for (const q of leaseQueries) {
+                            if (!q.value) continue;
+                            const snap = await window.firebaseDb.collection('leases')
+                                .where(q.field, '==', q.value)
+                                .where('isActive', '==', true)
+                                .where('archived', '==', false)
+                                .get();
+                            if (!snap.empty) {
+                                leaseDocs = leaseDocs.concat(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                            }
+                        }
+
+                        // Deduplicate leases by tenantId
+                        const seenTenantIds = new Set();
+                        const leaseTenants = [];
+                        for (const l of leaseDocs) {
+                            const tid = l.tenantId || l.tenant || null;
+                            if (!tid || seenTenantIds.has(tid)) continue;
+                            seenTenantIds.add(tid);
+
+                            // Try to get user doc for richer info
+                            let userObj = null;
+                            try {
+                                const udoc = await window.firebaseDb.collection('users').doc(tid).get();
+                                if (udoc.exists) userObj = { id: udoc.id, ...udoc.data() };
+                            } catch (uErr) {
+                                console.warn('Could not read user for tenantId', tid, uErr);
+                            }
+
+                            if (userObj && userObj.archived !== true && userObj.isActive !== false) {
+                                leaseTenants.push(userObj);
+                            } else {
+                                // synthesize a minimal tenant object from lease
+                                leaseTenants.push({
+                                    id: tid,
+                                    name: l.tenantName || l.tenant || (userObj && userObj.name) || 'Tenant',
+                                    email: l.tenantEmail || (userObj && userObj.email) || '',
+                                    phone: l.tenantPhone || (userObj && userObj.phone) || '',
+                                    roomNumber: l.roomNumber || '',
+                                    occupation: (userObj && userObj.occupation) || '',
+                                    age: (userObj && userObj.age) || null
+                                });
+                            }
+                        }
+
+                        if (leaseTenants.length) {
+                            tenants = leaseTenants;
+                        }
+                    } catch (leaseErr) {
+                        console.warn('Error fetching leases fallback for tenants tab:', leaseErr);
+                    }
+                }
+
                 if (!tenants || tenants.length === 0) {
                     tenantsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No active tenants</p>';
                 } else {

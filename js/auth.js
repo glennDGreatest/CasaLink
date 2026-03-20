@@ -602,39 +602,52 @@ class AuthManager {
                 email: tenantData.email,
                 name: tenantData.name,
                 role: 'tenant',
-                
+
                 // Contact Info
                 phone: tenantData.phone || '',
                 occupation: tenantData.occupation || '',
                 age: tenantData.age || 0,
-                
+
                 // Landlord Relationship
                 landlordId: landlordId,
                 createdBy: landlordEmail,
-                
+
                 // Property Information
                 roomNumber: tenantData.roomNumber || '',
                 apartmentAddress: tenantData.rentalAddress || 'Lot 22 Zarate Compound Purok 4, Bakakent Norte, Baguio City',
-                
+                apartmentId: tenantData.apartmentId || null,
+                apartmentName: tenantData.apartmentName || (tenantData.apartment || ''),
+
                 // Room occupancy
                 roomMembers: [tenantData.name],
                 totalRoomMembers: 1,
-                
+
+                // Lease pointers (will be populated when lease is created)
+                leaseId: null,
+                currentLease: null,
+
+                // Archived / restore metadata
+                archived: false,
+                archivedAt: null,
+                archivedBy: null,
+                restoredAt: null,
+                restoredBy: null,
+
                 // Authentication & Security
                 hasTemporaryPassword: true,
                 temporaryPassword: temporaryPassword,
                 passwordCreatedAt: new Date().toISOString(),
-                
+
                 // Login Tracking
                 loginCount: 0,
                 passwordChanged: false,
                 requiresPasswordChange: true,
                 lastLogin: null,
-                
+
                 // Timestamps
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
-                
+
                 // Status
                 isActive: true,
                 status: 'unverified'

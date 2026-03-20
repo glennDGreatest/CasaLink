@@ -1335,19 +1335,58 @@ window.PropertiesController = class PropertiesController {
             const snapshot = await tenantQuery.get();
             tenants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-            // Filter by active status and property linkage (prefer apartmentId)
+            // Filter by active status
+            const activeTenants = tenants.filter(t => t.isActive === true && !t.archived);
+
+            // First, get tenants that have apartmentId or address matching
             const propertyAddress = propertyObj.apartmentAddress || propertyObj.address || '';
-            return tenants
-                .filter(t => t.isActive === true && !t.archived)
-                .filter(t => {
-                    if (t.apartmentId && propertyId) {
-                        return t.apartmentId === propertyId;
+            let propertyTenants = activeTenants.filter(t => {
+                if (t.apartmentId && propertyId) {
+                    return t.apartmentId === propertyId;
+                }
+                if (propertyAddress) {
+                    return t.apartmentAddress === propertyAddress || t.rentalAddress === propertyAddress;
+                }
+                return false;
+            });
+
+            // Also include tenants that have active leases for this property
+            try {
+                const leaseQuery = window.firebaseDb.collection('leases')
+                    .where('landlordId', '==', this.currentUser.uid)
+                    .where('isActive', '==', true);
+
+                const leaseSnapshot = await leaseQuery.get();
+                const leases = leaseSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                const leasedTenants = leases
+                    .filter(lease => {
+                        if (lease.apartmentId && propertyId) {
+                            return lease.apartmentId === propertyId;
+                        }
+                        if (propertyAddress) {
+                            return lease.apartmentAddress === propertyAddress || lease.rentalAddress === propertyAddress;
+                        }
+                        return false;
+                    })
+                    .map(lease => lease.tenantId)
+                    .filter(tenantId => tenantId); // Remove null/undefined
+
+                // Add tenants from leases that weren't already included
+                for (const tenantId of leasedTenants) {
+                    if (!propertyTenants.some(t => t.id === tenantId)) {
+                        const tenant = activeTenants.find(t => t.id === tenantId);
+                        if (tenant) {
+                            propertyTenants.push(tenant);
+                        }
                     }
-                    if (propertyAddress) {
-                        return t.apartmentAddress === propertyAddress || t.rentalAddress === propertyAddress;
-                    }
-                    return false;
-                });
+                }
+            } catch (leaseError) {
+                console.warn('Error fetching tenants from leases:', leaseError);
+                // Continue with tenants found by apartmentId/address
+            }
+
+            return propertyTenants;
         } catch (error) {
             console.error('Error fetching property tenants:', error);
             return [];
@@ -1713,6 +1752,15 @@ window.PropertiesController = class PropertiesController {
                         const maintenance = await this.fetchPropertyMaintenance(this.currentPropertyId, this.currentProperty);
                         if (tabLoadToken !== this._propertyDetailsModalLoadToken) return;
                         await this.populateMaintenanceTab(maintenance, tabLoadToken);
+                    })();
+                }
+                if (tabName === 'tenants') {
+                    console.log('👥 Tenants tab clicked for property:', this.currentPropertyId);
+                    const tabLoadToken = this._propertyDetailsModalLoadToken;
+                    (async () => {
+                        const tenants = await this.fetchPropertyTenants(this.currentPropertyId, this.currentProperty);
+                        if (tabLoadToken !== this._propertyDetailsModalLoadToken) return;
+                        await this.populateTenantsTab(tenants);
                     })();
                 }
             });

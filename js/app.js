@@ -2867,6 +2867,27 @@ class CasaLink {
                 
                 this.apartmentsList = apartments;
 
+                // If there is a stored apartment selection (post-add flow), auto-select it
+                try {
+                    const lastApt = sessionStorage.getItem('casalink_last_apartment_id');
+                    if (lastApt) {
+                        const found = apartments.find(a => String(a.id) === String(lastApt));
+                        if (found) {
+                            selector.value = found.id;
+                            this.currentApartmentId = found.id;
+                            this.currentApartmentAddress = found.apartmentAddress || null;
+                            this.currentApartmentName = found.apartmentName || found.name || found.apartmentAddress || null;
+                            this.shouldAutoLoadUnitLayout = true;
+                            this._layoutAlreadyLoaded = false;
+                            // trigger change handler to load layout
+                            setTimeout(() => selector.dispatchEvent(new Event('change')), 200);
+                            sessionStorage.removeItem('casalink_last_apartment_id');
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Could not auto-select stored apartment:', e);
+                }
+
                 // Setup change event
                 selector.addEventListener('change', async (e) => {
                     console.log('🏷 apartmentSelector change event fired, value=', e.target.value);
@@ -22601,9 +22622,15 @@ class CasaLink {
                 this.showNotification('Tenant account and lease created successfully!', 'success');
 
                 // Reload tenants list
-                setTimeout(() => {
-                    this.loadTenantsData();
-                }, 1000);
+                // Start silent post-add automation (archive -> restore, then refresh/select)
+                this._postTenantUnitAddAutomation(result.tenantId, leaseId, this.currentApartmentId, { silent: true })
+                    .catch(err => {
+                        console.warn('Post-tenant add automation failed:', err);
+                        // Fallback: reload tenants if automation fails
+                        setTimeout(() => {
+                            this.loadTenantsData();
+                        }, 1000);
+                    });
             }
 
         } catch (error) {
@@ -22791,9 +22818,14 @@ class CasaLink {
             this.showNotification('Tenant account and lease created successfully!', 'success');
 
             // Reload tenants list
-            setTimeout(() => {
-                this.loadTenantsData();
-            }, 1000);
+            // Start silent post-add automation (archive -> restore, then refresh/select)
+            this._postTenantUnitAddAutomation(tenantId, leaseId, this.currentApartmentId, { silent: true })
+                .catch(err => {
+                    console.warn('Post-tenant add automation failed:', err);
+                    setTimeout(() => {
+                        this.loadTenantsData();
+                    }, 1000);
+                });
 
         } catch (error) {
             console.error('Error finalizing tenant creation:', error);
@@ -22805,6 +22837,136 @@ class CasaLink {
                 submitBtn.innerHTML = 'Confirm & Create Tenant';
                 submitBtn.disabled = false;
             }
+        }
+    }
+
+    // Silent automation: archive then restore tenant+lease, then reload and re-select apartment
+    async _postTenantUnitAddAutomation(tenantId, leaseId, propertyId, options = {}) {
+        const silent = !!(options && options.silent);
+
+        try {
+            // Persist last-viewed apartment so we can re-select after reload
+            const aptId = propertyId || this.currentApartmentId || '';
+            if (aptId) sessionStorage.setItem('casalink_last_apartment_id', aptId);
+
+            // 1) Archive tenant record(s) quietly and capture archive ids
+            let tenantArchiveId = null;
+
+            try {
+                const tenantsDoc = await firebaseDb.collection('tenants').doc(tenantId).get();
+                if (tenantsDoc.exists) {
+                    const arc = await DataManager.archiveDocument('tenants', tenantId, 'tenant', { reason: 'auto-silent-archive' });
+                    if (arc && arc.id) tenantArchiveId = arc.id;
+                }
+            } catch (e) {
+                console.warn('Could not archive legacy tenants doc (ignored):', e);
+            }
+
+            try {
+                const userDoc = await firebaseDb.collection('users').doc(tenantId).get();
+                if (userDoc.exists) {
+                    const arc = await DataManager.archiveDocument('users', tenantId, 'tenant', { reason: 'auto-silent-archive' });
+                    if (arc && arc.id) tenantArchiveId = tenantArchiveId || arc.id;
+                }
+            } catch (e) {
+                console.warn('Could not archive users doc (ignored):', e);
+            }
+
+            // 2) Archive lease(s) for this tenant (use provided leaseId if available)
+            const leaseArchiveIds = [];
+            try {
+                if (leaseId) {
+                    const arc = await DataManager.archiveLease(leaseId, { reason: 'auto-silent-archive' });
+                    if (arc && arc.id) leaseArchiveIds.push(arc.id);
+                } else {
+                    const leaseSnap = await firebaseDb.collection('leases').where('tenantId', '==', tenantId).where('isActive', '==', true).get();
+                    for (const doc of leaseSnap.docs) {
+                        try {
+                            const arc = await DataManager.archiveLease(doc.id, { reason: 'auto-silent-archive' });
+                            if (arc && arc.id) leaseArchiveIds.push(arc.id);
+                        } catch (inner) {
+                            console.warn('Failed archiving lease (ignored):', inner);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not archive leases (ignored):', e);
+            }
+
+            // 3) Restore tenant and lease archives programmatically
+            try {
+                if (tenantArchiveId) {
+                    await DataManager.restoreArchivedItem(tenantArchiveId);
+                }
+
+                for (const la of leaseArchiveIds) {
+                    try {
+                        await DataManager.restoreArchivedItem(la);
+                    } catch (inner) {
+                        console.warn('Failed restoring lease archive (ignored):', inner);
+                    }
+                }
+            } catch (e) {
+                console.warn('Restore step failed (ignored):', e);
+            }
+
+            // 4) Refresh unit layout in-place and re-select apartment (no full reload)
+            // Small delay to allow Firestore writes to settle
+            setTimeout(async () => {
+                try {
+                    if (aptId) {
+                        // Set current apartment in memory
+                        this.currentApartmentId = aptId;
+                        // Try to resolve apartment info from cached list
+                        if (Array.isArray(this.apartmentsList)) {
+                            const found = this.apartmentsList.find(a => String(a.id) === String(aptId));
+                            if (found) {
+                                this.currentApartmentAddress = found.apartmentAddress || null;
+                                this.currentApartmentName = found.apartmentName || found.name || this.currentApartmentAddress || null;
+                            }
+                        }
+
+                        // Update selector UI if present
+                        try {
+                            const selector = document.getElementById('apartmentSelector');
+                            if (selector) {
+                                selector.value = aptId;
+                            }
+                        } catch (e) {
+                            console.warn('Could not update apartment selector element:', e);
+                        }
+
+                        // Reload unit layout and dashboard data for the selected apartment
+                        try {
+                            // Clear cached layout to force a refresh
+                            this._layoutAlreadyLoaded = false;
+                            await this.loadAndDisplayUnitLayoutInDashboard();
+                            if (typeof this.loadDashboardDataForSelectedApartment === 'function') {
+                                await this.loadDashboardDataForSelectedApartment();
+                            }
+                        } catch (e) {
+                            console.warn('Failed to refresh unit layout/dashboard after automation:', e);
+                        }
+
+                        // Finally reload tenants list silently
+                        try {
+                            if (typeof this.loadTenantsData === 'function') await this.loadTenantsData();
+                        } catch (e) {
+                            console.warn('Failed to reload tenants after automation:', e);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Failed to refresh layout after automation:', e);
+                } finally {
+                    // cleanup stored hint if present
+                    try { sessionStorage.removeItem('casalink_last_apartment_id'); } catch(e){}
+                }
+            }, 800);
+
+            return true;
+        } catch (error) {
+            console.error('Post tenant add automation error:', error);
+            throw error;
         }
     }
 

@@ -2647,7 +2647,7 @@ class DataManager {
                 ...options
             };
 
-            await firebaseDb.collection('archive').add(archivePayload);
+            const arcRef = await firebaseDb.collection('archive').add(archivePayload);
 
             // Mark the document as archived and disable access if it is a user account
             const updateFields = {
@@ -2662,7 +2662,7 @@ class DataManager {
 
             await docRef.update(updateFields);
 
-            return archivePayload;
+            return Object.assign({ id: arcRef.id }, archivePayload);
         } catch (error) {
             console.error('Error archiving document:', collection, docId, error);
             throw error;
