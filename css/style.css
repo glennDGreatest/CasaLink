@@ -292,6 +292,111 @@
     margin-top: 0.5rem;
 }
 
+/* Tenant churn list styling */
+.churn-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.churn-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    background: #fff;
+    border-radius: 8px;
+    border: 1px solid rgba(16,24,40,0.04);
+}
+.churn-item .churn-left, .churn-item .churn-right {
+    display: flex;
+    align-items: center;
+}
+.churn-item {
+    justify-content: space-between;
+}
+.churn-left {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+}
+.churn-name {
+    font-weight: 700;
+    color: #1f2937;
+    font-size: 0.95rem;
+}
+.churn-meta {
+    font-size: 0.82rem;
+    color: #6b7280;
+    margin-top: 4px;
+}
+.churn-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    margin-left: 12px;
+}
+.churn-probability {
+    font-weight: 800;
+    color: #111827;
+    background: #f3f4f6;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 0.9rem;
+}
+.churn-risk {
+    font-size: 0.75rem;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+.churn-risk.high { background:#fff5f5; color:#c62626; }
+.churn-risk.medium { background:#fffaf0; color:#b45309; }
+.churn-risk.low { background:#f0fdf4; color:#187b2e; }
+.churn-reason {
+    font-size: 0.85rem;
+    color: #374151;
+    margin-top: 6px;
+}
+
+@media (min-width: 720px) {
+    .churn-item { flex-direction: row; align-items: center; }
+    .churn-reason { margin-top: 0; margin-left: 16px; flex: 1 1 40%; }
+}
+
+/* Rent Optimization list styling */
+.rent-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.rent-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    background: #fff;
+    border-radius: 8px;
+    border: 1px solid rgba(16,24,40,0.04);
+}
+.rent-left { display:flex; flex-direction:column; }
+.rent-unit { font-weight:700; color:#111827; font-size:0.95rem; }
+.rent-meta { font-size:0.82rem; color:#6b7280; margin-top:4px; }
+.rent-right { display:flex; flex-direction:column; align-items:flex-end; gap:6px; margin-left:12px; }
+.rent-probability { font-weight:800; background:#f3f4f6; padding:6px 10px; border-radius:999px; }
+.rent-action { font-size:0.85rem; color:#374151; }
+
+.rent-reason { color: #555; font-size: 0.85rem; margin: 6px 0 0 8px; }
+.rent-cta { margin-top: 8px; display:flex; justify-content:flex-end; }
+.rent-cta .btn { padding: 6px 8px; font-size: 0.85rem; }
+.rent-details { color: #374151; font-size: 0.85rem; margin-top: 6px; }
+
+@media (min-width:720px) {
+    .rent-item { flex-direction:row; align-items:center; }
+    .rent-action { margin-left:16px; }
+}
+
 .recommendation-card {
     grid-column: span 2;
 }

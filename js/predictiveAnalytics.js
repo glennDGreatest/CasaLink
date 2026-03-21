@@ -599,6 +599,29 @@ class PredictiveAnalytics {
             meta.push({ unit: u.id || u.roomNumber, address: u.apartmentAddress || u.apartmentName || '' , currentRent: rent, marketRent: market });
         });
 
+        // If model isn't available (e.g. too few units or training failed), use a simple heuristic
+        if (!this.rentUnderMarketModel) {
+            try {
+                const fallback = meta.map(m => {
+                    const market = Number(m.marketRent || 0) || 0;
+                    const current = Number(m.currentRent || 0) || 0;
+                    const diff = market - current;
+                    const probNorm = market > 0 ? Math.min(1, Math.max(0, diff / market)) : 0;
+                    return {
+                        unit: m.unit,
+                        address: m.address || '',
+                        probability: Math.round(probNorm * 100),
+                        suggestedIncrease: Math.max(0, Math.round(diff)),
+                        riskLevel: this.getRiskLabel(probNorm)
+                    };
+                }).filter(r => r.probability > 20).sort((a, b) => b.probability - a.probability);
+                return fallback;
+            } catch (e) {
+                console.warn('Fallback rent heuristic failed', e);
+                return [];
+            }
+        }
+
         const input = tf.tensor2d(features);
         const output = this.rentUnderMarketModel.predict(input);
         const probs = Array.from(await output.data());

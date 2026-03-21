@@ -139,6 +139,18 @@ class CasaLink {
         });
     }
 
+    // Utility: escape HTML to safely inject small pieces of content
+    escapeHtml(str) {
+        if (str === null || str === undefined) return '';
+        const s = (typeof str === 'string') ? str : String(str);
+        return s
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     
     addDebugTools() {
         // Only add in development or if there are issues
@@ -702,7 +714,18 @@ class CasaLink {
                         <i class="fas fa-chart-line"></i> Forecasts & Trends
                     </div>
                     <p class="section-description">Heuristic forecasts derived from past trends to help you plan revenue, occupancy, and maintenance spending.</p>
-                    <div class="forecast-cards-grid" id="forecastCards"></div>
+                    <div class="forecast-overview">
+                        <div class="chart-card small">
+                            <div class="chart-header"><h4>Revenue Forecast</h4></div>
+                            <div class="chart-header-desc" style="margin-top:6px;">
+                                <small style="color:var(--gray-700);">Estimated next-month revenue based on recent collections, seasonality, and detected trends. Use this to plan cashflow and budgeting.</small>
+                            </div>
+                            <div class="chart-container" style="height:160px;">
+                                <canvas id="revenueForecastChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="forecast-cards-grid" id="forecastCards"></div>
+                    </div>
                 </div>
 
                 <!-- Actionable Recommendations -->
@@ -1406,6 +1429,32 @@ class CasaLink {
                 // When the Maintenance tab is selected, load it from Firestore
                 if (tabName === 'maintenance') {
                     this.loadPropertyMaintenanceForDetailsModal();
+                }
+                return;
+            }
+
+            // View Property CTA from Rent Optimization cards
+            const viewPropBtn = e.target.closest('.view-property-btn');
+            if (viewPropBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const aptId = viewPropBtn.getAttribute('data-apartment-id') || viewPropBtn.dataset.apartmentId;
+                if (aptId) {
+                    try {
+                        if (window.propertiesController && typeof window.propertiesController.viewProperty === 'function') {
+                            window.propertiesController.viewProperty(aptId);
+                        } else if (window.PropertiesController && typeof window.PropertiesController === 'function' && window.propertiesController) {
+                            window.propertiesController.viewProperty(aptId);
+                        } else {
+                            console.warn('Properties controller not available to open property:', aptId);
+                            // Fallback: navigate to property detail route
+                            window.location.hash = `#property/${aptId}`;
+                        }
+                    } catch (err) {
+                        console.error('Error opening property from Rent Optimization CTA:', err);
+                    }
+                } else {
+                    console.warn('No apartment id associated with View Property button');
                 }
                 return;
             }
@@ -7332,6 +7381,20 @@ class CasaLink {
                 predictiveData
             };
 
+            // Initialize prediction charts (small cards + forecast chart)
+            try {
+                if (window.chartsManager) {
+                    // create or reuse global PredictionCharts helper
+                    if (!window.predictionCharts) {
+                        window.predictionCharts = new PredictionCharts(window.chartsManager);
+                    }
+                    // initialize charts for predictions/forecasts (non-blocking)
+                    window.predictionCharts.initializePredictionCharts(predictiveData).catch(e => console.warn('PredictionCharts init failed', e));
+                }
+            } catch (e) {
+                console.warn('Could not initialize prediction charts:', e);
+            }
+
             // update UI
             this.populateExecutiveSummary(quickMetrics);
             this.populatePredictions(predictiveData);
@@ -7403,17 +7466,203 @@ class CasaLink {
             grid.appendChild(card);
         };
 
-        // Tenant Churn Risk
-        const churnRows = (data.tenantChurn || []).slice(0, 5).map(t => {
-            return `<div><strong>${t.tenant || t.unit || 'Unknown'}</strong>: ${t.probability}% (${t.riskLevel || ''})${t.reason ? ` – ${t.reason}` : ''}</div>`;
-        }).join('');
-        addCard('Tenant Churn Risk', 'fas fa-user-clock', churnRows || '<div>No churn data available</div>', 'Predicts tenants likely to leave so you can proactively retain them.', 'Logistic regression using payment history, maintenance frequency, lease length and engagement signals to estimate churn probability.');
+        // Tenant Churn Risk (store full list as data-items so pagination helper can render it)
+        const churnList = data.tenantChurn || [];
+        const churnWrapperHtml = churnList.length === 0
+            ? '<div>No churn data available</div>'
+            : `<div class="churn-list-wrapper paginated-list" data-items="${encodeURIComponent(JSON.stringify(churnList))}"></div>`;
 
-        // Rent Optimization
-        const rentRows = (data.rentOptimization || []).slice(0, 5).map(r => {
-            return `<div><strong>${r.unit}</strong>: ${r.probability}% risk - ${r.suggestedIncrease ? `Increase by ₱${r.suggestedIncrease}` : 'Market rate'}</div>`;
-        }).join('');
-        addCard('Rent Optimization', 'fas fa-dollar-sign', rentRows || '<div>No under-market units detected</div>', 'Suggests rent adjustments to maximize revenue while reducing churn.', 'Compares unit rent to local market median and demand trends; suggests adjustments using elasticity heuristics.');
+        addCard('Tenant Churn Risk', 'fas fa-user-clock', churnWrapperHtml, 'Predicts tenants likely to leave so you can proactively retain them.', 'Logistic regression using payment history, maintenance frequency, lease length and engagement signals to estimate churn probability.');
+
+        // Enrich churn items with apartment names/addresses asynchronously
+        (async () => {
+            try {
+                const landlordId = (this.currentUser && this.currentUser.uid) || (window.casaLink && window.casaLink.currentUser && window.casaLink.currentUser.uid) || null;
+                if (!landlordId) return;
+                const dm = (window.DataManager || DataManager);
+                if (!dm) return;
+
+                const [units, apartments] = await Promise.all([
+                    dm.getLandlordUnits(landlordId).catch(() => []),
+                    dm.getLandlordApartments(landlordId).catch(() => [])
+                ]);
+
+                const unitsByNumber = {};
+                const unitsById = {};
+                (units || []).forEach(u => {
+                    if (u.unitNumber) unitsByNumber[String(u.unitNumber).toLowerCase()] = u;
+                    if (u.roomNumber) unitsByNumber[String(u.roomNumber).toLowerCase()] = u;
+                    if (u.id) unitsById[String(u.id)] = u;
+                });
+
+                const apartmentsById = {};
+                (apartments || []).forEach(a => {
+                    const id = a.id || a.apartmentId || a._id;
+                    if (id) apartmentsById[String(id)] = a;
+                });
+
+                const card = Array.from(document.querySelectorAll('.predictive-card')).find(c => c.querySelector('h4') && c.querySelector('h4').textContent.trim() === 'Tenant Churn Risk');
+                if (!card) return;
+                const items = card.querySelectorAll('.churn-item');
+                items.forEach(item => {
+                    try {
+                        const roomLabel = item.querySelector('.churn-meta')?.textContent || '';
+                        // attempt to detect unit or tenant id stored in dataset attributes
+                        const unitAttr = (item.getAttribute('data-unit') || '').toLowerCase();
+                        const unitIdAttr = item.getAttribute('data-unit-id') || '';
+                        const tenantIdAttr = item.getAttribute('data-tenant-id') || '';
+
+                        let unitObj = null;
+                        if (unitIdAttr && unitsById[unitIdAttr]) unitObj = unitsById[unitIdAttr];
+                        if (!unitObj && unitAttr && unitsByNumber[unitAttr]) unitObj = unitsByNumber[unitAttr];
+
+                        let aptName = '';
+                        if (unitObj) {
+                            aptName = unitObj.apartmentAddress || unitObj.apartmentName || unitObj.apartment || unitObj.property || '';
+                            if (!aptName && unitObj.apartmentId && apartmentsById[unitObj.apartmentId]) {
+                                const a = apartmentsById[unitObj.apartmentId];
+                                aptName = a.apartmentName || a.apartmentAddress || a.name || '';
+                            }
+                        }
+
+                        if (!aptName && tenantIdAttr) {
+                            const allUnits = Object.assign({}, unitsById, unitsByNumber);
+                            const match = Object.values(allUnits).find(u => String(u.occupiedBy || '').toLowerCase() === String(tenantIdAttr).toLowerCase());
+                            if (match) aptName = match.apartmentAddress || match.apartmentName || match.apartment || match.property || '';
+                        }
+
+                        if (aptName) {
+                            const meta = item.querySelector('.churn-meta');
+                            if (meta) {
+                                // if meta already contains Room: X, preserve it
+                                const roomPart = (meta.textContent || '').split('•').pop().trim();
+                                meta.textContent = `${aptName}${aptName && roomPart ? ' • ' : ''}${roomPart}`;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Failed to enrich churn item', e);
+                    }
+                });
+            } catch (err) {
+                console.warn('Could not enrich churn list with apartment data', err);
+            }
+        })();
+
+        // Rent Optimization - store full list as data-items for paginated rendering
+        const rentList = data.rentOptimization || [];
+        const rentWrapperHtml = rentList.length === 0
+            ? '<div>No under-market units detected</div>'
+            : `<div class="rent-list-wrapper paginated-list" data-items="${encodeURIComponent(JSON.stringify(rentList))}"></div>`;
+
+        addCard('Rent Optimization', 'fas fa-dollar-sign', rentWrapperHtml || '<div>No under-market units detected</div>', 'Suggests rent adjustments to maximize revenue while reducing churn.', 'Compares unit rent to local market median and demand trends; suggests adjustments using elasticity heuristics.');
+
+        // Enrich rent items with apartment names/addresses asynchronously
+        (async () => {
+            try {
+                const landlordId = (this.currentUser && this.currentUser.uid) || (window.casaLink && window.casaLink.currentUser && window.casaLink.currentUser.uid) || null;
+                if (!landlordId) return;
+                const dm = (window.DataManager || DataManager);
+                if (!dm) return;
+
+                const [units, apartments] = await Promise.all([
+                    dm.getLandlordUnits(landlordId).catch(() => []),
+                    dm.getLandlordApartments(landlordId).catch(() => [])
+                ]);
+
+                const unitsByNumber = {};
+                const unitsById = {};
+                (units || []).forEach(u => {
+                    if (u.unitNumber) unitsByNumber[String(u.unitNumber).toLowerCase()] = u;
+                    if (u.roomNumber) unitsByNumber[String(u.roomNumber).toLowerCase()] = u;
+                    if (u.id) unitsById[String(u.id)] = u;
+                    if (u._id) unitsById[String(u._id)] = u;
+                });
+
+                const apartmentsById = {};
+                (apartments || []).forEach(a => {
+                    const id = a.id || a.apartmentId || a._id || '';
+                    if (id) apartmentsById[String(id)] = a;
+                });
+
+                const card = Array.from(document.querySelectorAll('.predictive-card')).find(c => c.querySelector('h4') && c.querySelector('h4').textContent.trim() === 'Rent Optimization');
+                if (!card) return;
+                const items = card.querySelectorAll('.rent-item');
+                items.forEach(item => {
+                    try {
+                        const aptId = item.getAttribute('data-apartment-id') || '';
+                        const rawUnit = (item.getAttribute('data-unit') || '') || '';
+                        const unitAttr = String(rawUnit).toLowerCase();
+                        let aptName = '';
+
+                        // Prefer explicit apartment name from apartments map
+                        if (aptId && apartmentsById[aptId]) {
+                            const a = apartmentsById[aptId];
+                            aptName = a.apartmentName || a.apartmentAddress || a.name || '';
+                        }
+
+                        // If unit stored is actually a unit ID, prefer unitsById lookup
+                        let unitObj = null;
+                        if (rawUnit && unitsById[rawUnit]) {
+                            unitObj = unitsById[rawUnit];
+                        } else if (unitAttr && unitsByNumber[unitAttr]) {
+                            unitObj = unitsByNumber[unitAttr];
+                        } else if (rawUnit && unitsById[unitAttr]) {
+                            unitObj = unitsById[unitAttr];
+                        }
+
+                        if (unitObj) {
+                            // if the unit display currently shows an id, replace with readable unit number
+                            const unitEl = item.querySelector('.rent-unit');
+                            if (unitEl) {
+                                const displayUnit = unitObj.unitNumber || unitObj.roomNumber || unitObj.room || unitObj.name || (unitObj.id ? unitObj.id.substring(0,8) : 'Unit');
+                                unitEl.textContent = displayUnit;
+                            }
+
+                            // derive apartment name from unit if not set
+                            if (!aptName) {
+                                aptName = unitObj.apartmentAddress || unitObj.apartmentName || unitObj.apartment || unitObj.property || '';
+                                if (!aptName && unitObj.apartmentId && apartmentsById[unitObj.apartmentId]) {
+                                    const a = apartmentsById[unitObj.apartmentId];
+                                    aptName = a.apartmentName || a.apartmentAddress || a.name || '';
+                                }
+                            }
+                        }
+
+                        // fallback: if no unitObj matched but apartment id exists, try to lookup apartment name
+                        if (!aptName && aptId && apartmentsById[aptId]) {
+                            const a = apartmentsById[aptId];
+                            aptName = a.apartmentName || a.apartmentAddress || a.name || '';
+                        }
+                        if (aptName) {
+                            const meta = item.querySelector('.rent-meta');
+                            if (meta) meta.textContent = aptName;
+                        }
+
+                        // Format and show current / market / suggested using data attributes if available
+                        try {
+                            const current = Number(item.getAttribute('data-current-rent') || 0) || 0;
+                            const market = Number(item.getAttribute('data-market-avg') || 0) || 0;
+                            const suggestedInc = Number(item.getAttribute('data-suggested-increase') || 0) || 0;
+                            const suggestedRent = Number(item.getAttribute('data-suggested-rent') || 0) || (current && suggestedInc ? current + suggestedInc : 0);
+                            const detailsEl = item.querySelector('.rent-details');
+                            if (detailsEl) {
+                                const parts = [];
+                                if (current) parts.push(`Current: ₱${current.toLocaleString()}`);
+                                if (market) parts.push(`Market: ₱${market.toLocaleString()}`);
+                                if (suggestedRent) parts.push(`Suggested: ₱${suggestedRent.toLocaleString()}`);
+                                detailsEl.textContent = parts.join(' • ');
+                            }
+                        } catch (e) {
+                            // ignore formatting errors
+                        }
+                    } catch (e) {
+                        console.warn('Failed to enrich rent item', e);
+                    }
+                });
+            } catch (err) {
+                console.warn('Could not enrich rent optimization list with apartment data', err);
+            }
+        })();
 
         // Late Payment Risk
         const lateRows = (data.latePaymentRisk || []).slice(0, 5).map(r => {
@@ -7431,6 +7680,8 @@ class CasaLink {
         const sentiment = data.tenantSentiment || { label: 'neutral', confidence: 0, score: 0 };
         addCard('Tenant Sentiment', 'fas fa-smile', `<div>${sentiment.label.toUpperCase()} (${sentiment.confidence}% confidence)</div><div>Score: ${sentiment.score}</div>`, 'Summarizes tenant feedback sentiment to surface issues and satisfaction.', 'Aggregated from tenant messages, reviews, and survey responses using simple sentiment scoring.');
 
+        // Initialize paginated lists inside predictions
+        try { if (typeof this.initPaginatedLists === 'function') this.initPaginatedLists(); } catch (e) { console.warn('Pagination init failed', e); }
         // Attach hover descriptions
         this.attachCardTooltips('predictionsGrid');
         // Attach small question-mark compute badges
@@ -7471,6 +7722,18 @@ class CasaLink {
             'Estimated next-month revenue based on historical collections and seasonality.',
             'Weighted moving average of recent monthly revenues with seasonal weighting and trend smoothing.'
         );
+        // append a mini forecast canvas into the revenue forecast card for a compact sparkline
+        try {
+            const revCard = Array.from(container.querySelectorAll('.forecast-card')).find(c => c.querySelector('h4') && c.querySelector('h4').textContent.trim() === 'Revenue Forecast');
+            if (revCard && !revCard.querySelector('#revenueForecastMiniChart')) {
+                const miniWrap = document.createElement('div');
+                miniWrap.style.marginTop = '8px';
+                miniWrap.innerHTML = `<div style="height:48px; width:160px;"><canvas id="revenueForecastMiniChart" width="160" height="48"></canvas></div>`;
+                revCard.querySelector('.forecast-content').appendChild(miniWrap);
+            }
+        } catch (e) {
+            console.warn('Failed to inject revenue forecast mini chart canvas', e);
+        }
 
         const occupancy = data.occupancyForecast || data.occupancyTrend || {};
         addCard(
@@ -7535,21 +7798,22 @@ class CasaLink {
                 document.body.appendChild(tooltip);
             }
 
-            container.querySelectorAll('.predictive-card, .forecast-card, .recommendation-item').forEach(card => {
-                const desc = card.dataset.description || card.getAttribute('title') || '';
+            // Attach to predictive/forecast cards and to compute/explain badges only
+            container.querySelectorAll('.predictive-card, .forecast-card, .compute-badge, .explain-badge').forEach(el => {
+                const desc = el.dataset.description || el.getAttribute('title') || '';
                 if (!desc) return;
 
-                card.addEventListener('mouseenter', (e) => {
+                el.addEventListener('mouseenter', (e) => {
                     tooltip.innerText = desc;
                     tooltip.style.display = 'block';
-                    const rect = card.getBoundingClientRect();
+                    const rect = el.getBoundingClientRect();
                     const top = rect.top - 10 - tooltip.offsetHeight;
                     const left = Math.min(rect.left, window.innerWidth - tooltip.offsetWidth - 10);
                     tooltip.style.top = (top > 10 ? top : rect.bottom + 10) + 'px';
                     tooltip.style.left = (left > 10 ? left : 10) + 'px';
                 });
 
-                card.addEventListener('mousemove', (e) => {
+                el.addEventListener('mousemove', (e) => {
                     // Follow cursor slightly
                     const mouseX = e.clientX;
                     const mouseY = e.clientY;
@@ -7557,7 +7821,7 @@ class CasaLink {
                     tooltip.style.left = Math.min(mouseX + 18, window.innerWidth - tooltip.offsetWidth - 10) + 'px';
                 });
 
-                card.addEventListener('mouseleave', () => {
+                el.addEventListener('mouseleave', () => {
                     tooltip.style.display = 'none';
                 });
             });
@@ -7603,6 +7867,234 @@ class CasaLink {
         }
     }
 
+    // Initialize and render paginated lists stored in data-items attributes
+    initPaginatedLists() {
+        try {
+            const pageSize = 5;
+            // Prepare enrichment maps lazily so we can replace apartment IDs with names
+            let enrichmentMapsPromise = null;
+            const getEnrichmentMaps = async () => {
+                if (enrichmentMapsPromise) return enrichmentMapsPromise;
+                enrichmentMapsPromise = (async () => {
+                    try {
+                        const landlordId = (this.currentUser && this.currentUser.uid) || (window.casaLink && window.casaLink.currentUser && window.casaLink.currentUser.uid) || (window.currentUser && window.currentUser.uid) || null;
+                        if (!landlordId) return { unitsById: {}, unitsByNumber: {}, apartmentsById: {} };
+                        const dm = (window.DataManager || DataManager) ;
+                        if (!dm) return { unitsById: {}, unitsByNumber: {}, apartmentsById: {} };
+
+                        const [units, apartments] = await Promise.all([
+                            (typeof dm.getLandlordUnits === 'function') ? dm.getLandlordUnits(landlordId).catch(() => []) : [],
+                            (typeof dm.getLandlordApartments === 'function') ? dm.getLandlordApartments(landlordId).catch(() => []) : []
+                        ]);
+
+                        const unitsByNumber = {};
+                        const unitsById = {};
+                        (units || []).forEach(u => {
+                            if (u.unitNumber) unitsByNumber[String(u.unitNumber).toLowerCase()] = u;
+                            if (u.roomNumber) unitsByNumber[String(u.roomNumber).toLowerCase()] = u;
+                            if (u.id) unitsById[String(u.id)] = u;
+                        });
+
+                        const apartmentsById = {};
+                        (apartments || []).forEach(a => {
+                            const id = a.id || a.apartmentId || a._id;
+                            if (id) apartmentsById[String(id)] = a;
+                        });
+
+                        return { unitsById, unitsByNumber, apartmentsById };
+                    } catch (e) {
+                        return { unitsById: {}, unitsByNumber: {}, apartmentsById: {} };
+                    }
+                })();
+                return enrichmentMapsPromise;
+            };
+            const helpers = {
+                escape: (v) => { try { return this.escapeHtml(v); } catch (e) { return String(v||''); } },
+                renderChurnItem: (t) => {
+                    const name = t.tenant || t.name || t.unit || 'Unknown';
+                    const prob = typeof t.probability === 'number' ? `${t.probability}%` : (t.probability || 'N/A');
+                    const risk = (t.riskLevel || '').toUpperCase();
+                    const reason = t.reason || t.explanation || '';
+                    const apartmentLabel = t.apartmentName || t.apartmentAddress || t.apartment || t.property || t.building || '';
+                    const roomLabel = t.unit || t.unitNumber || t.roomNumber || t.room || '';
+                    return `
+                        <div class="churn-item">
+                            <div class="churn-left">
+                                <div class="churn-name">${helpers.escape(name)}</div>
+                                <div class="churn-meta">${helpers.escape(apartmentLabel)}${apartmentLabel && roomLabel ? ' • ' : ''}${helpers.escape(roomLabel)}</div>
+                            </div>
+                            <div class="churn-right">
+                                <div class="churn-probability">${helpers.escape(prob)}</div>
+                                <div class="churn-risk ${String(risk).toLowerCase()}">${helpers.escape(risk)}</div>
+                            </div>
+                            ${reason ? `<div class="churn-reason">${helpers.escape(reason)}</div>` : ''}
+                        </div>`;
+                },
+                renderRentItem: (r) => {
+                    const unit = r.unit || r.unitNumber || r.room || '';
+                    const prob = typeof r.probability === 'number' ? `${r.probability}%` : (r.probability || 'N/A');
+                    const aptId = r.apartmentId || r.apartment || r.property || '';
+                    const aptLabel = r.apartmentName || r.apartmentAddress || '';
+                    const currentRent = Number(r.currentRent || r.current_rent || r.current || r.currentMonthRent || 0) || 0;
+                    const marketAvg = Number(r.marketAverage || r.market_avg || r.market || r.marketAvg || 0) || 0;
+                    const suggestedIncrease = Number(r.suggestedIncrease || r.suggested_increase || 0) || 0;
+                    const suggestedNew = r.suggestedRent ? Number(r.suggestedRent) : (suggestedIncrease ? (currentRent + suggestedIncrease) : 0);
+                    const suggestedLabel = suggestedIncrease ? `Increase by ₱${Number(suggestedIncrease).toLocaleString()}` : (r.suggestedRent ? `Suggest ₱${Number(r.suggestedRent).toLocaleString()}` : 'Market rate');
+                    const reason = r.reason || r.explanation || '';
+                    return `
+                        <div class="rent-item" data-apartment-id="${helpers.escape(aptId)}" data-unit="${helpers.escape(unit)}" data-current-rent="${helpers.escape(currentRent)}" data-market-avg="${helpers.escape(marketAvg)}" data-suggested-increase="${helpers.escape(suggestedIncrease)}" data-suggested-rent="${helpers.escape(suggestedNew)}">
+                            <div class="rent-left">
+                                <div class="rent-unit">${helpers.escape(unit)}</div>
+                                <div class="rent-meta">${helpers.escape(aptLabel)}</div>
+                                <div class="rent-details">${currentRent ? `Current: ₱${currentRent.toLocaleString()}` : ''}${marketAvg ? ` • Market: ₱${marketAvg.toLocaleString()}` : ''}${suggestedNew ? ` • Suggested: ₱${suggestedNew.toLocaleString()}` : ''}</div>
+                            </div>
+                            <div class="rent-right">
+                                <div class="rent-probability">${helpers.escape(prob)}</div>
+                                <div class="rent-action">${helpers.escape(suggestedLabel)}</div>
+                            </div>
+                            ${reason ? `<div class="rent-reason">${helpers.escape(reason)}</div>` : ''}
+                            <div class="rent-cta"><button class="btn btn-sm btn-outline view-property-btn" data-apartment-id="${helpers.escape(aptId)}">View Property</button></div>
+                        </div>`;
+                }
+            };
+
+            document.querySelectorAll('.paginated-list').forEach(container => {
+                if (!container) return;
+                if (container.dataset._initialized) return;
+                let raw = container.getAttribute('data-items') || '';
+                try { raw = decodeURIComponent(raw); } catch (e) { /* ignore */ }
+                let items = [];
+                try { items = JSON.parse(raw); } catch (e) { items = []; }
+
+                const parentCard = container.closest('.predictive-card');
+                const title = parentCard?.querySelector('h4')?.textContent?.trim() || '';
+
+                // Apply type-specific filtering: churn lists should not use rent-filters
+                if (title === 'Tenant Churn Risk' || container.classList.contains('churn-list-wrapper')) {
+                    // keep churn items as-is (optionally could filter low-probability entries)
+                    items = items || [];
+                } else if (title === 'Rent Optimization' || container.classList.contains('rent-list-wrapper')) {
+                    // Align with recommendations: only show units flagged by model as needing optimization
+                    const filtered = (items || []).filter(r => {
+                        try {
+                            const prob = Number(r.probability || r.prob || 0) || 0;
+                            const inc = Number(r.suggestedIncrease || r.suggested_increase || r.suggestedRent || r.suggested_rent || 0) || 0;
+                            return (prob > 60 && inc > 0);
+                        } catch (e) { return false; }
+                    });
+                    items = filtered;
+                } else {
+                    // default: keep items
+                    items = items || [];
+                }
+                let currentPage = 1;
+                const total = items.length;
+                const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+                if (!total) {
+                    const msg = (title === 'Tenant Churn Risk' || container.classList.contains('churn-list-wrapper'))
+                        ? 'No churn data available'
+                        : (title === 'Rent Optimization' || container.classList.contains('rent-list-wrapper'))
+                            ? 'No under-market units detected'
+                            : 'No items available';
+                    container.innerHTML = `<div>${msg}</div>`;
+                    container.dataset._initialized = '1';
+                    return;
+                }
+
+                const renderControls = (page) => {
+                    if (totalPages <= 1) return '';
+                    return `
+                        <div class="pag-controls">
+                            <button class="page-btn prev" ${page <= 1 ? 'disabled' : ''}>Prev</button>
+                            <span class="page-info">Page ${page} / ${totalPages}</span>
+                            <button class="page-btn next" ${page >= totalPages ? 'disabled' : ''}>Next</button>
+                        </div>`;
+                };
+
+                const renderPage = (page) => {
+                    currentPage = Math.max(1, Math.min(totalPages, page));
+                    const start = (currentPage - 1) * pageSize;
+                    const slice = items.slice(start, start + pageSize);
+                    // determine type by wrapper class or parent card title
+                    const parentCard = container.closest('.predictive-card');
+                    const title = parentCard?.querySelector('h4')?.textContent?.trim() || '';
+                    let html = '';
+                    if (title === 'Tenant Churn Risk' || container.classList.contains('churn-list-wrapper')) {
+                        html = `<div class="churn-list">${slice.map(s => helpers.renderChurnItem(s)).join('')}</div>`;
+                    } else {
+                        html = `<div class="rent-list">${slice.map(s => helpers.renderRentItem(s)).join('')}</div>`;
+                    }
+                    html += renderControls(currentPage);
+                    container.innerHTML = html;
+
+                    // Enrich rendered items: replace apartment ids with names/addresses and fix unit labels
+                    (async () => {
+                        try {
+                            const maps = await getEnrichmentMaps();
+                            const unitsById = maps.unitsById || {};
+                            const unitsByNumber = maps.unitsByNumber || {};
+                            const apartmentsById = maps.apartmentsById || {};
+
+                            const rentItems = container.querySelectorAll('.rent-item');
+                            rentItems.forEach(item => {
+                                try {
+                                    const aptId = (item.getAttribute('data-apartment-id') || '').toString();
+                                    const unitAttr = (item.getAttribute('data-unit') || '').toString();
+
+                                    // If unitAttr looks like an id and we have a unitsById map, replace display
+                                    let unitObj = null;
+                                    if (unitAttr && unitsById[unitAttr]) unitObj = unitsById[unitAttr];
+                                    if (!unitObj && unitAttr && unitsByNumber[unitAttr.toLowerCase()]) unitObj = unitsByNumber[unitAttr.toLowerCase()];
+                                    if (unitObj) {
+                                        const unitEl = item.querySelector('.rent-unit');
+                                        if (unitEl) unitEl.textContent = unitObj.unitNumber || unitObj.roomNumber || unitObj.room || unitObj.name || unitObj.id.substring(0,8);
+
+                                        // Derive aptId from unit if available
+                                        if (!aptId && unitObj.apartmentId) {
+                                            if (apartmentsById[unitObj.apartmentId]) {
+                                                const a = apartmentsById[unitObj.apartmentId];
+                                                const meta = item.querySelector('.rent-meta');
+                                                if (meta) meta.textContent = a.apartmentName || a.apartmentAddress || a.name || '';
+                                                return;
+                                            }
+                                        }
+                                    }
+
+                                    // If an apartment id exists, try to lookup its display name
+                                    if (aptId && apartmentsById[aptId]) {
+                                        const a = apartmentsById[aptId];
+                                        const meta = item.querySelector('.rent-meta');
+                                        if (meta) meta.textContent = a.apartmentName || a.apartmentAddress || a.name || '';
+                                    }
+                                } catch (e) {
+                                    console.warn('Failed to enrich paged rent item', e);
+                                }
+                            });
+                        } catch (e) {
+                            // ignore enrichment errors
+                        }
+                    })();
+                };
+
+                // attach delegation for pagination buttons
+                container.addEventListener('click', (ev) => {
+                    const btn = ev.target.closest('.page-btn');
+                    if (!btn) return;
+                    ev.preventDefault();
+                    if (btn.classList.contains('prev')) renderPage(currentPage - 1);
+                    if (btn.classList.contains('next')) renderPage(currentPage + 1);
+                });
+
+                // initial render
+                renderPage(1);
+                container.dataset._initialized = '1';
+            });
+        } catch (e) {
+            console.warn('initPaginatedLists error', e);
+        }
+    }
+
     populateOperationalMetrics(propertyReports = {}, tenantReports = {}) {
         const container = document.getElementById('operationalMetrics');
         if (!container) return;
@@ -7643,13 +8135,30 @@ class CasaLink {
             item.className = 'recommendation-item';
             if (rec.priority) item.classList.add(rec.priority);
 
-            // explanation badge
-            const explainBadge = `<span class="explain-badge" title="How this was computed">?<span class="sr-only">Explanation</span></span>`;
-            item.innerHTML = `<i class="fas fa-lightbulb"></i> <span class="rec-text">${rec.text}</span> ${explainBadge}`;
+            // build contents: icon + text + explain badge (explanation only on badge hover)
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-lightbulb';
 
-            // Attach explanation for tooltip; prefer explicit explanation field
+            const textSpan = document.createElement('span');
+            textSpan.className = 'rec-text';
+            textSpan.textContent = rec.text;
+
             const explanation = rec.explanation || rec.reason || 'Explanation not available.';
-            item.dataset.description = explanation;
+            const badge = document.createElement('span');
+            badge.className = 'explain-badge';
+            badge.title = 'How this was computed';
+            badge.setAttribute('aria-label', 'Explanation');
+            badge.textContent = '?';
+            // attach explanation to badge only
+            badge.dataset.description = explanation;
+
+            item.appendChild(icon);
+            item.appendChild(document.createTextNode(' '));
+            item.appendChild(textSpan);
+            item.appendChild(document.createTextNode(' '));
+            item.appendChild(badge);
+
+            // explanation is attached to the badge only (so hovering the message won't reveal it)
 
             listEl.appendChild(item);
         });
@@ -8882,13 +9391,15 @@ class CasaLink {
         }, 100);
     }
 
-    // Add helper method for HTML escaping
+    // Add helper method for HTML escaping (defensive, accepts non-strings)
     escapeHtml(unsafe) {
-        return unsafe
+        if (unsafe === null || unsafe === undefined) return '';
+        const s = (typeof unsafe === 'string') ? unsafe : String(unsafe);
+        return s
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
+            .replace(/\"/g, "&quot;")
             .replace(/'/g, "&#039;");
     }
 

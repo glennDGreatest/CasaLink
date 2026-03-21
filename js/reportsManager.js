@@ -84,7 +84,7 @@ class ReportsManager {
             ];
         }
         if (!rentOptimization || rentOptimization.length === 0) {
-            rentOptimization = [{ unit: '101', probability: 68, suggestedIncrease: 1200, riskLevel: 'MEDIUM' }];
+            rentOptimization = [];
         }
         if (!latePaymentRisk || latePaymentRisk.length === 0) {
             latePaymentRisk = [{ tenant: 'Tenant A', unit: '2A', probability: 52, riskLevel: 'MEDIUM' }];
@@ -106,7 +106,53 @@ class ReportsManager {
         }
 
         // Build actionable recommendations based on ML outputs
+        // Pre-fetch landlord units/apartments so recommendation text can show readable names instead of IDs
+        let unitsById = {};
+        let unitsByNumber = {};
+        let apartmentsById = {};
+        try {
+            const landlordId = this.currentUser?.uid || this.currentUser?.id || null;
+            if (landlordId && this.dataManager) {
+                const [units, apartments] = await Promise.all([
+                    (typeof this.dataManager.getLandlordUnits === 'function') ? this.dataManager.getLandlordUnits(landlordId).catch(() => []) : [],
+                    (typeof this.dataManager.getLandlordApartments === 'function') ? this.dataManager.getLandlordApartments(landlordId).catch(() => []) : []
+                ]);
+                (units || []).forEach(u => {
+                    if (u.id) unitsById[String(u.id)] = u;
+                    if (u.unitNumber) unitsByNumber[String(u.unitNumber).toLowerCase()] = u;
+                    if (u.roomNumber) unitsByNumber[String(u.roomNumber).toLowerCase()] = u;
+                });
+                (apartments || []).forEach(a => {
+                    const id = a.id || a.apartmentId || a._id;
+                    if (id) apartmentsById[String(id)] = a;
+                });
+            }
+        } catch (e) {
+            console.warn('Could not prefetch units/apartments for recommendations', e);
+        }
+
         const recommendations = [];
+
+        const resolveUnitDisplay = (unitVal) => {
+            if (!unitVal) return unitVal || '';
+            try {
+                if (unitsById[unitVal]) return unitsById[unitVal].unitNumber || unitsById[unitVal].roomNumber || String(unitsById[unitVal].id).slice(0,8);
+                const low = String(unitVal).toLowerCase();
+                if (unitsByNumber[low]) return unitsByNumber[low].unitNumber || unitsByNumber[low].roomNumber || unitsByNumber[low].id;
+            } catch (e) { /* ignore */ }
+            return unitVal;
+        };
+
+        const resolveApartmentFromUnit = (unitVal) => {
+            try {
+                const u = unitsById[unitVal] || unitsByNumber[String(unitVal).toLowerCase()];
+                if (u && u.apartmentId && apartmentsById[u.apartmentId]) {
+                    const a = apartmentsById[u.apartmentId];
+                    return a.apartmentName || a.apartmentAddress || a.name || '';
+                }
+            } catch (e) { }
+            return '';
+        };
 
         tenantChurn.forEach(c => {
             if (c.probability > 70) {
@@ -120,8 +166,12 @@ class ReportsManager {
 
         rentOptimization.forEach(r => {
             if (r.probability > 60 && r.suggestedIncrease) {
+                const unitLabel = resolveUnitDisplay(r.unit || r.unitNumber || '');
+                const aptFromUnit = resolveApartmentFromUnit(r.unit || '');
+                const aptLabel = aptFromUnit || (r.apartmentName || r.address || r.apartmentAddress || '');
+                const place = aptLabel ? `${unitLabel} • ${aptLabel}` : unitLabel;
                 recommendations.push({
-                    text: `Rent for unit ${r.unit} appears under market; consider increasing by ₱${r.suggestedIncrease}`,
+                    text: `Rent for unit ${place} appears under market; consider increasing by ₱${r.suggestedIncrease}`,
                     priority: 'medium',
                     explanation: `Model compared current rent to local market median and demand; suggested increase = ₱${r.suggestedIncrease}.`
                 });

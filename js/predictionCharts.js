@@ -13,7 +13,7 @@ class PredictionCharts {
 
     // Revenue forecast with historical data
     async createRevenueForecastChart(revenueData) {
-        const ctx = document.getElementById('revenueTrendChart');
+        const ctx = document.getElementById('revenueForecastChart');
         if (!ctx) return;
 
         // Get historical data for context
