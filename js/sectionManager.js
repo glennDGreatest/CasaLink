@@ -48,11 +48,48 @@ class SectionManager {
             targetSection.classList.add('active');
             
             // Initialize charts if showing reports section
-            if (sectionId === 'reportsSection' && window.chartsManager) {
-                console.log('Initializing charts for reports section...');
-                setTimeout(() => {
-                    window.chartsManager.initializeAllCharts();
-                }, 100);
+            if (sectionId === 'reportsSection') {
+                console.log('Initializing reports section...');
+
+                // Ensure ReportsManager is initialized and reports data is refreshed
+                const ensureReportsInit = async () => {
+                    try {
+                        // Create or init reportsManager if missing
+                        if (!window.reportsManager && (window.dataManager || window.DataManager) && window.casaLink && window.casaLink.currentUser) {
+                            window.reportsManager = new ReportsManager(window.dataManager || window.DataManager);
+                            await window.reportsManager.init(window.casaLink.currentUser);
+                            console.log('✅ ReportsManager auto-initialized');
+                        } else if (window.reportsManager && (!window.reportsManager.currentUser || window.reportsManager.currentUser.uid !== window.casaLink.currentUser?.uid)) {
+                            // If reportsManager exists but not initialized for this user, init it
+                            if (typeof window.reportsManager.init === 'function' && window.casaLink && window.casaLink.currentUser) {
+                                await window.reportsManager.init(window.casaLink.currentUser);
+                                console.log('✅ ReportsManager re-initialized for current user');
+                            }
+                        }
+
+                        // Refresh reports data via CasaLink if available
+                        if (window.casaLink && typeof window.casaLink.refreshReportsData === 'function') {
+                            await window.casaLink.refreshReportsData();
+                        }
+
+                        // Initialize charts after data is ready
+                        if (window.chartsManager) {
+                            setTimeout(() => {
+                                window.chartsManager.initializeAllCharts(window.reportsData || {});
+                            }, 100);
+                        }
+                    } catch (e) {
+                        console.warn('Could not auto-initialize ReportsManager or refresh reports:', e);
+                        // Still attempt to initialize charts with any available data
+                        if (window.chartsManager) {
+                            setTimeout(() => {
+                                window.chartsManager.initializeAllCharts(window.reportsData || {});
+                            }, 100);
+                        }
+                    }
+                };
+
+                ensureReportsInit();
             }
         }
 

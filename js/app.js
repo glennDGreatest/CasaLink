@@ -7386,7 +7386,7 @@ class CasaLink {
         if (!grid) return;
         grid.innerHTML = '';
 
-        const addCard = (title, icon, bodyHtml) => {
+        const addCard = (title, icon, bodyHtml, shortDesc = '', computeDesc = '') => {
             const card = document.createElement('div');
             card.className = 'predictive-card';
             card.innerHTML = `
@@ -7398,6 +7398,8 @@ class CasaLink {
                     ${bodyHtml}
                 </div>
             `;
+            if (shortDesc) card.dataset.description = shortDesc;
+            if (computeDesc) card.dataset.computeDescription = computeDesc;
             grid.appendChild(card);
         };
 
@@ -7405,29 +7407,34 @@ class CasaLink {
         const churnRows = (data.tenantChurn || []).slice(0, 5).map(t => {
             return `<div><strong>${t.tenant || t.unit || 'Unknown'}</strong>: ${t.probability}% (${t.riskLevel || ''})${t.reason ? ` – ${t.reason}` : ''}</div>`;
         }).join('');
-        addCard('Tenant Churn Risk', 'fas fa-user-clock', churnRows || '<div>No churn data available</div>');
+        addCard('Tenant Churn Risk', 'fas fa-user-clock', churnRows || '<div>No churn data available</div>', 'Predicts tenants likely to leave so you can proactively retain them.', 'Logistic regression using payment history, maintenance frequency, lease length and engagement signals to estimate churn probability.');
 
         // Rent Optimization
         const rentRows = (data.rentOptimization || []).slice(0, 5).map(r => {
             return `<div><strong>${r.unit}</strong>: ${r.probability}% risk - ${r.suggestedIncrease ? `Increase by ₱${r.suggestedIncrease}` : 'Market rate'}</div>`;
         }).join('');
-        addCard('Rent Optimization', 'fas fa-dollar-sign', rentRows || '<div>No under-market units detected</div>');
+        addCard('Rent Optimization', 'fas fa-dollar-sign', rentRows || '<div>No under-market units detected</div>', 'Suggests rent adjustments to maximize revenue while reducing churn.', 'Compares unit rent to local market median and demand trends; suggests adjustments using elasticity heuristics.');
 
         // Late Payment Risk
         const lateRows = (data.latePaymentRisk || []).slice(0, 5).map(r => {
             return `<div><strong>${r.tenant || r.unit}</strong>: ${r.probability}% (${r.riskLevel})</div>`;
         }).join('');
-        addCard('Late Payment Risk', 'fas fa-exclamation-triangle', lateRows || '<div>No high risk tenants detected</div>');
+        addCard('Late Payment Risk', 'fas fa-exclamation-triangle', lateRows || '<div>No high risk tenants detected</div>', 'Identifies tenants at risk of late payments so you can follow up.', 'Probability score derived from recent payment timeliness, historical overdue counts, and outstanding balances.');
 
         // Maintenance Triage
         const triageRows = (data.maintenanceTriage || []).slice(0, 5).map(r => {
             return `<div><strong>${r.title}</strong> – ${r.priority} (confidence ${r.confidence || 0}%)</div>`;
         }).join('');
-        addCard('Maintenance Triage', 'fas fa-tools', triageRows || '<div>No maintenance requests available</div>');
+        addCard('Maintenance Triage', 'fas fa-tools', triageRows || '<div>No maintenance requests available</div>', 'Prioritizes maintenance requests based on urgency and impact.', 'Priority ranking based on request age, reported severity, and affected units to surface high-impact issues.');
 
         // Tenant Sentiment
         const sentiment = data.tenantSentiment || { label: 'neutral', confidence: 0, score: 0 };
-        addCard('Tenant Sentiment', 'fas fa-smile', `<div>${sentiment.label.toUpperCase()} (${sentiment.confidence}% confidence)</div><div>Score: ${sentiment.score}</div>`);
+        addCard('Tenant Sentiment', 'fas fa-smile', `<div>${sentiment.label.toUpperCase()} (${sentiment.confidence}% confidence)</div><div>Score: ${sentiment.score}</div>`, 'Summarizes tenant feedback sentiment to surface issues and satisfaction.', 'Aggregated from tenant messages, reviews, and survey responses using simple sentiment scoring.');
+
+        // Attach hover descriptions
+        this.attachCardTooltips('predictionsGrid');
+        // Attach small question-mark compute badges
+        this.attachComputeBadges('predictionsGrid');
     }
 
     populateForecastCards(data = {}) {
@@ -7435,7 +7442,7 @@ class CasaLink {
         if (!container) return;
         container.innerHTML = '';
 
-        const addCard = (title, subtitle, value, note, algorithm) => {
+        const addCard = (title, subtitle, value, note, algorithm, shortDesc = '', computeDesc = '') => {
             const card = document.createElement('div');
             card.className = 'forecast-card';
             card.innerHTML = `
@@ -7449,6 +7456,8 @@ class CasaLink {
                     <div class="forecast-note">${note}</div>
                 </div>
             `;
+            if (shortDesc) card.dataset.description = shortDesc;
+            if (computeDesc) card.dataset.computeDescription = computeDesc;
             container.appendChild(card);
         };
 
@@ -7458,7 +7467,9 @@ class CasaLink {
             'Next month estimate',
             `₱${(revenue.nextMonthPrediction || 0).toLocaleString()}`,
             `Confidence: ${Math.round((revenue.confidence || 0) * 100)}%`,
-            'Weighted Moving Average'
+            'Weighted Moving Average',
+            'Estimated next-month revenue based on historical collections and seasonality.',
+            'Weighted moving average of recent monthly revenues with seasonal weighting and trend smoothing.'
         );
 
         const occupancy = data.occupancyForecast || data.occupancyTrend || {};
@@ -7467,7 +7478,9 @@ class CasaLink {
             'Projected occupancy',
             `${(occupancy.predictions ? occupancy.predictions[0] : occupancy.currentOccupancy || 0)}%`,
             `At-risk units: ${occupancy.atRiskUnits || 0}`,
-            'Lease expiry counting'
+            'Lease expiry counting',
+            'Projected occupancy rate using upcoming lease expirations and booking trends.',
+            'Counts upcoming lease expirations and recent leasing velocity to estimate future occupancy.'
         );
 
         const maintenance = data.maintenanceForecast || data.maintenanceCosts || {};
@@ -7476,7 +7489,9 @@ class CasaLink {
             'Next month estimate',
             `₱${(maintenance.nextMonthPrediction || (maintenance.monthlyPredictions ? maintenance.monthlyPredictions[0] : 0)).toLocaleString()}`,
             `Confidence: ${Math.round((maintenance.confidence || 0) * 100)}%`,
-            'Seasonal average + trend'
+            'Seasonal average + trend',
+            'Estimated maintenance spending to help you budget for upcoming repairs.',
+            'Monthly maintenance cost forecast based on historical spend, seasonality, and detected trends.'
         );
 
         const anomalies = (data.anomalies || []).slice(0, 3).join('<br>') || 'No anomalies detected';
@@ -7485,8 +7500,107 @@ class CasaLink {
             'Unusual patterns in payments/maintenance',
             anomalies,
             '',
-            'Z-score outlier detection'
+            'Z-score outlier detection',
+            'Highlights unusual events or outliers that may need investigation.',
+            'Uses z-score and recent-window comparisons to flag statistical outliers in metrics.'
         );
+
+        // Attach hover descriptions
+        this.attachCardTooltips('forecastCards');
+        // Attach small question-mark compute badges
+        this.attachComputeBadges('forecastCards');
+    }
+
+    attachCardTooltips(containerId) {
+        try {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            // Create a single tooltip element reused for all cards
+            let tooltip = document.getElementById('cardHoverTooltip');
+            if (!tooltip) {
+                tooltip = document.createElement('div');
+                tooltip.id = 'cardHoverTooltip';
+                tooltip.style.position = 'fixed';
+                tooltip.style.zIndex = '9999';
+                tooltip.style.padding = '8px 10px';
+                tooltip.style.background = 'rgba(17,24,39,0.95)';
+                tooltip.style.color = '#fff';
+                tooltip.style.borderRadius = '6px';
+                tooltip.style.boxShadow = '0 4px 12px rgba(2,6,23,0.4)';
+                tooltip.style.fontSize = '13px';
+                tooltip.style.maxWidth = '320px';
+                tooltip.style.pointerEvents = 'none';
+                tooltip.style.display = 'none';
+                document.body.appendChild(tooltip);
+            }
+
+            container.querySelectorAll('.predictive-card, .forecast-card, .recommendation-item').forEach(card => {
+                const desc = card.dataset.description || card.getAttribute('title') || '';
+                if (!desc) return;
+
+                card.addEventListener('mouseenter', (e) => {
+                    tooltip.innerText = desc;
+                    tooltip.style.display = 'block';
+                    const rect = card.getBoundingClientRect();
+                    const top = rect.top - 10 - tooltip.offsetHeight;
+                    const left = Math.min(rect.left, window.innerWidth - tooltip.offsetWidth - 10);
+                    tooltip.style.top = (top > 10 ? top : rect.bottom + 10) + 'px';
+                    tooltip.style.left = (left > 10 ? left : 10) + 'px';
+                });
+
+                card.addEventListener('mousemove', (e) => {
+                    // Follow cursor slightly
+                    const mouseX = e.clientX;
+                    const mouseY = e.clientY;
+                    tooltip.style.top = (mouseY + 18) + 'px';
+                    tooltip.style.left = Math.min(mouseX + 18, window.innerWidth - tooltip.offsetWidth - 10) + 'px';
+                });
+
+                card.addEventListener('mouseleave', () => {
+                    tooltip.style.display = 'none';
+                });
+            });
+        } catch (err) {
+            console.warn('Could not attach card tooltips:', err);
+        }
+    }
+
+    attachComputeBadges(containerId) {
+        try {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            container.querySelectorAll('.predictive-card, .forecast-card').forEach(card => {
+                const computeDesc = card.dataset.computeDescription || '';
+                if (!computeDesc) return;
+
+                const header = card.querySelector('.predictive-card-header, .forecast-card-header');
+                if (!header) return;
+
+                // create a small question-mark badge and use native title tooltip (non-blocking)
+                const badge = document.createElement('span');
+                badge.className = 'compute-badge';
+                badge.textContent = '?';
+                badge.title = computeDesc; // native browser tooltip
+                badge.setAttribute('aria-label', 'How this is computed');
+                badge.style.display = 'inline-block';
+                badge.style.marginLeft = '8px';
+                badge.style.background = '#e2e8f0';
+                badge.style.color = '#0f172a';
+                badge.style.borderRadius = '50%';
+                badge.style.width = '18px';
+                badge.style.height = '18px';
+                badge.style.lineHeight = '18px';
+                badge.style.textAlign = 'center';
+                badge.style.fontSize = '12px';
+                badge.style.cursor = 'default';
+
+                header.appendChild(badge);
+            });
+        } catch (err) {
+            console.warn('Could not attach compute badges:', err);
+        }
     }
 
     populateOperationalMetrics(propertyReports = {}, tenantReports = {}) {
@@ -7527,10 +7641,25 @@ class CasaLink {
         list.forEach(rec => {
             const item = document.createElement('div');
             item.className = 'recommendation-item';
-            item.innerHTML = `<i class="fas fa-lightbulb"></i> <span>${rec.text}</span>`;
             if (rec.priority) item.classList.add(rec.priority);
+
+            // explanation badge
+            const explainBadge = `<span class="explain-badge" title="How this was computed">?<span class="sr-only">Explanation</span></span>`;
+            item.innerHTML = `<i class="fas fa-lightbulb"></i> <span class="rec-text">${rec.text}</span> ${explainBadge}`;
+
+            // Attach explanation for tooltip; prefer explicit explanation field
+            const explanation = rec.explanation || rec.reason || 'Explanation not available.';
+            item.dataset.description = explanation;
+
             listEl.appendChild(item);
         });
+
+        // Attach tooltips to recommendation items (reuse card tooltip behavior)
+        try {
+            this.attachCardTooltips('recommendationsList');
+        } catch (e) {
+            console.warn('Could not attach recommendation tooltips', e);
+        }
     }
 
     populateBenchmarking(metrics = {}) {
@@ -8722,6 +8851,16 @@ class CasaLink {
             }
         });
 
+        // Auto-fill preferred date with today's date regardless of type/priority
+        try {
+            const prefEl = modal.querySelector('#maintPreferredDate');
+            if (prefEl) {
+                const today = new Date().toISOString().split('T')[0];
+                prefEl.value = today;
+            }
+        } catch (err) {
+            console.warn('Could not auto-fill preferred date:', err);
+        }
         // Setup priority auto-fill based on request type
         setTimeout(() => {
             const typeSelect = document.getElementById('maintType');
@@ -13382,10 +13521,10 @@ class CasaLink {
 
                         <div style="border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 12px;">
                             <label style="font-size: 12px; color: #5f6368; font-weight: 600; display: block; margin-bottom: 4px;">Photo Evidence</label>
-                            ${payment.photoEvidenceURL 
-                                ? `<img src="${payment.photoEvidenceURL}" alt="Payment Evidence" style="max-width: 100%; max-height: 300px; border-radius: 6px; display: block; margin-top: 8px;">` 
-                                : '<div style="color: #5f6368;">No photo evidence attached</div>'
-                            }
+                                ${payment.photoEvidenceURL 
+                                    ? `<img src="${payment.photoEvidenceURL}" alt="Payment Evidence" class="payment-evidence-thumb" data-full="${payment.photoEvidenceURL}" style="max-width: 100%; max-height: 300px; border-radius: 6px; display: block; margin-top: 8px; cursor: zoom-in;">` 
+                                    : '<div style="color: #5f6368;">No photo evidence attached</div>'
+                                }
                         </div>
 
                         ${payment.notes 
@@ -13433,7 +13572,7 @@ class CasaLink {
             `;
 
             // Show modal with read-only payment details
-            ModalManager.openModal(detailsHTML, {
+            const detailsModal = ModalManager.openModal(detailsHTML, {
                 title: 'Review Payment for Verification',
                 width: '600px',
                 maxWidth: '100%',
@@ -13441,6 +13580,25 @@ class CasaLink {
                 cancelText: 'Back',
                 onSubmit: () => this.verifyPaymentAction(paymentId, null)
             });
+
+            // Make evidence thumbnails clickable to open full-size image in a larger modal
+            try {
+                const thumb = detailsModal.querySelector('.payment-evidence-thumb');
+                if (thumb) {
+                    thumb.addEventListener('click', (e) => {
+                        const src = thumb.dataset.full || thumb.src;
+                        const imgHTML = `<div style="text-align:center;"><img src="${src}" alt="Payment Evidence Full" style="max-width:100%; max-height:90vh; border-radius:6px;"></div>`;
+                        ModalManager.openModal(imgHTML, {
+                            title: 'Payment Evidence',
+                            width: '90%',
+                            maxWidth: '900px',
+                            showFooter: false
+                        });
+                    });
+                }
+            } catch (err) {
+                console.warn('Could not attach evidence click handler:', err);
+            }
 
         } catch (error) {
             console.error('Error loading payment details:', error);
@@ -17480,6 +17638,29 @@ class CasaLink {
                 // MANUAL STATE MANAGEMENT - don't rely on auth listener
                 this.currentUser = user;
                 this.currentRole = user.role;
+
+                // Auto-init ReportsManager for landlord users so Reports page works immediately
+                try {
+                    if (this.currentRole === 'landlord' && (window.dataManager || window.DataManager)) {
+                        if (!window.reportsManager) {
+                            window.reportsManager = new ReportsManager(window.dataManager || window.DataManager);
+                            // initialize and refresh reports in background
+                            window.reportsManager.init(this.currentUser).then(() => {
+                                console.log('✅ ReportsManager auto-initialized after login');
+                                if (typeof this.refreshReportsData === 'function') {
+                                    this.refreshReportsData().catch(e => console.warn('Failed to refresh reports after auto-init', e));
+                                }
+                            }).catch(e => console.warn('ReportsManager init failed after login', e));
+                        } else if (!window.reportsManager.currentUser || window.reportsManager.currentUser.uid !== this.currentUser?.uid) {
+                            // Re-init for the current user if needed
+                            if (typeof window.reportsManager.init === 'function') {
+                                window.reportsManager.init(this.currentUser).catch(e => console.warn('ReportsManager re-init failed after login', e));
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Could not auto-init ReportsManager on login:', e);
+                }
                 
                 // Re-enable auth listener after successful login
                 setTimeout(() => {

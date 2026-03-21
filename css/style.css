@@ -323,6 +323,28 @@
     line-height: 1.4;
 }
 
+/* Explanation badge next to recommendation items */
+.recommendation-item .explain-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #3730a3;
+    font-weight: 700;
+    font-size: 12px;
+    margin-left: 10px;
+    cursor: help;
+    border: 1px solid rgba(99,102,241,0.15);
+}
+
+.recommendation-item.critical { border-left-color: var(--danger); }
+.recommendation-item.high { border-left-color: #ff8a65; }
+.recommendation-item.medium { border-left-color: #fbba04; }
+.recommendation-item.low { border-left-color: #9ca3af; }
+
 /* ===== ADMIN PORTAL LINK STYLES ===== */
 .admin-portal-link {
     position: fixed;

@@ -261,6 +261,38 @@ class PredictiveAnalytics {
         return { score, label: score>0?'positive':score<0?'negative':'neutral' };
     }
 
+    // Analyze seasonality for maintenance costs: returns monthly averages and simple trend
+    analyzeMaintenanceSeasonality(maintenanceData) {
+        try {
+            if (!maintenanceData || !Array.isArray(maintenanceData) || maintenanceData.length === 0) {
+                return { monthlyAverages: [], peakMonthIndex: -1, peakMonthName: null };
+            }
+
+            // maintenanceData expected as array of { month: <0-11> or label, cost: number }
+            const months = new Array(12).fill(0);
+            const counts = new Array(12).fill(0);
+
+            maintenanceData.forEach(item => {
+                let m = null;
+                if (typeof item.month === 'number') m = item.month % 12;
+                else if (item.reportedDate) m = new Date(item.reportedDate).getMonth();
+                else if (item.createdAt) m = new Date(item.createdAt).getMonth();
+                if (m === null || isNaN(m)) return;
+                months[m] += Number(item.cost || item.amount || 0);
+                counts[m] += 1;
+            });
+
+            const monthlyAverages = months.map((sum, i) => counts[i] ? Math.round((sum / counts[i]) * 100) / 100 : 0);
+            const peakMonthIndex = monthlyAverages.indexOf(Math.max(...monthlyAverages));
+            const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+            return { monthlyAverages, peakMonthIndex, peakMonthName: monthNames[peakMonthIndex] || null };
+        } catch (e) {
+            console.warn('⚠️ analyzeMaintenanceSeasonality failed:', e);
+            return { monthlyAverages: [], peakMonthIndex: -1, peakMonthName: null };
+        }
+    }
+
 
     // ===== MAINTENANCE FORECASTING =====
     async predictMaintenanceCosts(months = 6) {

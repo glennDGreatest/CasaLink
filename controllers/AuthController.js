@@ -168,8 +168,10 @@ class AuthController {
    */
   navigateToDashboard(user) {
     // Show dashboard section
-    document.getElementById('authSection').style.display = 'none';
-    document.getElementById('dashboardSection').style.display = 'block';
+    const authSection = document.getElementById('authSection');
+    const dashboardSection = document.getElementById('dashboardSection');
+    if (authSection) authSection.style.display = 'none';
+    if (dashboardSection) dashboardSection.style.display = 'block';
 
     // Update user display
     const userDisplay = document.getElementById('userDisplay');
@@ -187,8 +189,10 @@ class AuthController {
    * Navigate to login page
    */
   navigateToLogin() {
-    document.getElementById('dashboardSection').style.display = 'none';
-    document.getElementById('authSection').style.display = 'block';
+    const dashboardSection = document.getElementById('dashboardSection');
+    const authSection = document.getElementById('authSection');
+    if (dashboardSection) dashboardSection.style.display = 'none';
+    if (authSection) authSection.style.display = 'block';
     this.switchToLoginForm();
   }
 

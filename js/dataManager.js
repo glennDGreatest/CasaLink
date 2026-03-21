@@ -30,6 +30,49 @@ class DataManager {
             const querySnapshot = await query.get();
             
             console.log('📊 Query snapshot size:', querySnapshot.size);
+            // If no units returned, try common alternate landlord fields used by seed scripts
+            if (!querySnapshot.size) {
+                const altFields = ['ownerId', 'createdBy', 'landlord', 'landlord_uid'];
+                for (const f of altFields) {
+                    try {
+                        const altSnap = await firebaseDb.collection('rooms')
+                            .where(f, '==', landlordId)
+                            .orderBy('floor')
+                            .orderBy('roomNumber')
+                            .get();
+                        if (altSnap && altSnap.size) {
+                            console.warn(`⚠️ No units found by landlordId; falling back to ${f}`);
+                            return altSnap.docs.map(doc => {
+                                const room = doc.data();
+                                const floor = parseInt(room.floor) || room.floor;
+                                return {
+                                    id: doc.id,
+                                    roomNumber: room.roomNumber,
+                                    unitNumber: room.roomNumber,
+                                    floor: floor,
+                                    apartmentId: room.apartmentId || null,
+                                    apartmentAddress: room.apartmentAddress || '',
+                                    status: room.isAvailable === false ? 'occupied' : 'vacant',
+                                    tenantName: room.occupiedBy ? 'Occupied' : 'Vacant',
+                                    occupiedBy: room.occupiedBy,
+                                    numberOfMembers: room.numberOfMembers || 0,
+                                    maxMembers: room.maxMembers || 0,
+                                    monthlyRent: room.monthlyRent || 0,
+                                    numberOfBedrooms: room.numberOfBedrooms || 0,
+                                    numberOfBathrooms: room.numberOfBathrooms || 0,
+                                    isAvailable: room.isAvailable,
+                                    securityDeposit: room.securityDeposit || 0,
+                                    occupiedAt: room.occupiedAt,
+                                    createdAt: room.createdAt,
+                                    updatedAt: room.updatedAt
+                                };
+                            });
+                        }
+                    } catch (e) {
+                        console.warn('Fallback rooms query failed for field', f, e);
+                    }
+                }
+            }
             
             const units = querySnapshot.docs.map(doc => {
                 const room = doc.data();
@@ -239,9 +282,31 @@ class DataManager {
     // current schema.  Keep this method for backwards compatibility since
     // many parts of the codebase still call getProperties().  Internally it
     // simply forwards to getLandlordApartments which already handles
-    // normalization.
+    // normalization.  For extra robustness support a legacy `properties`
+    // collection as a fallback if `apartments` returns no results.
     static async getProperties(landlordId) {
-        return this.getLandlordApartments(landlordId);
+        try {
+            const apartments = await this.getLandlordApartments(landlordId);
+            if (apartments && apartments.length) return apartments;
+
+            // Fallback: try legacy `properties` collection for older projects
+            console.warn('⚠️ No apartments found; falling back to legacy `properties` collection');
+            const snapshot = await firebaseDb.collection('properties')
+                .where('landlordId', '==', landlordId)
+                .where('isActive', '==', true)
+                .orderBy('createdAt', 'desc')
+                .get();
+
+            const props = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(p => !p.archived)
+                .map(data => new Property(data));
+
+            return props;
+        } catch (e) {
+            console.error('Error in getProperties fallback:', e);
+            return [];
+        }
     }
 
     static async getLandlordApartments(landlordId) {
@@ -259,7 +324,32 @@ class DataManager {
                 .where('isActive', '==', true)
                 .orderBy('createdAt', 'desc')
                 .get();
-            
+
+            // If no apartments found, try common alternate landlord fields
+            if (!snapshot.size) {
+                const altFields = ['ownerId', 'createdBy', 'landlord', 'landlord_uid'];
+                for (const f of altFields) {
+                    try {
+                        const snap = await firebaseDb.collection('apartments')
+                            .where(f, '==', landlordId)
+                            .where('isActive', '==', true)
+                            .orderBy('createdAt', 'desc')
+                            .get();
+                        if (snap && snap.size) {
+                            console.warn(`⚠️ getLandlordApartments: falling back to apartments.${f}`);
+                            const apartmentsAlt = snap.docs
+                                .map(doc => ({ id: doc.id, ...doc.data() }))
+                                .filter(a => !a.archived)
+                                .map(data => new Property(data));
+                            console.log('✅ Apartments loaded (fallback):', apartmentsAlt.length);
+                            return apartmentsAlt;
+                        }
+                    } catch (e) {
+                        console.warn('getLandlordApartments fallback failed for', f, e);
+                    }
+                }
+            }
+
             // convert to Property model so that name/address/etc are normalized
             const apartments = snapshot.docs
                 .map(doc => ({ id: doc.id, ...doc.data() }))
@@ -2215,6 +2305,25 @@ class DataManager {
                 .orderBy('createdAt', 'desc')
                 .get();
             
+            // Fallback: some seeds use alternate fields for owner/creator
+            if (!querySnapshot.size) {
+                const altFields = ['ownerId', 'createdBy', 'landlord', 'landlord_uid'];
+                for (const f of altFields) {
+                    try {
+                        const snap = await firebaseDb.collection('leases')
+                            .where(f, '==', landlordId)
+                            .orderBy('createdAt', 'desc')
+                            .get();
+                        if (snap && snap.size) {
+                            console.warn(`⚠️ getLandlordLeases: falling back to leases.${f}`);
+                            return snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(l => !l.archived);
+                        }
+                    } catch (e) {
+                        console.warn('getLandlordLeases fallback failed for', f, e);
+                    }
+                }
+            }
+
             return querySnapshot.docs
                 .map(doc => ({ id: doc.id, ...doc.data() }))
                 .filter(l => !l.archived);
@@ -2247,6 +2356,35 @@ class DataManager {
             }
 
             const snapshot = await query.get();
+            // If no maintenance requests returned, try alternate landlord fields
+            if (!snapshot.size) {
+                const altFields = ['ownerId', 'createdBy', 'landlord', 'landlord_uid'];
+                for (const f of altFields) {
+                    try {
+                        let altQuery = firebaseDb.collection('maintenance').where(f, '==', landlordId);
+                        if (filters.status) altQuery = altQuery.where('status', '==', filters.status);
+                        if (filters.priority) altQuery = altQuery.where('priority', '==', filters.priority);
+                        if (filters.type) altQuery = altQuery.where('type', '==', filters.type);
+                        const altSnap = await altQuery.get();
+                        if (altSnap && altSnap.size) {
+                            console.warn(`⚠️ getMaintenanceRequests: falling back to maintenance.${f}`);
+                            return altSnap.docs.map(doc => {
+                                const raw = doc.data();
+                                ['createdAt','updatedAt','completedDate','preferredDate','estimatedCompletion'].forEach(field => {
+                                    if (raw[field] && typeof raw[field].toDate === 'function') {
+                                        try { raw[field] = raw[field].toDate().toISOString(); } catch(e) { console.warn('❗Could not normalize timestamp for', field, e); }
+                                    }
+                                });
+                                const normalized = { priority: (raw.priority || 'medium').toString().toLowerCase(), status: (raw.status || 'open').toString().toLowerCase() };
+                                return { id: doc.id, ...raw, ...normalized };
+                            });
+                        }
+                    } catch (e) {
+                        console.warn('getMaintenanceRequests fallback failed for', f, e);
+                    }
+                }
+            }
+
             return snapshot.docs.map(doc => {
                 const raw = doc.data();
                 // make sure timestamp fields are converted to strings
@@ -2279,6 +2417,22 @@ class DataManager {
                 .where('landlordId', '==', landlordId)
                 .get();
             
+            // If no bills found under the expected field, try common alternate landlord fields
+            if (!querySnapshot.size) {
+                const altFields = ['ownerId', 'createdBy', 'landlord', 'landlord_uid'];
+                for (const f of altFields) {
+                    try {
+                        const snap = await firebaseDb.collection('bills').where(f, '==', landlordId).get();
+                        if (snap && snap.size) {
+                            console.warn(`⚠️ getBills: falling back to bills.${f}`);
+                            return snap.docs.map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data()) }));
+                        }
+                    } catch (e) {
+                        console.warn('getBills fallback query failed for', f, e);
+                    }
+                }
+            }
+
             return querySnapshot.docs.map(doc => ({
                 id: doc.id,
                 ...this.normalizeBill(doc.data())
@@ -2408,11 +2562,17 @@ class DataManager {
         }
 
         try {
-            const docRef = await firebaseDb.collection('tenants').add({
+            // Prefer storing tenant records in the centralized `users` collection
+            // with role='tenant' to avoid creating a separate `tenants` collection.
+            const payload = {
                 ...tenantData,
+                role: 'tenant',
+                isActive: tenantData.isActive !== undefined ? !!tenantData.isActive : true,
                 createdAt: new Date().toISOString(),
-                isActive: true
-            });
+                updatedAt: new Date().toISOString()
+            };
+
+            const docRef = await firebaseDb.collection('users').add(payload);
             return docRef.id;
         } catch (error) {
             if (error.code === 'failed-precondition') {
@@ -2811,23 +2971,8 @@ class DataManager {
                     .set(restoredTenant, { merge: true });
             }
 
-            // Also restore old legacy tenant collection record if it exists
-            if (originalCollection !== 'tenants') {
-                try {
-                    const legacyTenantDoc = await firebaseDb.collection('tenants').doc(tenantUserId).get();
-                    if (legacyTenantDoc.exists) {
-                        await firebaseDb.collection('tenants').doc(tenantUserId).set({
-                            ...legacyTenantDoc.data(),
-                            archived: false,
-                            restoredAt: new Date().toISOString()
-                        }, { merge: true });
-                    }
-                } catch (e) {
-                    // Not critical if legacy document doesn't exist
-                }
-            }
-
             // Save restored user state into users collection (ensures lookup works for tenant list)
+            // Do not recreate legacy `tenants` documents; prefer the `users` collection.
             await firebaseDb.collection('users').doc(tenantUserId).set(restoredTenant, { merge: true });
 
             // If there are lease archives for this tenant, restore each one and mark room occupied.
@@ -3473,4 +3618,24 @@ class DataManager {
 
 const dataManager = new DataManager();
 if (typeof dataManager.init === 'function') dataManager.init();
+
+// Backwards-compatibility: copy static/class methods onto the instance so
+// callers that use `window.DataManager.getSomething()` (instance) or
+// `DataManager.getSomething()` (class) both work.  Bind to the class to
+// preserve expected `this` for static helpers.
+try {
+    const staticNames = Object.getOwnPropertyNames(DataManager)
+        .filter(n => typeof DataManager[n] === 'function' && !['length','name','prototype'].includes(n));
+
+    staticNames.forEach(name => {
+        if (!dataManager[name]) {
+            dataManager[name] = DataManager[name].bind(DataManager);
+        }
+    });
+} catch (e) {
+    console.warn('⚠️ Failed to copy static DataManager methods to instance:', e);
+}
+
 window.DataManager = dataManager;
+// Create lowercase alias for backwards compatibility with older loader checks
+if (typeof window.dataManager === 'undefined') window.dataManager = dataManager;

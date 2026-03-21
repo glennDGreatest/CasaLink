@@ -297,14 +297,111 @@ class PropertiesController {
             if (!container) return;
             container.innerHTML = '<p>Loading units...</p>';
             let units = [];
+            console.log('populateRoomDetails called for propertyId=', propertyId, 'editingProperty=', this._editingProperty);
+
+            // 1) Prefer service helper when available
             if (this.service && typeof this.service.getPropertyUnits === 'function') {
-                units = await this.service.getPropertyUnits(propertyId);
-            } else if (window.firebaseDb) {
-                const snapshot = await window.firebaseDb
-                    .collection('units')
-                    .where('propertyId', '==', propertyId)
-                    .get();
-                units = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                try {
+                    units = await this.service.getPropertyUnits(propertyId) || [];
+                } catch (svcErr) {
+                    console.log('service.getPropertyUnits error:', svcErr);
+                    units = [];
+                }
+            }
+
+            // 2) Try the 'units' collection directly (newer schema) using available DB ref
+            if ((!units || units.length === 0)) {
+                const db = (typeof window !== 'undefined' && window.firebaseDb) || (typeof firebaseDb !== 'undefined' && firebaseDb) || null;
+                if (db) {
+                    try {
+                        let snap = await db.collection('units').where('propertyId', '==', propertyId).get();
+                        if (snap.empty) {
+                            snap = await db.collection('units').where('apartmentId', '==', propertyId).get();
+                        }
+                        if (!snap.empty) units = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                    } catch (dbErr) {
+                        console.log('Error querying units collection:', dbErr);
+                    }
+                } else {
+                    // If no db reference, try DataManager client-side fallback
+                    if (window.DataManager && typeof window.DataManager.getLandlordUnits === 'function') {
+                        try {
+                            const landlordId = this.currentUser?.uid || this.currentUser?.id;
+                            const allUnits = await window.DataManager.getLandlordUnits(landlordId);
+                            units = (allUnits || []).filter(u => u.apartmentId === propertyId || u.propertyId === propertyId || u.apartmentAddress === (this._editingProperty?.apartmentAddress || this._editingProperty?.address));
+                        } catch (dmErr) {
+                            console.log('DataManager.getLandlordUnits error:', dmErr);
+                        }
+                    }
+                }
+            }
+
+            // 3) Fallback: some installations store rooms in a 'rooms' collection
+            if ((!units || units.length === 0)) {
+                const db = (typeof window !== 'undefined' && window.firebaseDb) || (typeof firebaseDb !== 'undefined' && firebaseDb) || null;
+                if (db) {
+                    try {
+                        // try by apartmentId/propertyId first
+                        let roomSnap = await db.collection('rooms').where('apartmentId', '==', propertyId).get();
+                        console.log('rooms.apartmentId query returned', roomSnap.size, 'docs');
+                        if (roomSnap.empty) {
+                            roomSnap = await db.collection('rooms').where('propertyId', '==', propertyId).get();
+                            console.log('rooms.propertyId query returned', roomSnap.size);
+                        }
+
+                        // As a last resort, try matching by apartmentName or apartmentAddress from the editing context
+                        if (roomSnap.empty && this._editingProperty) {
+                            const name = this._editingProperty.apartmentName || this._editingProperty.name || this._editingProperty.propertyName || '';
+                            const addr = this._editingProperty.apartmentAddress || this._editingProperty.address || this._editingProperty.propertyAddress || '';
+                            if (name) {
+                                const byName = await db.collection('rooms').where('apartmentName', '==', name).get();
+                                console.log('rooms.apartmentName query returned', byName.size, 'docs for name=', name);
+                                if (!byName.empty) roomSnap = byName;
+                            }
+                            if (roomSnap.empty && addr) {
+                                const byAddr = await db.collection('rooms').where('apartmentAddress', '==', addr).get();
+                                console.log('rooms.apartmentAddress query returned', byAddr.size, 'docs for addr=', addr);
+                                if (!byAddr.empty) roomSnap = byAddr;
+                            }
+                        }
+
+                        // landlordId + apartmentAddress fallback
+                        if (roomSnap.empty && this._editingProperty && (this._editingProperty.landlordId || this.currentUser?.uid)) {
+                            const landlordId = this._editingProperty.landlordId || this.currentUser?.uid;
+                            const addr = this._editingProperty.apartmentAddress || this._editingProperty.address || '';
+                            if (landlordId && addr) {
+                                const byLandlordAndAddr = await db.collection('rooms')
+                                    .where('landlordId', '==', landlordId)
+                                    .where('apartmentAddress', '==', addr)
+                                    .get();
+                                console.log('rooms.landlordId+apartmentAddress query returned', byLandlordAndAddr.size);
+                                if (!byLandlordAndAddr.empty) roomSnap = byLandlordAndAddr;
+                            }
+                        }
+
+                        if (roomSnap && !roomSnap.empty) {
+                            // normalize room docs to the unit shape expected by the form
+                            units = roomSnap.docs.map(d => {
+                                const r = d.data();
+                                return {
+                                    id: d.id,
+                                    roomNumber: r.roomNumber || r.unitNumber || r.name || '',
+                                    floor: r.floor || (r.floorNumber ? String(r.floorNumber) : ''),
+                                    monthlyRent: r.monthlyRent || r.monthly_rate || r.rent || 0,
+                                    securityDeposit: r.securityDeposit || r.security_deposit || r.deposit || 0,
+                                    numberOfBedrooms: r.numberOfBedrooms || r.bedrooms || 0,
+                                    numberOfBathrooms: r.numberOfBathrooms || r.bathrooms || 0,
+                                    maxMembers: r.maxMembers || r.numberOfMembers || 1,
+                                    propertyId: r.propertyId || r.apartmentId || propertyId,
+                                    isAvailable: r.isAvailable !== undefined ? r.isAvailable : (r.status ? r.status !== 'occupied' : true),
+                                    __raw: r
+                                };
+                            });
+                        }
+                    } catch (roomErr) {
+                        console.log('Error querying rooms collection:', roomErr);
+                    }
+                }
             }
             container.innerHTML = '';
             units.forEach(u => {
@@ -386,6 +483,50 @@ class PropertiesController {
 
             console.log('Property data received, rendering modal');
 
+            // Ensure modal exists in DOM; if not, inject a minimal modal markup so
+            // the property details UI can render on any page.
+            let modal = document.getElementById('propertyDetailsModal');
+            if (!modal) {
+                try {
+                    const minimal = `
+                    <div id="propertyDetailsModal" class="modal-overlay" style="display:none;">
+                        <div class="modal-content modal-large property-details-modal">
+                            <div class="modal-header property-details-header">
+                                <div class="property-header-info">
+                                    <h3 id="propertyDetailsName">Property Details</h3>
+                                    <p id="propertyDetailsAddress" class="property-details-address"></p>
+                                </div>
+                                <button class="modal-close" id="propertyDetailsClose">&times;</button>
+                            </div>
+                            <div class="modal-body property-details-body">
+                                <div id="propertyDetailsLoading" class="property-details-loading">
+                                    <i class="fas fa-spinner fa-spin"></i> Loading property details...
+                                </div>
+                                <div id="propertyDetailsContent" style="display:none;">
+                                    <div id="tab-overview" class="tab-pane"></div>
+                                    <div id="unitsList"></div>
+                                    <div id="maintenanceList"></div>
+                                    <div id="tenantsList"></div>
+                                    <div id="activityList"></div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-secondary" onclick="if(window.propertiesController) window.propertiesController.closePropertyDetailsModal();">Close</button>
+                            </div>
+                        </div>
+                    </div>`;
+                    const container = document.createElement('div');
+                    container.innerHTML = minimal;
+                    document.body.appendChild(container.firstElementChild);
+                    modal = document.getElementById('propertyDetailsModal');
+                    // wire close button
+                    const closeBtn = document.getElementById('propertyDetailsClose');
+                    if (closeBtn) closeBtn.addEventListener('click', () => this.closePropertyDetailsModal());
+                } catch (injErr) {
+                    console.warn('Could not inject property details modal:', injErr);
+                }
+            }
+
             // ensure click-outside / escape-close listeners registered once
             if (!this._propertyModalEventsSetup) {
                 const tempModal = document.getElementById('propertyDetailsModal');
@@ -405,12 +546,12 @@ class PropertiesController {
             }
 
             // locate modal elements defined in index.html
-            const modal = document.getElementById('propertyDetailsModal');
+            modal = document.getElementById('propertyDetailsModal');
             const content = document.getElementById('propertyDetailsContent');
             const loading = document.getElementById('propertyDetailsLoading');
 
             if (!modal) {
-                console.error('Property details modal not found in DOM');
+                console.error('Property details modal not found in DOM after injection');
                 return;
             }
             // store id so other helpers can access it (edit, etc.)
@@ -725,16 +866,83 @@ class PropertiesController {
     }
 
     /**
-     * Open edit property modal
-     */
-    /**
-     * Open edit form modal for a property object.  The form fields are
-     * pre‑populated and the submit handler will call {@link updateProperty}.
-     *
-     * @param {Object} property  Property record (must contain id)
-     */
-    /**
-     * When the details modal is open there is a small "edit" button that
+            let units = [];
+            // 1) Prefer service helper when available
+            if (this.service && typeof this.service.getPropertyUnits === 'function') {
+                units = await this.service.getPropertyUnits(propertyId) || [];
+            }
+
+            // 2) Try the 'units' collection directly (newer schema)
+            if ((!units || units.length === 0) && window.firebaseDb) {
+                let snap = await window.firebaseDb.collection('units').where('propertyId', '==', propertyId).get();
+                if (snap.empty) {
+                    snap = await window.firebaseDb.collection('units').where('apartmentId', '==', propertyId).get();
+                }
+                if (!snap.empty) units = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            }
+
+            // 3) Fallback: some installations store rooms in a 'rooms' collection
+            if ((!units || units.length === 0) && window.firebaseDb) {
+                console.debug('populateRoomDetails: attempting rooms fallback for propertyId=', propertyId, 'editingProperty=', this._editingProperty);
+                // try by apartmentId/propertyId first
+                let roomSnap = await window.firebaseDb.collection('rooms').where('apartmentId', '==', propertyId).get();
+                console.debug('rooms.apartmentId query returned', roomSnap.size, 'docs');
+                if (roomSnap.empty) {
+                    roomSnap = await window.firebaseDb.collection('rooms').where('propertyId', '==', propertyId).get();
+                    console.debug('rooms.propertyId query returned', roomSnap.size);
+                }
+                
+                // 4) As a last resort, try matching by apartmentName or apartmentAddress from the editing context
+                if (roomSnap.empty && this._editingProperty) {
+                    const name = this._editingProperty.apartmentName || this._editingProperty.name || this._editingProperty.propertyName || '';
+                    const addr = this._editingProperty.apartmentAddress || this._editingProperty.address || this._editingProperty.propertyAddress || '';
+                    if (name) {
+                        const byName = await window.firebaseDb.collection('rooms').where('apartmentName', '==', name).get();
+                        console.debug('rooms.apartmentName query returned', byName.size, 'docs for name=', name);
+                        if (!byName.empty) roomSnap = byName;
+                    }
+                    if (roomSnap.empty && addr) {
+                        const byAddr = await window.firebaseDb.collection('rooms').where('apartmentAddress', '==', addr).get();
+                        console.debug('rooms.apartmentAddress query returned', byAddr.size, 'docs for addr=', addr);
+                        if (!byAddr.empty) roomSnap = byAddr;
+                    }
+                }
+
+                // Additional helpful query: landlordId + apartmentAddress (covers some legacy imports)
+                if (roomSnap.empty && this._editingProperty && (this._editingProperty.landlordId || this.currentUser?.uid)) {
+                    const landlordId = this._editingProperty.landlordId || this.currentUser?.uid;
+                    const addr = this._editingProperty.apartmentAddress || this._editingProperty.address || '';
+                    if (landlordId && addr) {
+                        const byLandlordAndAddr = await window.firebaseDb.collection('rooms')
+                            .where('landlordId', '==', landlordId)
+                            .where('apartmentAddress', '==', addr)
+                            .get();
+                        console.debug('rooms.landlordId+apartmentAddress query returned', byLandlordAndAddr.size);
+                        if (!byLandlordAndAddr.empty) roomSnap = byLandlordAndAddr;
+                    }
+                }
+
+                if (roomSnap && !roomSnap.empty) {
+                    // normalize room docs to the unit shape expected by the form
+                    units = roomSnap.docs.map(d => {
+                        const r = d.data();
+                        return {
+                            id: d.id,
+                            roomNumber: r.roomNumber || r.unitNumber || r.name || '',
+                            floor: r.floor || (r.floorNumber ? String(r.floorNumber) : ''),
+                            monthlyRent: r.monthlyRent || r.monthly_rate || r.rent || 0,
+                            securityDeposit: r.securityDeposit || r.security_deposit || r.deposit || 0,
+                            numberOfBedrooms: r.numberOfBedrooms || r.bedrooms || 0,
+                            numberOfBathrooms: r.numberOfBathrooms || r.bathrooms || 0,
+                            maxMembers: r.maxMembers || r.numberOfMembers || 1,
+                            propertyId: r.propertyId || r.apartmentId || propertyId,
+                            isAvailable: r.isAvailable !== undefined ? r.isAvailable : (r.status ? r.status !== 'occupied' : true),
+                            // preserve original fields for debugging if needed
+                            __raw: r
+                        };
+                    });
+                }
+            }
      * simply needs to funnel through to the same editing logic.  This helper
      * lets the dashboard and other pages call it without worrying about the
      * underlying implementation.

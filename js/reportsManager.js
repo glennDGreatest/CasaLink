@@ -10,6 +10,8 @@ class ReportsManager {
 
     async init(user) {
         this.currentUser = user;
+        // Ensure dataManager has the current user for predictive helpers
+        if (this.dataManager) this.dataManager.currentUser = user;
         console.log('✅ Reports Manager initialized for:', user.role);
 
         // attach predictive analytics helper
@@ -108,32 +110,44 @@ class ReportsManager {
 
         tenantChurn.forEach(c => {
             if (c.probability > 70) {
-                recommendations.push({ text: `Proactively reach out to ${c.tenant || 'tenant'} in ${c.unit} (${c.probability}% churn risk)`, priority: 'high' });
+                recommendations.push({
+                    text: `Proactively reach out to ${c.tenant || 'tenant'} in ${c.unit} (${c.probability}% churn risk)`,
+                    priority: 'high',
+                    explanation: `Predicted churn probability ${c.probability}% from recent missed payments, maintenance frequency, and lease duration.`
+                });
             }
         });
 
         rentOptimization.forEach(r => {
             if (r.probability > 60 && r.suggestedIncrease) {
-                recommendations.push({ text: `Rent for unit ${r.unit} appears under market; consider increasing by ₱${r.suggestedIncrease}`, priority: 'medium' });
+                recommendations.push({
+                    text: `Rent for unit ${r.unit} appears under market; consider increasing by ₱${r.suggestedIncrease}`,
+                    priority: 'medium',
+                    explanation: `Model compared current rent to local market median and demand; suggested increase = ₱${r.suggestedIncrease}.`
+                });
             }
         });
 
         latePaymentRisk.forEach(r => {
             if (r.probability > 40) {
-                recommendations.push({ text: `Monitor payments from ${r.tenant || 'tenant'} (${r.probability}% late payment risk)`, priority: 'medium' });
+                recommendations.push({
+                    text: `Monitor payments from ${r.tenant || 'tenant'} (${r.probability}% late payment risk)`,
+                    priority: 'medium',
+                    explanation: `Late payment risk ${r.probability}% derived from recent on-time rate, outstanding balance and payment history.`
+                });
             }
         });
 
         if (maintenanceTriage.some(m => m.priority === 'EMERGENCY')) {
-            recommendations.push({ text: 'Address emergency maintenance request(s) immediately.', priority: 'high' });
+            recommendations.push({ text: 'Address emergency maintenance request(s) immediately.', priority: 'high', explanation: 'One or more maintenance requests flagged as EMERGENCY based on reported severity and age.' });
         }
 
         if (tenantSentiment.label === 'negative') {
-            recommendations.push({ text: 'Follow up with tenants showing negative sentiment to prevent churn.', priority: 'high' });
+            recommendations.push({ text: 'Follow up with tenants showing negative sentiment to prevent churn.', priority: 'high', explanation: 'Aggregated tenant feedback shows negative sentiment which correlates with higher churn risk.' });
         }
 
         if (recommendations.length === 0) {
-            recommendations.push({ text: 'No urgent actions detected; continue monitoring.', priority: 'low' });
+            recommendations.push({ text: 'No urgent actions detected; continue monitoring.', priority: 'low', explanation: 'No models produced high-confidence risk signals based on available data.' });
         }
 
         return {
