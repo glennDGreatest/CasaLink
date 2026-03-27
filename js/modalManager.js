@@ -16,8 +16,8 @@ class ModalManager {
             
             footerContent = `
                 <div class="modal-footer">
-                    ${extraButtonsHTML}
                     <button class="btn btn-secondary" id="modalCancel">${options.cancelText || 'Cancel'}</button>
+                    ${extraButtonsHTML}
                     <button class="btn btn-primary" id="modalSubmit">${options.submitText || 'Save'}</button>
                 </div>
             `;

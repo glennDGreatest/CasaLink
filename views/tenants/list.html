@@ -188,11 +188,16 @@
     </style>
 </head>
 <body class="tenants-page">
-    <div class="tenants-container">
-        <div class="page-header">
-            <h1>Tenants</h1>
-            <button class="btn-primary" id="addTenantBtn">+ Add Tenant</button>
-        </div>
+        <div class="tenants-container">
+        <div class="page-header with-hint">
+                <div class="page-header-left">
+                    <h1>Tenants</h1>
+                    <div class="dashboard-hint" style="color: var(--dark-gray); margin-top:6px; font-size:0.95rem;">Manage tenant profiles — add or edit tenants, view contact info, and access lease details.</div>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-primary" id="addTenantBtn">+ Add Tenant</button>
+                </div>
+            </div>
 
         <div id="errorMessage" class="error-message"></div>
 

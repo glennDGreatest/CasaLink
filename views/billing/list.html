@@ -506,15 +506,18 @@
     </style>
 </head>
 <body class="billing-page">
-    <div class="billing-container">
-        <div class="page-header">
-            <div>
+        <div class="billing-container">
+        <div class="page-header with-hint">
+            <div class="page-header-left">
                 <h1>Billing & Payments</h1>
                 <p class="header-subtitle">Manage tenant bills and track payment status</p>
+                <div class="dashboard-hint" style="color: #64748b; margin-top:6px; font-size:0.95rem;">Create and manage invoices, track payments, and configure billing settings — generate bills, add custom charges, and review payment history.</div>
             </div>
-            <button class="btn-primary btn-create-bill" id="createBillBtn">
-                <i class="fas fa-plus"></i> Create Bill
-            </button>
+            <div class="header-actions">
+                <button class="btn-primary btn-create-bill" id="createBillBtn">
+                    <i class="fas fa-plus"></i> Create Bill
+                </button>
+            </div>
         </div>
 
         <div id="errorMessage" class="error-message"></div>

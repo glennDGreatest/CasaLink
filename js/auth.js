@@ -702,10 +702,112 @@ class AuthManager {
             if (error.code === 'auth/wrong-password') {
                 this.showPasswordError('Incorrect password. Please try again.');
             } else if (error.code === 'auth/email-already-in-use') {
-                this.showPasswordError('This email is already registered. Please use a different email.');
+                // Close the confirm modal (if present) and re-open the Add Tenant
+                // form with previously entered values, highlighting the email field
+                // and showing a user-friendly message.
                 if (modal) {
-                    ModalManager.closeModal(modal);
+                    try {
+                        ModalManager.closeModal(modal);
+                    } catch (e) {
+                        console.warn('Could not close modal:', e);
+                    }
                 }
+
+                // Build a context object for pre-filling the Add Tenant form
+                const context = {
+                    apartmentAddress: tenantData.apartmentAddress || tenantData.rentalAddress || '',
+                    apartmentName: tenantData.apartmentName || tenantData.apartment || '',
+                    prefill: {
+                        name: tenantData.name || '',
+                        occupation: tenantData.occupation || '',
+                        age: tenantData.age || '',
+                        phoneLocal: (tenantData.phone || '').replace(/^\+63/, ''),
+                        email: tenantData.email || '',
+                        rentalAmount: tenantData.rentalAmount || '',
+                        securityDeposit: tenantData.securityDeposit || '',
+                        dateOfEntry: tenantData.dateOfEntry || '',
+                        firstPaymentDate: tenantData.firstPaymentDate || ''
+                    },
+                    emailError: 'This email address is currently in use by another user, please enter a unique email address.'
+                };
+
+                try {
+                    // First, try to simulate pressing the Back button on the Confirm (password) modal
+                    const tryClickBackInModal = async (modalElem) => {
+                        if (!modalElem) return false;
+                        // Prefer the generated extra button id, otherwise match by text
+                        const btnById = modalElem.querySelector('#modalExtraBtn_0');
+                        let backBtn = btnById;
+                        if (!backBtn) {
+                            backBtn = Array.from(modalElem.querySelectorAll('.modal-footer button'))
+                                .find(b => b.textContent && b.textContent.trim().toLowerCase() === 'back');
+                        }
+                        if (backBtn) {
+                            try {
+                                backBtn.click();
+                                return true;
+                            } catch (e) {
+                                console.warn('Back button click failed:', e);
+                                return false;
+                            }
+                        }
+                        return false;
+                    };
+
+                    let clickedConfirmBack = false;
+                    // If app stores the password confirmation modal reference, use it
+                    const pwModal = (window.app && window.app.passwordConfirmationModal) || document.querySelector('.modal-overlay.active');
+                    if (pwModal) {
+                        clickedConfirmBack = await tryClickBackInModal(pwModal);
+                    }
+
+                    // If we clicked the Confirm Back, wait shortly for the Lease Agreement modal to open
+                    if (clickedConfirmBack) {
+                        await new Promise(res => setTimeout(res, 140));
+                        const leaseModal = (window.app && window.app.leaseAgreementModal) || document.querySelector('.modal-overlay.active');
+                        const clickedLeaseBack = await tryClickBackInModal(leaseModal);
+
+                        // After clicking Lease Back, wait for Add Tenant modal to appear
+                        if (clickedLeaseBack) {
+                            await new Promise(res => setTimeout(res, 200));
+                            // Ensure Add Tenant modal is present and highlight email
+                            const addModal = document.querySelector('.modal-overlay.active');
+                            const emailInput = addModal?.querySelector('#tenantEmail');
+                            if (emailInput) {
+                                emailInput.style.border = '1px solid var(--danger)';
+                                emailInput.style.boxShadow = '0 0 0 3px rgba(234,67,53,0.06)';
+                                let emailErrElem = addModal.querySelector('#tenantEmailErrorInline');
+                                if (!emailErrElem) {
+                                    emailErrElem = document.createElement('div');
+                                    emailErrElem.id = 'tenantEmailErrorInline';
+                                    emailErrElem.style.color = 'var(--danger)';
+                                    emailErrElem.style.marginTop = '6px';
+                                    emailErrElem.style.fontSize = '0.95rem';
+                                    emailInput.parentNode && emailInput.parentNode.appendChild(emailErrElem);
+                                }
+                                emailErrElem.textContent = 'This email address is currently in use by another user, please enter a unique email address.';
+                                try { emailInput.focus(); } catch (e) {}
+                            }
+
+                            // reject so caller knows creation failed
+                            reject(new Error('Email already in use'));
+                            return;
+                        }
+                    }
+
+                    // Fallback: directly reopen the Add Tenant form with prefill + emailError
+                    if (window.app && typeof window.app.showAddTenantForm === 'function') {
+                        const preRoom = tenantData.roomNumber || null;
+                        await new Promise(res => setTimeout(res, 80));
+                        await window.app.showAddTenantForm(preRoom, context);
+                    } else if (window.modalManager) {
+                        window.modalManager.openModal('addTenant');
+                    }
+                } catch (e) {
+                    console.error('Failed to re-open Add Tenant form:', e);
+                }
+
+                // Reject so caller knows creation failed
                 reject(new Error('Email already in use'));
             } else {
                 this.showPasswordError('Failed to create account: ' + error.message);

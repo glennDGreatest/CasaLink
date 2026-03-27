@@ -36,16 +36,47 @@ class SectionManager {
 
     showSection(sectionId) {
         console.log('Switching to section:', sectionId);
-        
-        // Hide all sections
-        document.querySelectorAll('.dashboard-section').forEach(section => {
-            section.classList.remove('active');
-        });
-
-        // Show target section
+        // If target is already active, do nothing
         const targetSection = document.getElementById(sectionId);
-        if (targetSection) {
+        const currentActive = document.querySelector('.dashboard-section.active');
+        if (currentActive && currentActive.id === sectionId) {
+            return;
+        }
+
+        const showTarget = () => {
+            if (!targetSection) return;
+            // Ensure it's visible for the animation
+            targetSection.style.display = 'block';
+
+            // Force a reflow so transitions/animations run
+            // eslint-disable-next-line no-unused-expressions
+            targetSection.offsetHeight;
+
             targetSection.classList.add('active');
+            targetSection.classList.add('section-enter');
+
+            // Remove the enter class after animation completes
+            setTimeout(() => {
+                targetSection.classList.remove('section-enter');
+            }, 420);
+        };
+
+        // If there is a currently active section, animate it out first
+        if (currentActive) {
+            // Start exit animation
+            currentActive.classList.remove('section-enter');
+            currentActive.classList.add('section-exit');
+
+            // After exit animation, hide it and show target
+            setTimeout(() => {
+                currentActive.classList.remove('active', 'section-exit');
+                currentActive.style.display = 'none';
+                showTarget();
+            }, 320);
+        } else {
+            // No active section, show immediately
+            showTarget();
+        }
             
             // Initialize charts if showing reports section
             if (sectionId === 'reportsSection') {

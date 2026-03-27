@@ -384,6 +384,67 @@ class DataManager {
 
             const docRef = await firebaseDb.collection('apartments').add(payload);
             console.log('✅ Apartment created with ID:', docRef.id);
+
+            // Try to show a notification (diagnostics + best-effort show)
+            try {
+                const title = 'This landlord just added this apartment';
+                const body = payload.apartmentName || payload.apartmentAddress || 'A new apartment was added';
+                try {
+                    console.log('Notification debug: NotificationManager=', window.NotificationManager, 'Notification.permission=', (typeof Notification !== 'undefined') ? Notification.permission : 'n/a');
+                    if (navigator && navigator.serviceWorker && typeof navigator.serviceWorker.getRegistration === 'function') {
+                        const reg = await navigator.serviceWorker.getRegistration();
+                        console.log('Notification debug: ServiceWorker registration=', reg);
+                    } else {
+                        console.log('Notification debug: serviceWorker.getRegistration not available');
+                    }
+                } catch (dbgErr) {
+                    console.warn('Notification debug log failed:', dbgErr);
+                }
+
+                if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                    try {
+                        console.log('Notification: using NotificationManager.showNotification');
+                        await window.NotificationManager.showNotification(title, { body, tag: 'landlord-add-property' });
+                        console.log('Notification: NotificationManager.showNotification completed');
+                    } catch (nmErr) {
+                        console.warn('NotificationManager.showNotification failed:', nmErr);
+                    }
+                } else if (typeof Notification !== 'undefined') {
+                    console.log('Notification: falling back to direct Notification API, current permission=', Notification.permission);
+                    if (Notification.permission === 'granted') {
+                        try {
+                            new Notification(title, { body, tag: 'landlord-add-property' });
+                            console.log('Notification: direct Notification fired (granted)');
+                        } catch (nErr) {
+                            console.warn('Direct Notification failed (granted):', nErr);
+                        }
+                    } else if (Notification.permission === 'default') {
+                        try {
+                            const perm = await Notification.requestPermission();
+                            console.log('Notification: requestPermission result=', perm);
+                            if (perm === 'granted') {
+                                try {
+                                    new Notification(title, { body, tag: 'landlord-add-property' });
+                                    console.log('Notification: direct Notification fired after request');
+                                } catch (nErr2) {
+                                    console.warn('Direct Notification failed after permission granted:', nErr2);
+                                }
+                            } else {
+                                console.warn('Notification permission denied or dismissed');
+                            }
+                        } catch (permErr) {
+                            console.warn('Notification.requestPermission() failed:', permErr);
+                        }
+                    } else {
+                        console.warn('Notification permission not granted:', Notification.permission);
+                    }
+                } else {
+                    console.warn('No Notification API available in this environment');
+                }
+            } catch (e) {
+                console.warn('Failed to show notification for new apartment:', e);
+            }
+
             return { id: docRef.id, ...payload };
         } catch (error) {
             console.error('❌ Error creating apartment:', error);
@@ -418,6 +479,66 @@ class DataManager {
 
             const apartmentRef = await firebaseDb.collection('apartments').add(apartmentPayload);
             console.log('✅ Apartment created with ID:', apartmentRef.id);
+
+            // Try to show notification (diagnostics + best-effort)
+            try {
+                const title = 'This landlord just added this apartment';
+                const body = apartmentPayload.apartmentName || apartmentPayload.apartmentAddress || 'A new apartment was added';
+                try {
+                    console.log('Notification debug: NotificationManager=', window.NotificationManager, 'Notification.permission=', (typeof Notification !== 'undefined') ? Notification.permission : 'n/a');
+                    if (navigator && navigator.serviceWorker && typeof navigator.serviceWorker.getRegistration === 'function') {
+                        const reg = await navigator.serviceWorker.getRegistration();
+                        console.log('Notification debug: ServiceWorker registration=', reg);
+                    } else {
+                        console.log('Notification debug: serviceWorker.getRegistration not available');
+                    }
+                } catch (dbgErr) {
+                    console.warn('Notification debug log failed:', dbgErr);
+                }
+
+                if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                    try {
+                        console.log('Notification: using NotificationManager.showNotification');
+                        await window.NotificationManager.showNotification(title, { body, tag: 'landlord-add-property' });
+                        console.log('Notification: NotificationManager.showNotification completed');
+                    } catch (nmErr) {
+                        console.warn('NotificationManager.showNotification failed:', nmErr);
+                    }
+                } else if (typeof Notification !== 'undefined') {
+                    console.log('Notification: falling back to direct Notification API, current permission=', Notification.permission);
+                    if (Notification.permission === 'granted') {
+                        try {
+                            new Notification(title, { body, tag: 'landlord-add-property' });
+                            console.log('Notification: direct Notification fired (granted)');
+                        } catch (nErr) {
+                            console.warn('Direct Notification failed (granted):', nErr);
+                        }
+                    } else if (Notification.permission === 'default') {
+                        try {
+                            const perm = await Notification.requestPermission();
+                            console.log('Notification: requestPermission result=', perm);
+                            if (perm === 'granted') {
+                                try {
+                                    new Notification(title, { body, tag: 'landlord-add-property' });
+                                    console.log('Notification: direct Notification fired after request');
+                                } catch (nErr2) {
+                                    console.warn('Direct Notification failed after permission granted:', nErr2);
+                                }
+                            } else {
+                                console.warn('Notification permission denied or dismissed');
+                            }
+                        } catch (permErr) {
+                            console.warn('Notification.requestPermission() failed:', permErr);
+                        }
+                    } else {
+                        console.warn('Notification permission not granted:', Notification.permission);
+                    }
+                } else {
+                    console.warn('No Notification API available in this environment');
+                }
+            } catch (e) {
+                console.warn('Failed to show notification for new apartment:', e);
+            }
 
             // Batch create rooms
             const batch = firebaseDb.batch();
@@ -3019,6 +3140,38 @@ class DataManager {
             // Finally remove archived tenant entry
             await archiveRef.delete();
 
+            // Notify current client that a tenant was restored (if running in browser)
+            try {
+                if (typeof window !== 'undefined') {
+                    const restoredName = (tenantData && (tenantData.name || tenantData.fullName || tenantData.displayName)) || tenantUserId;
+                    const title = `Tenant restored: ${restoredName}`;
+                    // collect restored lease room numbers
+                    const rooms = [];
+                    for (const leaseArchiveDoc of leaseArchivesQuery.docs) {
+                        const ld = leaseArchiveDoc.data().data || {};
+                        if (ld.roomNumber) rooms.push(ld.roomNumber);
+                    }
+                    const roomText = rooms.length ? ` Restored leases for rooms: ${rooms.join(', ')}.` : '';
+                    const body = `${restoredName} has been restored.${roomText}`;
+
+                    if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                        await window.NotificationManager.showNotification(title, { body: body, tag: 'tenant-restore' });
+                        console.log('Notification: used NotificationManager for tenant restore');
+                    } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                        new Notification(title, { body: body, tag: 'tenant-restore' });
+                        console.log('Notification: Notification API used for tenant restore');
+                    } else if (typeof Notification !== 'undefined' && Notification.permission !== 'denied') {
+                        const perm = await Notification.requestPermission();
+                        if (perm === 'granted') {
+                            new Notification(title, { body: body, tag: 'tenant-restore' });
+                            console.log('Notification: requested permission and created notification for tenant restore');
+                        }
+                    }
+                }
+            } catch (notifyErr) {
+                console.warn('Notification error (tenant restore):', notifyErr);
+            }
+
             return { originalCollection, originalId };
         } catch (error) {
             console.error('Error restoring archived tenant:', error);
@@ -3093,6 +3246,31 @@ class DataManager {
             }
 
             await archiveRef.delete();
+
+            // Notify client about restored lease (if running in browser)
+            try {
+                if (typeof window !== 'undefined') {
+                    const tenantName = leaseData?.tenantName || leaseData?.tenant || leaseData?.tenantId || tenantId || 'Tenant';
+                    const title = `Lease restored for ${tenantName}`;
+                    const body = `Lease ${leaseId} has been restored${leaseData.roomNumber ? ' (Room ' + leaseData.roomNumber + ')' : ''}.`;
+
+                    if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                        await window.NotificationManager.showNotification(title, { body: body, tag: 'lease-restore' });
+                        console.log('Notification: used NotificationManager for lease restore');
+                    } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                        new Notification(title, { body: body, tag: 'lease-restore' });
+                        console.log('Notification: Notification API used for lease restore');
+                    } else if (typeof Notification !== 'undefined' && Notification.permission !== 'denied') {
+                        const perm = await Notification.requestPermission();
+                        if (perm === 'granted') {
+                            new Notification(title, { body: body, tag: 'lease-restore' });
+                            console.log('Notification: requested permission and created notification for lease restore');
+                        }
+                    }
+                }
+            } catch (notifyErr) {
+                console.warn('Notification error (lease restore):', notifyErr);
+            }
 
             return { originalCollection: 'leases', originalId: leaseId };
         } catch (error) {
@@ -3179,6 +3357,42 @@ class DataManager {
                 }
             } catch (innerErr) {
                 console.warn('Could not archive leases for tenant:', innerErr);
+            }
+
+            // Notify current client that a tenant was archived/removed
+            try {
+                if (typeof window !== 'undefined') {
+                    // attempt to read latest user doc for display name
+                    let displayName = tenantUserId;
+                    try {
+                        const ud = await firebaseDb.collection('users').doc(tenantUserId).get();
+                        if (ud.exists) {
+                            const u = ud.data() || {};
+                            displayName = u.name || u.fullName || u.displayName || displayName;
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
+
+                    const title = `Tenant removed: ${displayName}`;
+                    const body = `${displayName} (${tenantUserId}) has been removed/archived from the system.`;
+
+                    if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                        await window.NotificationManager.showNotification(title, { body: body, tag: 'tenant-archived' });
+                        console.log('Notification: used NotificationManager for tenant archive');
+                    } else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                        new Notification(title, { body: body, tag: 'tenant-archived' });
+                        console.log('Notification: Notification API used for tenant archive');
+                    } else if (typeof Notification !== 'undefined' && Notification.permission !== 'denied') {
+                        const perm = await Notification.requestPermission();
+                        if (perm === 'granted') {
+                            new Notification(title, { body: body, tag: 'tenant-archived' });
+                            console.log('Notification: requested permission and created notification for tenant archive');
+                        }
+                    }
+                }
+            } catch (notifyErr) {
+                console.warn('Notification error (tenant archive):', notifyErr);
             }
 
             return { tenantId, tenantUserId };

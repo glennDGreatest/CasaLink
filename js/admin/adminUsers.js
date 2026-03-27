@@ -564,6 +564,20 @@ class AdminUsers {
                     </div>
                 </div>
                 ` : ''}
+
+                ${user.role === 'tenant' && (user.scannedIdBase64 || user.idUploadUrl) ? `
+                <div class="user-detail-section">
+                    <h4>Scanned ID</h4>
+                    <div class="detail-row">
+                        <div class="detail-label">Uploaded ID:</div>
+                        <div class="detail-value">
+                            <div style="max-width:360px;">
+                                <img class="scanned-id-thumb" src="${user.scannedIdBase64 || user.idUploadUrl}" style="max-width:100%; border:1px solid #ddd; border-radius:8px;" alt="Scanned ID" />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
                 
                 ${user.role === 'landlord' ? `
                 <div class="user-detail-section">
@@ -583,6 +597,22 @@ class AdminUsers {
             document.getElementById('editUserBtn').onclick = () => {
                 this.editUser(userId);
             };
+            
+            // Attach click handler for scanned ID thumbnail to open full-size modal
+            try {
+                const userDetailModalEl = document.getElementById('userDetailModal');
+                if (userDetailModalEl) {
+                    userDetailModalEl.querySelectorAll('img.scanned-id-thumb').forEach(img => {
+                        img.style.cursor = 'pointer';
+                        img.addEventListener('click', function () {
+                            const content = `<div style="text-align:center; padding:12px;"><img src="${this.src}" style="max-width:100%; max-height:80vh; border-radius:6px;" /></div>`;
+                            ModalManager.openModal(content, { title: 'Scanned ID', width: '80vw', maxWidth: '900px', showFooter: false });
+                        });
+                    });
+                }
+            } catch (e) {
+                console.warn('Failed to attach scanned ID click handler:', e);
+            }
             
         } catch (error) {
             console.error('Error showing user details:', error);

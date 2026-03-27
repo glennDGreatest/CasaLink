@@ -63,6 +63,9 @@
             <i class="fas fa-spinner fa-spin"></i>
             <p>Loading CasaLink...</p>
         </div>
+        <div class="section-description" style="color: var(--dark-gray); margin: 8px 0 16px; font-size: 0.95rem;">
+            Manage your properties, units, and tenants in one place — add new properties, edit unit details, and view occupancy, maintenance, and quick actions for each property.
+        </div>
         
         <!-- Reports Section (initially hidden) -->
         <section id="reportsSection" class="dashboard-section" style="display: none;">
@@ -252,41 +255,19 @@
 
     <!-- Properties Section (Landlord Only) -->
     <div id="propertiesSection" class="dashboard-section" style="display: none;">
-        <div class="page-header">
-            <div class="page-title">Property Management</div>
+        <div class="page-header with-hint">
+            <div class="page-header-left">
+                <div class="page-title">Property Management</div>
+                <div class="dashboard-hint">Shows live unit occupancy and quick actions for each unit.</div>
+            </div>
             <div class="header-actions">
-                <div class="search-box">
-                    <i class="fas fa-search"></i>
-                    <input type="text" id="propertySearch" class="search-input" placeholder="Search properties...">
-                </div>
                 <button class="btn btn-primary" id="addPropertyBtn" onclick="if(window.casaLink && typeof window.casaLink.showAddPropertyForm==='function'){window.casaLink.showAddPropertyForm();}">
                     <i class="fas fa-plus"></i> Add New Property
                 </button>
             </div>
         </div>
 
-        <!-- Filter Bar -->
-        <div class="properties-filter-bar">
-            <div class="filter-group">
-                <label>Type:</label>
-                <select id="propertyTypeFilter" class="filter-select">
-                    <option value="">All Types</option>
-                    <option value="single-family">Single Family</option>
-                    <option value="multi-family">Multi-Family</option>
-                    <option value="commercial">Commercial</option>
-                    <option value="condo">Condo</option>
-                </select>
-            </div>
-            <div class="filter-group">
-                <label>Status:</label>
-                <select id="propertyStatusFilter" class="filter-select">
-                    <option value="">All Status</option>
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                </select>
-            </div>
-            <button class="btn btn-secondary btn-sm" id="clearFiltersBtn"><i class="fas fa-times"></i> Clear</button>
-        </div>
+        <!-- Filter Bar removed -->
 
         <!-- Loading State -->
         <div id="propertiesLoading" class="loading-skeleton" style="display: none;">

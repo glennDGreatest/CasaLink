@@ -1668,6 +1668,64 @@ header > .container {
     gap: 15px;
 }
 
+/* Header variant when a small hint/description sits under the title */
+.page-header.with-hint {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #ffffff; /* subtle contrast from page background */
+    padding: 14px 18px;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(16,24,40,0.06);
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+.page-header.with-hint .page-header-left {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+}
+
+.page-header.with-hint .page-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-dark);
+    text-align: left;
+}
+
+.page-header.with-hint .dashboard-hint {
+    color: var(--dark-gray);
+    font-size: 0.95rem;
+    margin: 0;
+}
+
+/* Actions on the right */
+.page-header.with-hint .header-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+/* Responsive: stack header on small screens */
+@media (max-width: 720px) {
+    .page-header.with-hint {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .page-header.with-hint .header-actions {
+        justify-content: flex-start;
+        margin-top: 10px;
+        width: 100%;
+    }
+
+    .page-header.with-hint .header-actions .btn {
+        width: auto;
+    }
+}
+
 .page-title {
     font-size: 1.8rem;
     font-weight: 600;
@@ -3487,6 +3545,43 @@ table tbody tr:hover {
 
 .dashboard-section {
     margin-bottom: 40px;
+}
+
+/* Section transition: used when switching between main sections */
+.dashboard-section {
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 320ms ease, transform 320ms ease;
+    pointer-events: none;
+    display: none; /* hidden by default; JS will set display when activating */
+}
+
+.dashboard-section.active {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+    display: block;
+}
+
+/* Optional extra enter animation class for a subtle pop */
+.dashboard-section.section-enter {
+    animation: sectionPop 360ms cubic-bezier(.2,.9,.2,1);
+}
+
+@keyframes sectionPop {
+    0% { opacity: 0; transform: translateY(10px) scale(0.995); }
+    60% { opacity: 1; transform: translateY(-4px) scale(1.002); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Exit animation: smooth fade + slide down */
+.dashboard-section.section-exit {
+    animation: sectionExit 300ms cubic-bezier(.2,.9,.2,1) forwards;
+}
+
+@keyframes sectionExit {
+    0% { opacity: 1; transform: translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateY(8px) scale(0.995); }
 }
 
 .fade-in {

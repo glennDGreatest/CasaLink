@@ -675,15 +675,15 @@ class CasaLink {
        
         return `
             <div class="reports-dashboard">
-                <div class="page-header">
-                    <div class="page-title">Reports & Analytics</div>
+                <div class="page-header with-hint">
+                    <div class="page-header-left">
+                        <div class="page-title">Reports & Analytics</div>
+                        <div class="dashboard-hint">Snapshot of key metrics – revenue, occupancy, collections, and maintenance performance – updated live as data changes.</div>
+                    </div>
                     <div class="header-actions">
-                        <button class="btn btn-outline-primary" id="scheduleReportBtn">
-                            <i class="fas fa-calendar-alt"></i> Schedule
-                        </button>
-                        <button class="btn btn-secondary" id="exportCSVBtn"><i class="fas fa-file-csv"></i> CSV</button>
-                        <button class="btn btn-secondary" id="exportPDFBtn"><i class="fas fa-file-pdf"></i> PDF</button>
-                        <button class="btn btn-secondary" id="exportExcelBtn"><i class="fas fa-file-excel"></i> Excel</button>
+                            <button class="btn btn-secondary" id="exportReportsBtn" onclick="casaLink.exportReportsPreview()">
+                                <i class="fas fa-download"></i> Export Report
+                            </button>
                         <button class="btn btn-primary" id="refreshReportsBtn">
                             <i class="fas fa-sync-alt"></i> Refresh Data
                         </button>
@@ -695,7 +695,6 @@ class CasaLink {
                 <div class="section-title">
                     <i class="fas fa-tachometer-alt"></i> Executive Summary
                 </div>
-                <p class="section-description">Snapshot of key metrics – revenue, occupancy, collections, and maintenance performance – updated live as data changes.</p>
                 <div class="quick-stats-row" id="executiveSummary"></div>
 
                 <!-- ML Predictions -->
@@ -1221,18 +1220,17 @@ class CasaLink {
 
             return `
                 <div class="page-content">
-                    <div class="page-header">
-                        <div>
-                            <h1 class="page-title">Archive</h1>
-                            <p style="color: var(--dark-gray); margin-top: 5px;">View and restore deleted tenants, leases, and properties.</p>
-                        </div>
-                    </div>
+                            <div class="page-header with-hint">
+                                <div class="page-header-left">
+                                    <h1 class="page-title">Archive</h1>
+                                    <div class="dashboard-hint">View and restore deleted tenants, leases, and properties.</div>
+                                </div>
+                            </div>
 
                     <div style="margin-bottom: 20px; display: flex; gap: 12px; flex-wrap: wrap;">
                         <button class="btn btn-outline-primary" data-archive-filter="all">All</button>
                         <button class="btn btn-outline-primary" data-archive-filter="tenant">Tenants</button>
                         <button class="btn btn-outline-primary" data-archive-filter="lease">Leases</button>
-                        <button class="btn btn-outline-primary" data-archive-filter="property">Properties</button>
                     </div>
 
                     <div id="archiveTableContainer">
@@ -3671,9 +3669,12 @@ class CasaLink {
         
         return `
             <div class="page-content">
-                <div class="page-header">
-                    <h1 class="page-title">Welcome to Your Dashboard</h1>
-                    <div>
+                <div class="page-header with-hint">
+                    <div class="page-header-left">
+                        <h1 class="page-title">Welcome to Your Dashboard</h1>
+                        <div class="dashboard-hint">Shows live unit occupancy and quick actions for each unit.</div>
+                    </div>
+                    <div class="header-actions">
                         <button class="btn btn-secondary" onclick="casaLink.exportDashboardReport()"><i class="fas fa-download"></i> Export Report</button>
                         <button class="btn btn-primary" id="addPropertyBtn"><i class="fas fa-plus"></i> Add Property</button>
                     </div>
@@ -3681,6 +3682,7 @@ class CasaLink {
 
                 <!-- UNIT GRID SECTION -->
                 <div class="card-group-title">Apartment Unit Layout</div>
+                <div class="dashboard-hint" style="color: var(--dark-gray); font-size:0.95rem; margin:6px 0 12px;">Shows live unit occupancy and quick actions for each unit.</div>
 
                 <!-- Live Stats -->
                 <div class="unit-legend-horizontal">
@@ -3727,6 +3729,7 @@ class CasaLink {
 
                 <!-- FINANCIAL OVERVIEW SECTION -->
                 <div class="card-group-title">Financial Overview</div>
+                <div class="dashboard-hint" style="color: var(--dark-gray); font-size:0.95rem; margin:6px 0 12px;">Quick summary of rent roll, collections, and unpaid bills.</div>
                 <div class="card-group">
                     <div class="card" data-clickable="collection" style="cursor: pointer;" title="Click to view collection details">
                         <div class="card-header">
@@ -3767,6 +3770,7 @@ class CasaLink {
 
                 <!-- OPERATIONS SECTION -->
                 <div class="card-group-title">Operations Overview</div>
+                <div class="dashboard-hint" style="color: var(--dark-gray); font-size:0.95rem; margin:6px 0 12px;">Operational alerts and tasks — maintenance, renewals, and expirations.</div>
                 <div class="card-group">
                     <div class="card" data-clickable="renewals" style="cursor: pointer;" title="Click to view lease renewals">
                         <div class="card-header">
@@ -6864,6 +6868,7 @@ class CasaLink {
 
                 <!-- BILLING & PAYMENTS SECTION -->
                 <div class="card-group-title">Billing & Payments</div>
+                <div class="dashboard-hint" style="color: var(--dark-gray); font-size:0.95rem; margin:6px 0 12px;">Manage invoices, payments, and billing settings — create custom bills, track collections, and review payment history.</div>
                 <div class="card-group">
                     <div class="card">
                         <div class="card-header">
@@ -8260,6 +8265,67 @@ class CasaLink {
         }
     }
 
+    async exportReportsPreview() {
+        try {
+            this.showNotification('Generating reports preview...', 'info');
+
+            const landlordId = this.currentUser?.uid || this.currentUser?.id;
+            const [tenants, leases, rooms, bills, maintenance] = await Promise.all([
+                DataManager.getTenants(landlordId),
+                DataManager.getLandlordLeases(landlordId),
+                DataManager.getLandlordUnits(landlordId),
+                DataManager.getBills(landlordId),
+                DataManager.getMaintenanceRequests(landlordId)
+            ]);
+
+            const apartments = [...new Set(rooms.map(r => r.apartmentAddress).filter(Boolean))];
+
+            // Generate a reports-specific printable report (captures analytics view)
+            const reportHTML = this.generateReportsPrintableReport(tenants, leases, rooms, bills, maintenance, apartments);
+            window.currentReportHTML = reportHTML;
+
+            const modal = ModalManager.openModal(reportHTML, {
+                title: 'Reports - Print Preview',
+                showFooter: true,
+                width: '95%',
+                maxWidth: '1200px'
+            });
+
+            const modalFooter = modal.querySelector('.modal-footer');
+            if (modalFooter) {
+                const downloadButton = document.createElement('button');
+                downloadButton.id = 'downloadReportBtn';
+                downloadButton.className = 'btn btn-success';
+                downloadButton.style.print = 'none';
+                downloadButton.innerHTML = '<i class="fas fa-download"></i> Download as PDF';
+                downloadButton.addEventListener('click', () => {
+                    this.downloadReportAsPDF();
+                });
+
+                modalFooter.innerHTML = '';
+                modalFooter.appendChild(downloadButton);
+            }
+
+            // Cleanup when modal closes
+            const modalOverlay = modal.closest('.modal-overlay');
+            if (modalOverlay) {
+                const checkClosed = setInterval(() => {
+                    if (!document.body.contains(modalOverlay)) {
+                        const pc = document.getElementById('printReportContainer');
+                        if (pc) pc.remove();
+                        window.currentReportHTML = null;
+                        clearInterval(checkClosed);
+                    }
+                }, 500);
+            }
+
+            this.showNotification('Reports preview ready.', 'success');
+        } catch (error) {
+            console.error('Error generating reports preview:', error);
+            this.showNotification('Failed to generate reports preview', 'error');
+        }
+    }
+
     generateReportCSV(tenants, leases, rooms, bills, maintenance) {
         let csv = 'CASALINK PROPERTY MANAGEMENT REPORT\n';
         csv += `Generated: ${new Date().toLocaleString('en-US')}\n\n`;
@@ -8814,12 +8880,12 @@ class CasaLink {
         const leaseEnd = formatDate(lease.leaseEnd);
         const createdAt = formatDate(lease.createdAt);
 
-        // Get occupant information
-        const occupants = lease.occupants || [tenant.name];
-        const primaryTenant = occupants[0];
+        // Get occupant information (ensure sensible defaults)
+        const occupants = Array.isArray(lease.occupants) ? lease.occupants : (lease.occupants ? [lease.occupants] : (tenant.name ? [tenant.name] : []));
+        const primaryTenant = occupants.length > 0 ? occupants[0] : (tenant.name || 'Primary Tenant');
         const additionalMembers = occupants.slice(1);
-        const totalOccupants = lease.totalOccupants || occupants.length;
-        const maxOccupants = lease.maxOccupants || 1;
+        const totalOccupants = lease.totalOccupants || occupants.length || 1;
+        const maxOccupants = lease.maxOccupants || totalOccupants;
 
         return `
             <div class="lease-information-modal" style="max-height: 70vh; overflow-y: auto;">
@@ -8958,16 +9024,16 @@ class CasaLink {
         try {
             console.log('📄 Loading lease information for tenant:', tenantId);
             
-            // Show loading state
+            // Show a temporary loading state while fetching tenant data
             const modalContent = `
                 <div style="text-align: center; padding: 40px;">
                     <i class="fas fa-spinner fa-spin" style="font-size: 2rem; color: var(--royal-blue);"></i>
-                    <p>Loading lease information...</p>
+                    <p>Loading tenant information...</p>
                 </div>
             `;
 
             const modal = ModalManager.openModal(modalContent, {
-                title: 'Loading Lease Information',
+                title: 'Tenant Information',
                 showFooter: false
             });
 
@@ -8994,13 +9060,70 @@ class CasaLink {
                 lease = { id: leaseQuery.docs[0].id, ...leaseQuery.docs[0].data() };
             }
 
-            // Generate lease information content
-            const leaseContent = this.generateLeaseInformationContent(tenant, lease);
-            
+            // Build tenant information content (include scanned ID image if available)
+            const scannedIdSrc = tenant.scannedIdBase64 || tenant.idUploadUrl || null;
+
+            const tenantHeader = `
+                <div style="display:flex; gap:15px; align-items:center; margin-bottom:12px;">
+                    <div style="width:72px; height:72px; border-radius:8px; background:#eef2ff; display:flex; align-items:center; justify-content:center; font-size:1.6rem;">${tenant.name ? tenant.name.charAt(0).toUpperCase() : ''}</div>
+                    <div>
+                        <h3 style="margin:0 0 6px 0;">${tenant.name || 'Tenant'}</h3>
+                        <div style="color:var(--dark-gray); font-size:0.95rem;">${tenant.email || 'No email'}</div>
+                        <div style="color:var(--dark-gray); font-size:0.9rem;">${tenant.phone || 'No phone'}</div>
+                    </div>
+                </div>
+            `;
+
+            const scannedIdHtml = scannedIdSrc ? `
+                <div style="margin-top:12px;">
+                    <h4 style="margin-bottom:8px;">Scanned ID</h4>
+                    <div style="max-width:420px;">
+                        <img class="scanned-id-thumb" src="${scannedIdSrc}" alt="Scanned ID" style="max-width:100%; border:1px solid #ddd; border-radius:8px;" />
+                    </div>
+                </div>
+            ` : '';
+
+            // Lease content (if lease exists, reuse existing generator)
+            const leaseSection = lease ? this.generateLeaseInformationContent(tenant, lease) : `
+                <div style="text-align:center; padding:18px; color:var(--dark-gray); background:#fff; border-radius:8px;">
+                    <i class="fas fa-file-contract" style="font-size:1.6rem; opacity:0.6;"></i>
+                    <div style="margin-top:8px;">No active lease found for this tenant.</div>
+                </div>
+            `;
+
+            const tenantContent = `
+                <div class="tenant-info-modal" style="max-height:70vh; overflow-y:auto;">
+                    ${tenantHeader}
+
+                    <div style="display:grid; grid-template-columns: 1fr; gap:12px;">
+                        <div style="background: #fff; padding: 12px; border-radius:8px;">
+                            <div style="font-size:0.95rem; color:var(--dark-gray); margin-bottom:6px;"><strong>Room / Unit:</strong> ${tenant.roomNumber || 'N/A'}</div>
+                            <div style="font-size:0.95rem; color:var(--dark-gray); margin-bottom:6px;"><strong>Status:</strong> ${tenant.status || (tenant.isActive ? 'active' : 'inactive') || 'N/A'}</div>
+                            <div style="font-size:0.95rem; color:var(--dark-gray);"><strong>Landlord ID:</strong> ${tenant.landlordId || 'Not assigned'}</div>
+                        </div>
+
+                        ${scannedIdHtml}
+
+                        <div style="background: transparent;">
+                            ${leaseSection}
+                        </div>
+                    </div>
+                </div>
+            `;
+
             // Update modal content
             const modalBody = modal.querySelector('.modal-body');
             if (modalBody) {
-                modalBody.innerHTML = leaseContent;
+                modalBody.innerHTML = tenantContent;
+
+                // Attach click listeners to scanned ID thumbnails to open full-size modal
+                modalBody.querySelectorAll('img.scanned-id-thumb').forEach(img => {
+                    img.style.cursor = 'pointer';
+                    img.addEventListener('click', function () {
+                        const content = `<div style="text-align:center; padding:12px;"><img src="${this.src}" style="max-width:100%; max-height:80vh; border-radius:6px;" /></div>`;
+                        ModalManager.openModal(content, { title: 'Scanned ID', width: '80vw', maxWidth: '900px', showFooter: false });
+                    });
+                });
             }
 
             // Add footer with close button
@@ -12122,6 +12245,229 @@ class CasaLink {
         
         return reportHTML;
         
+        return reportHTML;
+    }
+
+    generateReportsPrintableReport(tenants = [], leases = [], rooms = [], bills = [], maintenance = [], apartments = []) {
+        const now = new Date();
+        const currentDateTime = now.toLocaleString('en-PH');
+
+        // Summary metrics
+        const totalUnits = rooms.length;
+        const occupiedUnits = leases.filter(l => l.isActive).length;
+        const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
+        const totalRevenue = leases.filter(l => l.isActive).reduce((sum, lease) => sum + (lease.monthlyRent || 0), 0);
+        const paidBills = bills.filter(b => b.status === 'paid').length;
+        const unpaidBills = bills.filter(b => b.status !== 'paid').length;
+        const overdueBills = bills.filter(b => b.status === 'overdue' || (b.dueDate && new Date(b.dueDate) < now));
+        const overdueAmount = overdueBills.reduce((s, b) => s + (Number(b.amount) || 0), 0);
+        const openMaintenance = maintenance.filter(m => m.status !== 'completed' && m.status !== 'resolved').length;
+
+        // Capture charts if present
+        const chartIds = ['revenueTrendChart','paymentMethodsChart','revenuePerUnitChart','occupancyChart','latePaymentsChart','maintenanceCostsChart','retentionChart','rentComparisonChart'];
+        const chartsHtml = chartIds.map(id => {
+            try {
+                const canvas = document.getElementById(id);
+                if (canvas && typeof canvas.toDataURL === 'function') {
+                    const dataUrl = canvas.toDataURL('image/png');
+                    return `<div style="margin-bottom:18px; text-align:center;"><img src="${dataUrl}" alt="${id}" style="max-width:100%; height:auto; border-radius:8px; box-shadow:0 4px 18px rgba(0,0,0,0.08);"/></div>`;
+                }
+            } catch (e) {
+                console.warn('chart capture failed', id, e);
+            }
+            return '';
+        }).join('\n');
+
+        // Lists / tables for manager
+        const overdueList = overdueBills.slice(0, 12);
+        const upcomingExpirations = leases
+            .filter(l => l.isActive && l.leaseEnd)
+            .map(l => ({...l, endsInDays: Math.ceil((new Date(l.leaseEnd) - now) / (24*60*60*1000))}))
+            .filter(l => l.endsInDays >= 0 && l.endsInDays <= 90)
+            .sort((a,b) => a.endsInDays - b.endsInDays)
+            .slice(0, 12);
+
+        // Top tenants by paid amount (aggregate bills)
+        const paymentsByTenant = {};
+        bills.filter(b => b.status === 'paid').forEach(b => {
+            const key = b.tenantName || b.roomNumber || 'Unknown';
+            paymentsByTenant[key] = (paymentsByTenant[key] || 0) + (Number(b.amount) || 0);
+        });
+        const topTenants = Object.entries(paymentsByTenant).sort((a,b) => b[1] - a[1]).slice(0, 10);
+
+        // Revenue by unit (active leases)
+        const revenueByUnit = leases.filter(l => l.isActive).map(l => ({room: l.roomNumber || '-', tenant: l.tenantName || '-', rent: Number(l.monthlyRent) || 0})).sort((a,b) => b.rent - a.rent).slice(0, 12);
+
+        // Maintenance highlights
+        const maintHighlights = maintenance.filter(m => m.status !== 'completed' && (m.priority === 'high' || m.priority === 'urgent')).slice(0, 12);
+
+        const reportHTML = `
+            <div class="printable-report" style="padding:30px;background:white;font-family:Segoe UI, Tahoma, Geneva, Verdana, sans-serif;color:#1f2937;">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px;">
+                    <div>
+                        <h1 style="margin:0;color:#0f172a;font-size:22px;">Reports & Analytics — Portfolio Snapshot</h1>
+                        <div style="color:#6b7280;font-size:13px;margin-top:6px;">Useful KPIs and operational lists for quick landlord actions.</div>
+                    </div>
+                    <div style="text-align:right;color:#94a3b8;font-size:12px;">Generated: ${currentDateTime}</div>
+                </div>
+
+                <!-- KPI CARDS -->
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px;">
+                    <div style="padding:12px;border-radius:8px;background:#f8fafc;">
+                        <div style="font-size:12px;color:#475569;font-weight:700;">Occupancy</div>
+                        <div style="font-size:20px;font-weight:800;color:#0f172a;">${occupancyRate}%</div>
+                        <div style="font-size:12px;color:#6b7280;">${occupiedUnits} / ${totalUnits} units</div>
+                    </div>
+                    <div style="padding:12px;border-radius:8px;background:#fff7ed;">
+                        <div style="font-size:12px;color:#475569;font-weight:700;">Monthly Revenue (est.)</div>
+                        <div style="font-size:20px;font-weight:800;color:#be185d;">₱${totalRevenue.toLocaleString('en-PH')}</div>
+                        <div style="font-size:12px;color:#6b7280;">By active leases</div>
+                    </div>
+                    <div style="padding:12px;border-radius:8px;background:#f0fdf4;">
+                        <div style="font-size:12px;color:#475569;font-weight:700;">Payments (paid)</div>
+                        <div style="font-size:20px;font-weight:800;color:#16a34a;">${paidBills}</div>
+                        <div style="font-size:12px;color:#6b7280;">Unpaid: ${unpaidBills}</div>
+                    </div>
+                    <div style="padding:12px;border-radius:8px;background:#fff1f2;">
+                        <div style="font-size:12px;color:#475569;font-weight:700;">Overdue</div>
+                        <div style="font-size:20px;font-weight:800;color:#dc2626;">${overdueBills.length}</div>
+                        <div style="font-size:12px;color:#6b7280;">Amount: ₱${Math.round(overdueAmount).toLocaleString('en-PH')}</div>
+                    </div>
+                </div>
+
+                <!-- Charts (if available) -->
+                ${chartsHtml}
+
+                <div style="display:grid;grid-template-columns:2fr 1fr;gap:18px;margin-top:8px;">
+                    <!-- Left column: operational tables -->
+                    <div>
+                        <!-- Overdue Bills -->
+                        <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:16px;border-bottom:2px solid #e6eefc;padding-bottom:8px;">⚠️ Overdue Bills</h2>
+                        ${overdueList.length > 0 ? `
+                            <table style="width:100%;border-collapse:collapse;margin:8px 0 16px 0;font-size:12px;">
+                                <thead>
+                                    <tr style="background:#f8fafc;color:#0f172a;font-weight:700;">
+                                        <th style="padding:8px;text-align:left;">Unit</th>
+                                        <th style="padding:8px;text-align:left;">Tenant</th>
+                                        <th style="padding:8px;text-align:left;">Amount</th>
+                                        <th style="padding:8px;text-align:left;">Due</th>
+                                        <th style="padding:8px;text-align:left;">Days Late</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${overdueList.map(b => {
+                                        const due = b.dueDate ? new Date(b.dueDate) : null;
+                                        const daysLate = due ? Math.ceil((now - due) / (24*60*60*1000)) : '-';
+                                        return `
+                                            <tr>
+                                                <td style="padding:8px;">${b.roomNumber || '-'}</td>
+                                                <td style="padding:8px;">${b.tenantName || '-'}</td>
+                                                <td style="padding:8px;">₱${(Number(b.amount) || 0).toLocaleString('en-PH')}</td>
+                                                <td style="padding:8px;">${due ? due.toLocaleDateString('en-PH') : '-'}</td>
+                                                <td style="padding:8px;">${daysLate}</td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        ` : `<div style="padding:12px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:6px;margin:8px 0 16px 0;color:#166534;">No overdue bills found.</div>`}
+
+                        <!-- Upcoming Lease Expirations -->
+                        <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:16px;border-bottom:2px solid #e6eefc;padding-bottom:8px;">📅 Upcoming Lease Expirations (next 90 days)</h2>
+                        ${upcomingExpirations.length > 0 ? `
+                            <table style="width:100%;border-collapse:collapse;margin:8px 0 16px 0;font-size:12px;">
+                                <thead>
+                                    <tr style="background:#f8fafc;color:#0f172a;font-weight:700;">
+                                        <th style="padding:8px;text-align:left;">Unit</th>
+                                        <th style="padding:8px;text-align:left;">Tenant</th>
+                                        <th style="padding:8px;text-align:left;">Lease End</th>
+                                        <th style="padding:8px;text-align:left;">Days Left</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${upcomingExpirations.map(l => `
+                                        <tr>
+                                            <td style="padding:8px;">${l.roomNumber || '-'}</td>
+                                            <td style="padding:8px;">${l.tenantName || '-'}</td>
+                                            <td style="padding:8px;">${new Date(l.leaseEnd).toLocaleDateString('en-PH')}</td>
+                                            <td style="padding:8px;">${l.endsInDays}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        ` : `<div style="padding:12px;background:#f0fdf4;border-left:4px solid #16a34a;border-radius:6px;margin:8px 0 16px 0;color:#166534;">No leases expiring within the next 90 days.</div>`}
+
+                        <!-- Top Tenants by Paid Amount -->
+                        <h2 style="margin:0 0 8px 0;color:#0f172a;font-size:16px;border-bottom:2px solid #e6eefc;padding-bottom:8px;">🏆 Top Tenants (by payments)</h2>
+                        ${topTenants.length > 0 ? `
+                            <table style="width:100%;border-collapse:collapse;margin:8px 0 16px 0;font-size:12px;">
+                                <thead>
+                                    <tr style="background:#f8fafc;color:#0f172a;font-weight:700;">
+                                        <th style="padding:8px;text-align:left;">Tenant / Unit</th>
+                                        <th style="padding:8px;text-align:left;">Total Paid</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${topTenants.map(t => `
+                                        <tr>
+                                            <td style="padding:8px;">${t[0]}</td>
+                                            <td style="padding:8px;">₱${Math.round(t[1]).toLocaleString('en-PH')}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        ` : `<div style="padding:12px;background:#f8faf4;border-left:4px solid #0ea5a4;border-radius:6px;margin:8px 0 16px 0;color:#065f46;">No payment records available.</div>`}
+                    </div>
+
+                    <!-- Right column: quick lists and revenue by unit -->
+                    <div>
+                        <h3 style="margin:0 0 8px 0;color:#0f172a;font-size:15px;">Revenue by Unit (top)</h3>
+                        ${revenueByUnit.length > 0 ? `
+                            <table style="width:100%;border-collapse:collapse;margin:8px 0 16px 0;font-size:12px;">
+                                <thead>
+                                    <tr style="background:#f8fafc;color:#0f172a;font-weight:700;">
+                                        <th style="padding:8px;text-align:left;">Unit</th>
+                                        <th style="padding:8px;text-align:left;">Tenant</th>
+                                        <th style="padding:8px;text-align:left;">Monthly Rent</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${revenueByUnit.map(r => `
+                                        <tr>
+                                            <td style="padding:8px;">${r.room}</td>
+                                            <td style="padding:8px;">${r.tenant}</td>
+                                            <td style="padding:8px;">₱${Math.round(r.rent).toLocaleString('en-PH')}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        ` : `<div style="padding:12px;background:#f3f4f6;border-radius:6px;margin:8px 0 16px 0;color:#374151;">No active leases to calculate revenue by unit.</div>`}
+
+                        <h3 style="margin:0 0 8px 0;color:#0f172a;font-size:15px;">Maintenance Highlights</h3>
+                        ${maintHighlights.length > 0 ? `
+                            <ul style="margin:8px 0 16px 16px;font-size:13px;color:#374151;">
+                                ${maintHighlights.map(m => `<li style="margin-bottom:8px;"><strong>${m.title || m.type || 'Request'}</strong> — ${m.roomNumber || m.unit || '-'} — ${m.priority || 'normal'} — ${m.status || 'open'}</li>`).join('')}
+                            </ul>
+                        ` : `<div style="padding:12px;background:#ecfeff;border-radius:6px;margin:8px 0 16px 0;color:#065f46;">No urgent maintenance items.</div>`}
+
+                        <div style="margin-top:12px;padding:12px;background:#ffffff;border:1px solid #eef2ff;border-radius:8px;font-size:12px;color:#374151;">
+                            <strong>Quick Actions</strong>
+                            <ol style="margin:8px 0 0 18px;">
+                                <li>Contact top overdue tenants and schedule payment plans.</li>
+                                <li>Review leases expiring within 90 days and plan renewals.</li>
+                                <li>Assign urgent maintenance to technicians to reduce downtime.</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top:22px;border-top:1px solid #e6eefc;padding-top:14px;color:#6b7280;font-size:12px;text-align:center;">
+                    <div style="font-weight:700;">CasaLink — Property Management Report</div>
+                    <div>Generated ${currentDateTime}</div>
+                </div>
+            </div>
+        `;
+
         return reportHTML;
     }
 
@@ -17267,6 +17613,39 @@ class CasaLink {
             ModalManager.closeModal(this.createBillModal);
             this.showNotification('Custom bill created successfully!', 'success');
 
+            // Attempt to show a system push notification for the created custom bill
+            try {
+                console.log('Notification debug: preparing custom bill notification', Notification.permission, !!window.NotificationManager);
+                const title = `New bill — ${billData.tenantName}`;
+                const body = `${billData.description || 'Custom bill'} • ₱${(billData.totalAmount || 0).toFixed(2)} due ${billData.dueDate} — Unit ${billData.roomNumber || 'N/A'} at ${billData.apartment || 'N/A'}`;
+
+                if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                    await window.NotificationManager.showNotification(title, {
+                        body: body,
+                        tag: 'custom-bill',
+                        actions: [
+                            { action: 'view_bill', title: 'View Bill' }
+                        ]
+                    });
+                    console.log('Notification: used NotificationManager for custom bill');
+                } else if (Notification && Notification.permission === 'granted') {
+                    new Notification(title, { body: body, tag: 'custom-bill' });
+                    console.log('Notification: Notification API used for custom bill');
+                } else if (Notification && Notification.permission !== 'denied') {
+                    const perm = await Notification.requestPermission();
+                    if (perm === 'granted') {
+                        new Notification(title, { body: body, tag: 'custom-bill' });
+                        console.log('Notification: requested permission and created notification for custom bill');
+                    } else {
+                        console.log('Notification: permission denied for custom bill');
+                    }
+                } else {
+                    console.log('Notification: not available or permission denied for custom bill');
+                }
+            } catch (err) {
+                console.warn('Notification error (custom bill):', err);
+            }
+
             // Refresh bills list
             setTimeout(() => {
                 this.loadBillsData();
@@ -20804,21 +21183,26 @@ class CasaLink {
 
         return `
         <div class="page-content">
-            <div class="page-header" style="display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap;">
-                <h1 class="page-title">Billing & Payments</h1>
-                <div class="quick-actions-bar" style="margin-bottom: 0; padding: 0; justify-content: flex-end;">
-                    <button class="btn btn-primary" onclick="casaLink.showCreateBillForm()">
-                        <i class="fas fa-plus"></i> Create Custom Bill
-                    </button>
-                    <button class="btn btn-secondary" onclick="casaLink.forceGenerateBills()">
-                        <i class="fas fa-sync"></i> Generate Monthly Rental Bills
-                    </button>
-                    <button class="btn btn-warning" onclick="casaLink.applyLateFeesManually()">
-                        <i class="fas fa-clock"></i> Apply Late Fees
-                    </button>
-                    <button class="btn btn-secondary" onclick="casaLink.exportBills()">
-                        <i class="fas fa-download"></i> Export Bills and Payments
-                    </button>
+            <div class="page-header with-hint">
+                <div class="page-header-left">
+                    <h1 class="page-title">Billing & Payments</h1>
+                    <div class="dashboard-hint">Create and manage invoices, track payments, and configure billing settings — generate bills, add custom charges, and review payment history.</div>
+                </div>
+                <div class="header-actions">
+                    <div class="quick-actions-bar" style="margin-bottom: 0; padding: 0; justify-content: flex-end;">
+                        <button class="btn btn-primary" onclick="casaLink.showCreateBillForm()">
+                            <i class="fas fa-plus"></i> Create Custom Bill
+                        </button>
+                        <button class="btn btn-secondary" onclick="casaLink.forceGenerateBills()">
+                            <i class="fas fa-sync"></i> Generate Monthly Rental Bills
+                        </button>
+                        <button class="btn btn-warning" onclick="casaLink.applyLateFeesManually()">
+                            <i class="fas fa-clock"></i> Apply Late Fees
+                        </button>
+                        <button class="btn btn-secondary" onclick="casaLink.exportBills()">
+                            <i class="fas fa-download"></i> Export Bills and Payments
+                        </button>
+                    </div>
                 </div>
             </div>
             
@@ -21806,18 +22190,14 @@ class CasaLink {
         }
     }, 100);
 
-    return `
+        return `
         <div class="page-content">
-            <div class="page-header">
-                <h1 class="page-title">Lease Management</h1>
-                <div>
-                    <button class="btn btn-secondary" onclick="casaLink.showLeaseSettings?.()">
-                        <i class="fas fa-cog"></i> Settings
-                    </button>
-                    <button class="btn btn-primary" onclick="casaLink.createLease?.()">
-                        <i class="fas fa-plus"></i> Create Lease
-                    </button>
+            <div class="page-header with-hint">
+                <div class="page-header-left">
+                    <h1 class="page-title">Lease Management</h1>
+                    <div class="dashboard-hint">View and manage leases — renewals, expirations, and lease details.</div>
                 </div>
+                <div class="header-actions"></div>
             </div>
 
             <div class="card">
@@ -21841,8 +22221,12 @@ class CasaLink {
     async getMaintenancePage() {
         return `
         <div class="page-content">
-            <div class="page-header maintenance">
+            <div class="page-header with-hint maintenance">
+                <div class="page-header-left">
                     <h1 class="page-title">Maintenance Management</h1>
+                    <div class="dashboard-hint">Track and manage maintenance requests — view status, assign staff, and update progress.</div>
+                </div>
+                <div class="header-actions">
                     <div style="display:flex; align-items:center; gap:12px; flex-wrap: wrap;">
                         <div class="quick-actions-bar" style="margin-bottom:0;padding:0;">
                             ${this.currentUser && this.currentUser.role === 'tenant' ? `
@@ -21865,6 +22249,7 @@ class CasaLink {
                         ` : ''}
                     </div>
                 </div>
+            </div>
 
             <!-- Maintenance Stats -->
             <div class="card-group">
@@ -21996,11 +22381,16 @@ class CasaLink {
     async getTenantsPage() {
         return `
         <div class="page-content">
-            <div class="page-header">
-                <h1 class="page-title">Tenant Management</h1>
-                <button class="btn btn-primary" onclick="casaLink.showAddTenantForm()">
-                    <i class="fas fa-plus"></i> Add Tenant
-                </button>
+            <div class="page-header with-hint">
+                <div class="page-header-left">
+                    <h1 class="page-title">Tenant Management</h1>
+                    <div class="dashboard-hint">Manage tenant profiles — add or edit tenants, view contact info, and access lease details.</div>
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-primary" onclick="casaLink.showAddTenantForm()">
+                        <i class="fas fa-plus"></i> Add Tenant
+                    </button>
+                </div>
             </div>
             
             <div class="card">
@@ -22360,6 +22750,61 @@ class CasaLink {
             if (aptInput) aptInput.value = context.apartmentName;
         }
 
+        // If caller provided prefill values for the tenant form, populate inputs
+        if (context.prefill) {
+            const p = context.prefill || {};
+            const setVal = (selector, value) => {
+                try {
+                    const el = modal.querySelector(selector);
+                    if (el && value !== undefined && value !== null) el.value = value;
+                } catch (e) { /* ignore */ }
+            };
+
+            setVal('#tenantName', p.name || '');
+            setVal('#tenantOccupation', p.occupation || '');
+            setVal('#tenantAge', p.age || '');
+            setVal('#tenantPhoneLocal', p.phoneLocal || '');
+            setVal('#tenantEmail', p.email || '');
+            // rental amount & deposit may be readonly but set them anyway
+            setVal('#rentalAmount', p.rentalAmount || '');
+            setVal('#securityDeposit', p.securityDeposit || '');
+            setVal('#dateOfEntry', p.dateOfEntry || '');
+            setVal('#firstPaymentDate', p.firstPaymentDate || '');
+
+            // If roomNumber provided in prefill, attempt to preselect it as well
+            if (p.roomNumber) {
+                const roomSelect = modal.querySelector('#roomNumber');
+                if (roomSelect) {
+                    roomSelect.value = p.roomNumber;
+                    roomSelect.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }
+        }
+
+        // If an email-specific error message was supplied, highlight the email field
+        if (context.emailError) {
+            const emailInput = modal.querySelector('#tenantEmail');
+            if (emailInput) {
+                emailInput.style.border = '1px solid var(--danger)';
+                emailInput.style.boxShadow = '0 0 0 3px rgba(234,67,53,0.06)';
+
+                // inline error element under the field
+                let emailErrElem = modal.querySelector('#tenantEmailErrorInline');
+                if (!emailErrElem) {
+                    emailErrElem = document.createElement('div');
+                    emailErrElem.id = 'tenantEmailErrorInline';
+                    emailErrElem.style.color = 'var(--danger)';
+                    emailErrElem.style.marginTop = '6px';
+                    emailErrElem.style.fontSize = '0.95rem';
+                    const parent = emailInput.parentNode;
+                    if (parent) parent.appendChild(emailErrElem);
+                }
+                emailErrElem.textContent = context.emailError;
+                // focus email for quick correction
+                setTimeout(() => { try { emailInput.focus(); } catch (e) {} }, 50);
+            }
+        }
+
         // Immediately pre-select room if we have one (avoid timing races);
         // also retry a few times in case the modal isn't attached yet.
         if (preselectedRoom) {
@@ -22454,6 +22899,59 @@ class CasaLink {
                         
                         console.log('✅ Room pre-selected:', preselectedRoom);
                     }
+                }
+
+                // Re-apply prefill/emailError if provided (robustness when opened programmatically)
+                try {
+                    if (context && context.prefill) {
+                        const p = context.prefill || {};
+                        const setValId = (id, value) => {
+                            try {
+                                const el = document.getElementById(id.replace('#', '')) || document.querySelector(id);
+                                if (el && value !== undefined && value !== null) el.value = value;
+                            } catch (e) {}
+                        };
+
+                        setValId('#tenantName', p.name || '');
+                        setValId('#tenantOccupation', p.occupation || '');
+                        setValId('#tenantAge', p.age || '');
+                        setValId('#tenantPhoneLocal', p.phoneLocal || '');
+                        setValId('#tenantEmail', p.email || '');
+                        setValId('#rentalAmount', p.rentalAmount || '');
+                        setValId('#securityDeposit', p.securityDeposit || '');
+                        setValId('#dateOfEntry', p.dateOfEntry || '');
+                        setValId('#firstPaymentDate', p.firstPaymentDate || '');
+
+                        if (p.roomNumber) {
+                            const rs = document.getElementById('roomNumber');
+                            if (rs) {
+                                rs.value = p.roomNumber;
+                                rs.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                        }
+                    }
+
+                    if (context && context.emailError) {
+                        const emailInput = document.getElementById('tenantEmail');
+                        if (emailInput) {
+                            emailInput.style.border = '1px solid var(--danger)';
+                            emailInput.style.boxShadow = '0 0 0 3px rgba(234,67,53,0.06)';
+
+                            let emailErrElem = document.getElementById('tenantEmailErrorInline');
+                            if (!emailErrElem) {
+                                emailErrElem = document.createElement('div');
+                                emailErrElem.id = 'tenantEmailErrorInline';
+                                emailErrElem.style.color = 'var(--danger)';
+                                emailErrElem.style.marginTop = '6px';
+                                emailErrElem.style.fontSize = '0.95rem';
+                                emailInput.parentNode && emailInput.parentNode.appendChild(emailErrElem);
+                            }
+                            emailErrElem.textContent = context.emailError;
+                            setTimeout(() => { try { emailInput.focus(); } catch (e) {} }, 50);
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Could not apply prefill/emailError after modal open:', e);
                 }
             }, 300);
 
@@ -23219,6 +23717,47 @@ class CasaLink {
         const agreementModal = ModalManager.openModal(modalContent, {
             title: 'Lease Agreement - Step 2 of 3',
             submitText: 'Next: Confirm Creation',
+            extraButtons: [
+                {
+                    className: 'btn btn-secondary',
+                    text: 'Back',
+                    onClick: () => {
+                        try {
+                            // Close the lease agreement modal then reopen Add Tenant form
+                            ModalManager.closeModal(this.leaseAgreementModal || agreementModal);
+                        } catch (e) { /* ignore */ }
+
+                        // Small delay to allow modal removal animation/DOM cleanup
+                        setTimeout(() => {
+                            const preRoom = data.roomNumber || null;
+                            const context = {
+                                apartmentAddress: data.rentalAddress || '',
+                                apartmentName: data.apartmentName || data.apartment || '',
+                                prefill: {
+                                    roomNumber: data.roomNumber || '',
+                                    name: data.name || '',
+                                    occupation: data.occupation || '',
+                                    age: data.age || '',
+                                    phoneLocal: (data.phone || '').replace(/^\+63/, ''),
+                                    email: data.email || '',
+                                    rentalAmount: data.rentalAmount || '',
+                                    securityDeposit: data.securityDeposit || '',
+                                    dateOfEntry: data.dateOfEntry || '',
+                                    firstPaymentDate: data.firstPaymentDate || ''
+                                }
+                            };
+
+                            try {
+                                this.showAddTenantForm(preRoom, context);
+                            } catch (err) {
+                                console.error('Could not reopen Add Tenant form from Back button:', err);
+                                // fallback: open generic addTenant modal
+                                try { window.modalManager.openModal('addTenant'); } catch (e) {}
+                            }
+                        }, 80);
+                    }
+                }
+            ],
             onSubmit: () => this.showPasswordConfirmation(data, formattedLeaseEnd)
         });
 
@@ -23256,10 +23795,30 @@ class CasaLink {
         // Close the lease agreement modal
         ModalManager.closeModal(this.leaseAgreementModal);
 
-        // Open password confirmation modal
+        // Open password confirmation modal with a Back button to return to the lease agreement
         const passwordModal = ModalManager.openModal(modalContent, {
             title: 'Confirm Your Identity - Step 3 of 3',
             submitText: 'Create Tenant Account',
+            extraButtons: [
+                {
+                    className: 'btn btn-secondary',
+                    text: 'Back',
+                    onClick: () => {
+                        try {
+                            ModalManager.closeModal(this.passwordConfirmationModal);
+                        } catch (e) { /* ignore */ }
+
+                        // Re-open the Lease Agreement modal after a short delay
+                        setTimeout(() => {
+                            try {
+                                this.showLeaseAgreementModal(null, tenantData);
+                            } catch (err) {
+                                console.error('Could not reopen Lease Agreement from Back button:', err);
+                            }
+                        }, 80);
+                    }
+                }
+            ],
             onSubmit: () => this.createTenantAccountWithPassword(tenantData, leaseEndDate)
         });
 
@@ -23844,6 +24403,7 @@ class CasaLink {
             }
 
             // If still no room doc found, create one so we have a reference to update
+            let createdNewRoom = false;
             if (!room) {
                 console.log('ℹ️ Room document not found for', tenantData.roomNumber, '— creating a new room document');
                 const newRoomPayload = {
@@ -23867,6 +24427,7 @@ class CasaLink {
                 roomDocRef = newRoomRef;
                 room = newRoomPayload;
                 room.id = newRoomRef.id;
+                createdNewRoom = true;
                 console.log('✅ Created fallback room doc with id:', newRoomRef.id);
             }
 
@@ -23895,6 +24456,69 @@ class CasaLink {
                         updatedAt: new Date().toISOString()
                     });
                     console.log('✅ Room doc updated as occupied:', roomDocRef.id);
+
+                    // Determine whether this was a vacant room (or newly created)
+                    const wasVacant = createdNewRoom || (room && (room.isAvailable === true || room.isAvailable === undefined));
+
+                    if (wasVacant) {
+                        // Fire a push notification for tenant assignment
+                        try {
+                            const title = `Tenant moved in: ${tenantData.name}`;
+                            const rentInfo = tenantData.rentalAmount ? ` • Rent ₱${(tenantData.rentalAmount).toLocaleString()}` : '';
+                            const body = `Room ${tenantData.roomNumber} at ${tenantData.rentalAddress || room.apartmentAddress || 'the property'} — ${tenantData.name}${rentInfo}`;
+
+                            try {
+                                console.log('Notification debug: NotificationManager=', window.NotificationManager, 'Notification.permission=', (typeof Notification !== 'undefined') ? Notification.permission : 'n/a');
+                                if (navigator && navigator.serviceWorker && typeof navigator.serviceWorker.getRegistration === 'function') {
+                                    const reg = await navigator.serviceWorker.getRegistration();
+                                    console.log('Notification debug: ServiceWorker registration=', reg);
+                                }
+                            } catch (dbgErr) {
+                                console.warn('Notification debug log failed:', dbgErr);
+                            }
+
+                            if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                                try {
+                                    await window.NotificationManager.showNotification(title, { body, tag: 'landlord-tenant-added' });
+                                    console.log('Notification: NotificationManager.showNotification completed');
+                                } catch (nmErr) {
+                                    console.warn('NotificationManager.showNotification failed:', nmErr);
+                                }
+                            } else if (typeof Notification !== 'undefined') {
+                                if (Notification.permission === 'granted') {
+                                    try {
+                                        new Notification(title, { body, tag: 'landlord-tenant-added' });
+                                        console.log('Notification: direct Notification fired (granted)');
+                                    } catch (nErr) {
+                                        console.warn('Direct Notification failed (granted):', nErr);
+                                    }
+                                } else if (Notification.permission === 'default') {
+                                    try {
+                                        const perm = await Notification.requestPermission();
+                                        console.log('Notification: requestPermission result=', perm);
+                                        if (perm === 'granted') {
+                                            try {
+                                                new Notification(title, { body, tag: 'landlord-tenant-added' });
+                                                console.log('Notification: direct Notification fired after request');
+                                            } catch (nErr2) {
+                                                console.warn('Direct Notification failed after permission granted:', nErr2);
+                                            }
+                                        } else {
+                                            console.warn('Notification permission denied or dismissed');
+                                        }
+                                    } catch (permErr) {
+                                        console.warn('Notification.requestPermission() failed:', permErr);
+                                    }
+                                } else {
+                                    console.warn('Notification permission not granted:', Notification.permission);
+                                }
+                            } else {
+                                console.warn('No Notification API available in this environment');
+                            }
+                        } catch (notifyErr) {
+                            console.warn('Failed to show tenant assignment notification:', notifyErr);
+                        }
+                    }
                 }
             } catch (err) {
                 console.warn('⚠️ Failed updating room document occupancy:', err.message);
@@ -25802,23 +26426,25 @@ class CasaLink {
                 submitBtn.disabled = true;
             }
 
-            // Upload ID file to Firebase Storage
+            // Read ID file as Base64 data URL (store in user doc similar to landlord QR base64)
             const idFile = idUpload.files[0];
-            const idUploadUrl = await this.uploadIdFile(idFile, this.currentUser.uid);
+            const idUploadBase64 = await this.uploadIdFile(idFile, this.currentUser.uid);
 
             // Update lease agreement with acceptance
             await firebaseDb.collection('leases').doc(leaseId).update({
                 agreementViewed: true,
                 agreementAccepted: true,
                 agreementAcceptedDate: new Date().toISOString(),
-                idUploadUrl: idUploadUrl,
+                idUploadUrl: idUploadBase64,
                 idVerified: false // Landlord can later verify the ID
             });
 
             // CRITICAL: Update user status to verified and mark onboarding complete
+            // Also store the scanned ID as base64 in `scannedIdBase64` (like gcashQrBase64)
             await firebaseDb.collection('users').doc(this.currentUser.uid).update({
                 status: 'verified',
-                idUploadUrl: idUploadUrl,
+                idUploadUrl: idUploadBase64,
+                scannedIdBase64: idUploadBase64,
                 verificationCompletedAt: new Date().toISOString(),
                 requiresPasswordChange: false, // NOW we set this to false
                 updatedAt: new Date().toISOString()
@@ -25861,17 +26487,22 @@ class CasaLink {
     }
 
     async uploadIdFile(file, userId) {
-        // This is a simplified version - you'll need to implement Firebase Storage
-        // For now, we'll return a placeholder URL
-        console.log('Uploading ID file for user:', userId);
-        
-        // TODO: Implement actual Firebase Storage upload
-        // const storageRef = firebase.storage().ref();
-        // const fileRef = storageRef.child(`tenant_ids/${userId}/${file.name}`);
-        // await fileRef.put(file);
-        // return await fileRef.getDownloadURL();
-        
-        return `https://example.com/placeholder-id-upload/${userId}`;
+        // Read the file as a Base64 data URL and return it so we can store
+        // the scanned ID directly in the users document (similar to gcashQrBase64)
+        console.log('Uploading ID file for user (base64 read):', userId);
+
+        if (!file) return null;
+
+        return await new Promise((resolve, reject) => {
+            try {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = (err) => reject(new Error('Failed to read file for upload'));
+                reader.readAsDataURL(file);
+            } catch (err) {
+                reject(err);
+            }
+        });
     }
 
     // ===== UTILITY METHODS =====
@@ -25949,6 +26580,26 @@ window.testAppBinding = function() {
         console.log('showUnitDetails available:', 
             typeof window.app.showUnitDetails === 'function');
     }
+
+    // Global helper to open a full-size image modal for scanned IDs or other images
+    window.openScannedIdModal = function(imageSrc, title) {
+        try {
+            if (!imageSrc) return;
+            const content = `
+                <div style="text-align:center; padding:12px;">
+                    <img src="${imageSrc}" style="max-width:100%; max-height:80vh; border-radius:6px;" />
+                </div>
+            `;
+            ModalManager.openModal(content, {
+                title: title || 'Image Preview',
+                width: '80vw',
+                maxWidth: '900px',
+                showFooter: false
+            });
+        } catch (e) {
+            console.error('openScannedIdModal error:', e);
+        }
+    };
 };
 
 // Initialize the app when DOM is loaded

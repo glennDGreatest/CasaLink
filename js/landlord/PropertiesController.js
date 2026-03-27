@@ -836,6 +836,78 @@ window.PropertiesController = class PropertiesController {
                 const docRef = await window.firebaseDb.collection(this._collection).add(propertyData);
                 console.log('✅ Property created:', docRef.id);
                 this.showToast('Property created successfully', 'success');
+
+                // Emit an in-app event so other parts of the UI can react immediately
+                try {
+                    const apartment = { id: docRef.id, ...propertyData };
+                    document.dispatchEvent(new CustomEvent('propertyAdded', { detail: { apartment } }));
+                } catch (e) {
+                    console.warn('Failed to dispatch propertyAdded event:', e);
+                }
+
+                // Show a push notification for landlords (tries NotificationManager, then direct Notification API)
+                try {
+                    const title = 'This landlord just added this apartment';
+                    const body = propertyData.name || 'A new apartment was added';
+
+                    // Diagnostic logs to help debug why notifications may not appear
+                    try {
+                        console.log('Notification debug: NotificationManager=', window.NotificationManager, 'Notification.permission=', (typeof Notification !== 'undefined') ? Notification.permission : 'n/a');
+                        if (navigator && navigator.serviceWorker && typeof navigator.serviceWorker.getRegistration === 'function') {
+                            const reg = await navigator.serviceWorker.getRegistration();
+                            console.log('Notification debug: ServiceWorker registration=', reg);
+                        } else {
+                            console.log('Notification debug: serviceWorker.getRegistration not available');
+                        }
+                    } catch (dbgErr) {
+                        console.warn('Notification debug log failed:', dbgErr);
+                    }
+
+                    if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                        try {
+                            console.log('Notification: using NotificationManager.showNotification');
+                            await window.NotificationManager.showNotification(title, { body, tag: 'landlord-add-property' });
+                            console.log('Notification: NotificationManager.showNotification completed');
+                        } catch (nmErr) {
+                            console.warn('NotificationManager.showNotification failed:', nmErr);
+                        }
+                    } else if (typeof Notification !== 'undefined') {
+                        console.log('Notification: falling back to direct Notification API, current permission=', Notification.permission);
+                        // If permission already granted, show directly
+                        if (Notification.permission === 'granted') {
+                            try {
+                                new Notification(title, { body, tag: 'landlord-add-property' });
+                                console.log('Notification: direct Notification fired (granted)');
+                            } catch (nErr) {
+                                console.warn('Direct Notification failed (granted):', nErr);
+                            }
+                        } else if (Notification.permission === 'default') {
+                            // Ask once and show if granted
+                            try {
+                                const perm = await Notification.requestPermission();
+                                console.log('Notification: requestPermission result=', perm);
+                                if (perm === 'granted') {
+                                    try {
+                                        new Notification(title, { body, tag: 'landlord-add-property' });
+                                        console.log('Notification: direct Notification fired after request');
+                                    } catch (nErr2) {
+                                        console.warn('Direct Notification failed after permission granted:', nErr2);
+                                    }
+                                } else {
+                                    console.warn('Notification permission denied or dismissed');
+                                }
+                            } catch (permErr) {
+                                console.warn('Notification.requestPermission() failed:', permErr);
+                            }
+                        } else {
+                            console.warn('Notification permission not granted:', Notification.permission);
+                        }
+                    } else {
+                        console.warn('No Notification API available in this environment');
+                    }
+                } catch (e) {
+                    console.warn('Failed to show notification for new property:', e);
+                }
             }
 
             // Reload and close
