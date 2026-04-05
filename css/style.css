@@ -1651,6 +1651,18 @@ header > .container {
     text-align: center;
 }
 
+.menu-badge {
+    background-color: var(--info);
+    color: white;
+    border-radius: 10px;
+    padding: 2px 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-left: auto;
+    min-width: 18px;
+    text-align: center;
+}
+
 .content-area {
     flex: 1;
     padding: 25px;
@@ -2212,6 +2224,40 @@ header > .container {
 .activity-item.unread {
     background-color: rgba(22, 38, 96, 0.03);
     border-left: 3px solid var(--royal-blue);
+}
+
+.activity-item.unseen-activity {
+    background-color: rgba(59, 130, 246, 0.05);
+    border-left: 3px solid var(--info);
+    font-weight: 500;
+}
+
+.activity-item.seen-activity {
+    background-color: rgba(34, 197, 94, 0.05);
+    border-left: 3px solid var(--success);
+    opacity: 0.8;
+}
+
+.activity-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.unseen-badge {
+    background-color: var(--info);
+    color: white;
+}
+
+.seen-badge {
+    background-color: var(--success);
+    color: white;
+    font-size: 0.7rem;
+    padding: 1px 4px;
 }
 
 .activity-icon {

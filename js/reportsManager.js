@@ -75,22 +75,18 @@ class ReportsManager {
             }
         }
 
-        // Fallback mock results when data is unavailable
+        // If no ML results are available, keep empty arrays so the UI can display a no-data state.
         if (!tenantChurn || tenantChurn.length === 0) {
-            tenantChurn = [
-                { unit: '2A', tenant: 'Tenant A', probability: 82, riskLevel: 'HIGH', reason: "Hasn't paid in 2 weeks" },
-                { unit: '4C', tenant: 'Tenant B', probability: 48, riskLevel: 'MEDIUM', reason: 'Late payments twice' },
-                { unit: '1B', tenant: 'Tenant C', probability: 12, riskLevel: 'LOW', reason: 'Long-term, on time' }
-            ];
+            tenantChurn = [];
         }
         if (!rentOptimization || rentOptimization.length === 0) {
             rentOptimization = [];
         }
         if (!latePaymentRisk || latePaymentRisk.length === 0) {
-            latePaymentRisk = [{ tenant: 'Tenant A', unit: '2A', probability: 52, riskLevel: 'MEDIUM' }];
+            latePaymentRisk = [];
         }
         if (!maintenanceTriage || maintenanceTriage.length === 0) {
-            maintenanceTriage = [{ id: 'req-123', title: 'Leaky faucet', priority: 'URGENT', confidence: 70, responseTime: 'Within 24 hours' }];
+            maintenanceTriage = [];
         }
         if (!tenantSentiment) {
             tenantSentiment = { label: 'neutral', confidence: 50, score: 0 };
@@ -104,6 +100,11 @@ class ReportsManager {
         if (!anomalies || !anomalies.length) {
             anomalies = ['None detected'];
         }
+
+        const hasData = !!(
+            (financialReports && financialReports.hasData) ||
+            (maintenanceReports && maintenanceReports.hasData)
+        );
 
         // Build actionable recommendations based on ML outputs
         // Pre-fetch landlord units/apartments so recommendation text can show readable names instead of IDs
@@ -197,7 +198,11 @@ class ReportsManager {
         }
 
         if (recommendations.length === 0) {
-            recommendations.push({ text: 'No urgent actions detected; continue monitoring.', priority: 'low', explanation: 'No models produced high-confidence risk signals based on available data.' });
+            if (!hasData) {
+                recommendations.push({ text: 'Not enough data available to generate recommendations.', priority: 'low', explanation: 'Collect more rent, payment, and maintenance history so the system can analyze trends and identify issues.' });
+            } else {
+                recommendations.push({ text: 'No urgent actions detected; continue monitoring.', priority: 'low', explanation: 'No models produced high-confidence risk signals based on available data.' });
+            }
         }
 
         return {
@@ -211,6 +216,7 @@ class ReportsManager {
             tenantSentiment,
             anomalies,
             recommendations
+            ,hasData
         };
     }
 
@@ -263,20 +269,21 @@ class ReportsManager {
                     collectionRate: { collected: collectionRate, pending: 100 - collectionRate },
                     latePayments: { labels, data: lateData },
                     paymentMethods: { labels: Object.keys(paymentMethodsCount), data: Object.values(paymentMethodsCount) },
-                    revenueByUnit: { labels: Object.keys(revenueByUnit), data: Object.values(revenueByUnit) }
+                    revenueByUnit: { labels: Object.keys(revenueByUnit), data: Object.values(revenueByUnit) },
+                    hasData: bills.length > 0
                 };
             } catch (err) {
-                console.warn('Unable to build financial reports from live data, falling back to mocks', err);
+                console.warn('Unable to build financial reports from live data', err);
             }
         }
 
-        // fallback to mocks
         return {
-            monthlyRevenue: this.generateMonthlyRevenueData(period),
-            collectionRate: this.generateCollectionRateData(),
-            latePayments: this.generateLatePaymentsData(period),
-            paymentMethods: this.generatePaymentMethodsData(),
-            revenueByUnit: this.generateRevenueByUnitData()
+            monthlyRevenue: { labels: this.getMonthsForPeriod(period), currentYear: [], previousYear: [] },
+            collectionRate: { collected: 0, pending: 100 },
+            latePayments: { labels: this.getMonthsForPeriod(period), data: [] },
+            paymentMethods: { labels: [], data: [] },
+            revenueByUnit: { labels: [], data: [] },
+            hasData: false
         };
     }
 
@@ -296,16 +303,17 @@ class ReportsManager {
                 const rentComparison = this.generateRentComparisonData();
                 const vacancyRate = this.generateVacancyData();
 
-                return { occupancy, rentComparison, vacancyRate };
+                return { occupancy, rentComparison, vacancyRate, hasData: occupied + vacant > 0 };
             } catch (err) {
                 console.warn('Unable to fetch units for property reports', err);
             }
         }
 
         return {
-            occupancy: this.generateOccupancyData(),
-            rentComparison: this.generateRentComparisonData(),
-            vacancyRate: this.generateVacancyData()
+            occupancy: { occupied: 0, vacant: 0 },
+            rentComparison: { labels: [], yourRent: [], marketAverage: [] },
+            vacancyRate: { rate: 0, totalUnits: 0, occupiedUnits: 0, vacantUnits: 0, lostIncome: 0 },
+            hasData: false
         };
     }
 
@@ -359,16 +367,17 @@ class ReportsManager {
                 // turnover remains mock
                 const turnover = this.generateTurnoverData();
 
-                return { retention, maintenance, turnover };
+                return { retention, maintenance, turnover, hasData: total > 0 || (maintenance && maintenance.total && maintenance.total.some(v => v > 0)) };
             } catch (err) {
                 console.warn('Unable to generate tenant reports from live data', err);
             }
         }
 
         return {
-            retention: this.generateRetentionData(),
-            maintenance: this.generateMaintenanceData(),
-            turnover: this.generateTurnoverData()
+            retention: { renewed: 0, movedOut: 0 },
+            maintenance: { labels: this.getMonthsForPeriod('last6months'), emergency: [], planned: [], total: [] },
+            turnover: { labels: [], turnovers: [], avgVacancyDays: [], turnoverCosts: [] },
+            hasData: false
         };
     }
 
@@ -381,7 +390,7 @@ class ReportsManager {
                 const fr = await this.getFinancialReports('last6months');
                 const pr = await this.getPropertyReports();
                 const tr = await this.getTenantReports();
-                const revenueSeries = fr.monthlyRevenue.currentYear || [];
+                const revenueSeries = (fr.monthlyRevenue && fr.monthlyRevenue.currentYear) || [];
                 const lastRevenue = revenueSeries.slice(-1)[0] || 0;
                 const priorRevenue = revenueSeries.slice(-2, -1)[0] || lastRevenue;
                 const revenueGrowth = priorRevenue ? ((lastRevenue - priorRevenue) / priorRevenue) * 100 : 0;
@@ -394,53 +403,37 @@ class ReportsManager {
                 return {
                     monthlyRevenue: revenueSeries.reduce((a, b) => a + b, 0),
                     revenueGrowth: Math.round(revenueGrowth * 10) / 10,
-                    occupancyRate: pr.occupancy ? Math.round((pr.occupancy.occupied / (pr.occupancy.occupied + pr.occupancy.vacant)) * 100) : 0,
+                    occupancyRate: pr.occupancy && (pr.occupancy.occupied + pr.occupancy.vacant) ? Math.round((pr.occupancy.occupied / (pr.occupancy.occupied + pr.occupancy.vacant)) * 100) : 0,
                     occupancyTrend: 0,
-                    collectionRate: fr.collectionRate.collected,
+                    collectionRate: (fr.collectionRate && fr.collectionRate.collected) || 0,
                     collectionTrend: 0,
                     maintenanceCost: lastMaintenance,
                     maintenanceTrend: Math.round(maintenanceTrend * 10) / 10,
-                    renewalRate: tr.retention.renewed,
+                    renewalRate: (tr.retention && tr.retention.renewed) || 0,
                     renewalTrend: 0,
                     vacantUnits: pr.occupancy ? pr.occupancy.vacant : 0,
-                    totalUnits: pr.occupancy ? (pr.occupancy.occupied + pr.occupancy.vacant) : 0
+                    totalUnits: pr.occupancy ? (pr.occupancy.occupied + pr.occupancy.vacant) : 0,
+                    hasData: !!(fr.hasData || pr.hasData || tr.hasData)
                 };
-            } catch(err){
+            } catch(err) {
                 console.warn('quick metrics live failure', err);
             }
         }
-        // include some trend numbers so executive summary can render arrows
+
         return {
-            monthlyRevenue: 84500,
-            revenueGrowth: 3.2,
-            occupancyRate: 94,
+            monthlyRevenue: 0,
+            revenueGrowth: 0,
+            occupancyRate: 0,
             occupancyTrend: 0,
-            collectionRate: 97,
-            collectionTrend: 1.5,
-            maintenanceCost: 2150,
-            maintenanceTrend: -2.3,
-            renewalRate: 78,
-            renewalTrend: 0.8,
-            vacantUnits: 2,
-            totalUnits: 20
-        };
-    }
-
-    // Mock Data Generators
-    generateMonthlyRevenueData(period) {
-        const months = this.getMonthsForPeriod(period);
-        
-        // if a custom range (MM/DD/YYYY - MM/DD/YYYY) is passed,
-        // just return the last 6 months view for now and ignore custom
-        if (typeof period === 'string' && period.includes('-') && !months.length) {
-            // parse period if needed in future
-            return this.generateMonthlyRevenueData('last6months');
-        }
-
-        return {
-            labels: months,
-            currentYear: [72000, 78000, 82000, 79000, 86000, 84500, 88000, 90000, 87000, 89000, 92000, 95000].slice(0, months.length),
-            previousYear: [65000, 68000, 72000, 70000, 75000, 73000, 78000, 80000, 77000, 79000, 82000, 85000].slice(0, months.length)
+            collectionRate: 0,
+            collectionTrend: 0,
+            maintenanceCost: 0,
+            maintenanceTrend: 0,
+            renewalRate: 0,
+            renewalTrend: 0,
+            vacantUnits: 0,
+            totalUnits: 0,
+            hasData: false
         };
     }
 

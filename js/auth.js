@@ -337,7 +337,7 @@ class AuthManager {
         }
     }
 
-    static syncUserToDataManager(userData) {
+    static async syncUserToDataManager(userData) {
         // Ensure we have a uid for compatibility with other modules
         if (userData && !userData.uid && userData.id) {
             userData.uid = userData.id;
@@ -348,28 +348,57 @@ class AuthManager {
         console.log('✅ window.currentUser set:', userData ? userData.email : 'null');
         
         // DataManager sync is informational only - auth doesn't depend on it
-        if (window.DataManager) {
+        let dm = window.DataManager || window.dataManager || (typeof DataManager !== 'undefined' ? DataManager : null);
+        if (!dm) {
+            console.warn('⚠️ DataManager not yet available (non-critical) - waiting briefly');
+            dm = await this.waitForDataManager(3000, 100);
+        }
+        if (dm) {
             console.log('✅ User data available in DataManager context:', userData ? userData.email : 'null');
             // Store user info in DataManager currentUser and user if available
             try {
-                if (typeof window.DataManager.currentUser !== 'undefined') {
-                    window.DataManager.currentUser = userData;
+                if (typeof dm.currentUser !== 'undefined') {
+                    dm.currentUser = userData;
                 }
                 // Some older DataManager methods expect `DataManager.user` and `DataManager.db`
-                window.DataManager.user = userData;
+                dm.user = userData;
                 if (userData) {
-                    if (!window.DataManager.db) {
-                        window.DataManager.db = firebase.firestore();
+                    if (!dm.db) {
+                        dm.db = firebase.firestore();
                     }
                 } else {
-                    window.DataManager.db = null;
+                    dm.db = null;
                 }
             } catch (e) {
                 console.warn('⚠️ Failed to sync user to DataManager internals:', e);
             }
         } else {
-            console.warn('⚠️ DataManager not yet available (non-critical)');
+            console.warn('⚠️ DataManager still not available after waiting - skipping DataManager sync');
         }
+    }
+
+    static async waitForDataManager(timeout = 3000, interval = 100) {
+        return new Promise(resolve => {
+            let elapsed = 0;
+
+            const attempt = () => {
+                const dm = window.DataManager || window.dataManager || (typeof DataManager !== 'undefined' ? DataManager : null);
+                if (dm) {
+                    console.log('✅ DataManager became available');
+                    return resolve(dm);
+                }
+
+                elapsed += interval;
+                if (elapsed >= timeout) {
+                    console.warn('⚠️ DataManager wait timed out after', timeout, 'ms');
+                    return resolve(null);
+                }
+
+                setTimeout(attempt, interval);
+            };
+
+            attempt();
+        });
     }
 
     static onAuthChange(callback) {
@@ -863,7 +892,8 @@ class AuthManager {
         gcashQrFile = null,
         mayaQrFile = null,
         bankAccountName = '',
-        bankAccountNumber = ''
+        bankAccountNumber = '',
+        maintenanceStaff = []
     }) {
         try {
             console.log('🛠️ Creating landlord account for:', email);
@@ -924,7 +954,8 @@ class AuthManager {
                 bankAccountNumber: bankAccountNumber || '',
                 // Store QR codes as base64 to avoid storage/CORS issues
                 gcashQrBase64: uploadResults.gcashQrBase64 || null,
-                mayaQrBase64: uploadResults.mayaQrBase64 || null
+                mayaQrBase64: uploadResults.mayaQrBase64 || null,
+                maintenanceStaff: maintenanceStaff || []
             };
 
             // Remove undefined fields to avoid Firestore issues

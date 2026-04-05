@@ -55,6 +55,8 @@ class CasaLink {
         this.activitiesTotalPages = 1;
         this.activitiesAllData = [];
         this.activitiesFilteredData = [];
+        this.activityAutoRefreshInterval = null;
+        this.activityListener = null;
         
         // 🔥 ADD BILLING VIEW TRACKING
         this.currentBillingView = 'bills'; // Default to Bills Management
@@ -71,6 +73,55 @@ class CasaLink {
         this.registerImageModalHelper();
     }
 
+    getActivityLogPage() {
+        return `
+            <div class="page-content">
+                <div class="page-header with-hint">
+                    <div class="page-header-left">
+                        <h1 class="page-title">Activity Log</h1>
+                        <p class="dashboard-hint">Track tenant registrations, payments, maintenance updates, and other important activity from one central place.</p>
+                    </div>
+                </div>
+
+                <div class="recent-activity-container">
+                    <div class="recent-activity-header">
+                        <h3>Recent Activities</h3>
+                        <div class="activities-pagination-info" id="activitiesPaginationInfo">
+                            Showing 0–0 of 0 activities
+                        </div>
+                    </div>
+
+                    <div id="recentActivityList" class="recent-activity-list">
+                        <div class="activity-loading">
+                            <i class="fas fa-spinner fa-spin"></i> Loading recent activity...
+                        </div>
+                    </div>
+
+                    <div class="pagination-container" id="activitiesPagination" style="display: none; margin-top: 20px;">
+                        <div class="pagination-controls">
+                            <button class="btn btn-sm btn-secondary" id="activitiesPrevPage">
+                                <i class="fas fa-chevron-left"></i> Previous
+                            </button>
+                            <div class="pagination-numbers" id="activitiesPageNumbers"></div>
+                            <button class="btn btn-sm btn-secondary" id="activitiesNextPage">
+                                Next <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="recent-activity-footer">
+                        <button class="btn btn-secondary btn-sm" onclick="casaLink.loadMoreActivities()">
+                            <i class="fas fa-history"></i> Load Older Activities
+                        </button>
+                        <button class="btn btn-primary btn-sm" onclick="casaLink.markAllAsRead()">
+                            <i class="fas fa-check-double"></i> Mark All as Read
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     onLoginSuccess(user) {
         // Remove login-page class from body
         document.body.classList.remove('login-page');
@@ -80,6 +131,11 @@ class CasaLink {
         const adminLink = document.querySelector('.admin-portal-link');
         if (adminLink) {
             adminLink.style.display = 'none';
+        }
+        
+        // Set up persistent activity listener for landlords
+        if (this.currentRole === 'landlord') {
+            this.setupActivityRealtimeListener();
         }
     }
 
@@ -93,6 +149,8 @@ class CasaLink {
         if (adminLink) {
             adminLink.style.display = 'block';
         }
+
+        this.cleanupActivityRealtimeListener();
     }
 
     setupCacheBusting() {
@@ -451,6 +509,30 @@ class CasaLink {
         });
     }
 
+    async waitForDataManager(timeout = 3000, interval = 100) {
+        return new Promise((resolve) => {
+            let elapsed = 0;
+
+            const check = () => {
+                const dm = window.DataManager || window.dataManager || (typeof DataManager !== 'undefined' ? DataManager : null);
+                if (dm) {
+                    console.log('✅ DataManager ready');
+                    return resolve(dm);
+                }
+
+                elapsed += interval;
+                if (elapsed >= timeout) {
+                    console.warn('⚠️ DataManager wait timed out - continuing without DataManager');
+                    return resolve(null);
+                }
+
+                setTimeout(check, interval);
+            };
+
+            check();
+        });
+    }
+
     cleanupPageListeners(page) {
         console.log('🧹 Cleaning up listeners for page:', page);
 
@@ -491,6 +573,14 @@ class CasaLink {
             case 'maintenance':
                 // Any additional maintenance cleanup can go here
                 break;
+            case 'activity-log':
+                // Stop activity auto-refresh when leaving the page
+                if (this.activityAutoRefreshInterval) {
+                    clearInterval(this.activityAutoRefreshInterval);
+                    this.activityAutoRefreshInterval = null;
+                    console.log('🛑 Stopped activity auto-refresh');
+                }
+                break;
             case 'tenantMaintenance':
                 if (this.tenantMaintenanceListener) {
                     console.log('🧹 Removing tenant maintenance listener');
@@ -510,6 +600,9 @@ class CasaLink {
         // Store the page before showing it
         this.storeCurrentPage(page);
         this.currentPage = page;
+        if (this.currentRole === 'landlord') {
+            this.setupActivityRealtimeListener();
+        }
         this.updateUrlHash(page);
 
         let appElement = document.getElementById('app');
@@ -582,6 +675,10 @@ class CasaLink {
                     pageContent = await this.getTenantBillingPage();
                     break;
 
+                case 'activity-log':
+                    pageContent = await this.getActivityLogPage();
+                    break;
+
                 case 'tenantMaintenance':
                     pageContent = await this.getTenantMaintenancePage();
                     break;
@@ -606,6 +703,10 @@ class CasaLink {
 
                 case 'properties':
                     pageContent = this.getPropertiesPageHTML();
+                    break;
+
+                case 'landlordProfile':
+                    pageContent = await this.getLandlordProfilePage();
                     break;
 
                 default:
@@ -688,6 +789,16 @@ class CasaLink {
                             <i class="fas fa-sync-alt"></i> Refresh Data
                         </button>
                         <div id="liveUpdateIndicator" class="live-update-indicator" title="Live updates enabled">Live</div>
+                    </div>
+                </div>
+
+                <div id="reportsEmptyState" class="empty-state reports-empty-state" style="display:none; margin: 24px 0 32px; width: 100%; padding: 28px; border-radius: 16px; border: 1px solid rgba(16, 64, 128, 0.12); background: linear-gradient(180deg, rgba(248,251,255,1) 0%, rgba(255,255,255,1) 100%); box-shadow: 0 18px 40px rgba(0,0,0,0.06); min-height: 180px;">
+                    <div style="display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; gap: 14px;">
+                        <i class="fas fa-chart-line" style="font-size: 40px; color: var(--royal-blue);"></i>
+                        <div>
+                            <h2 style="margin:0 0 10px; font-size:1.65rem; letter-spacing:-0.02em; color:#1f3f72;">Not enough data yet</h2>
+                            <p style="margin:0; color:#42526e; font-size:1rem; max-width:680px; line-height:1.6;">The reports dashboard will display insights once there is more rent, payment, or maintenance history available. Refresh after new transactions are recorded.</p>
+                        </div>
                     </div>
                 </div>
 
@@ -886,6 +997,234 @@ class CasaLink {
         }
     }
 
+    async showEditLandlordProfileModal() {
+        console.log('📝 Opening edit landlord profile modal...');
+        
+        try {
+            // Fetch complete landlord data from database (including QR codes)
+            const userDoc = await window.firebaseService.read('users', this.currentUser.uid);
+            const landlordData = userDoc ? userDoc.data() : null;
+            
+            if (!landlordData) {
+                this.showNotification('Unable to load profile data', 'error');
+                return;
+            }
+
+            const modalContent = `
+                <div style="display: flex; flex-direction: column; gap: 20px;">
+                    <!-- Personal Information -->
+                    <div class="form-group">
+                        <label class="form-label">Full Name</label>
+                        <input type="text" class="form-input" id="editLandlordName" value="${landlordData.name}" placeholder="Enter your full name">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Phone Number</label>
+                        <input type="tel" class="form-input" id="editLandlordPhone" value="${landlordData.phone || ''}" placeholder="09XXXXXXXXX">
+                    </div>
+
+                    <!-- Banking Information -->
+                    <div style="border-top: 1px solid #eee; padding-top: 20px; margin-top: 10px;">
+                        <h4 style="margin: 0 0 15px 0; color: var(--text-dark);">Banking Information</h4>
+                        
+                        <div class="form-group">
+                            <label class="form-label">Bank Name</label>
+                            <input type="text" class="form-input" id="editBankName" value="${landlordData.bankName || ''}" placeholder="e.g., BDO, BPI, etc.">
+                        </div>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div class="form-group">
+                                <label class="form-label">Account Name</label>
+                                <input type="text" class="form-input" id="editBankAccountName" value="${landlordData.bankAccountName || ''}" placeholder="Account holder name">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Account Number</label>
+                                <input type="text" class="form-input" id="editBankAccountNumber" value="${landlordData.bankAccountNumber || ''}" placeholder="Account number" pattern="[0-9]{10,16}">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Current QR Codes Display -->
+                    ${(landlordData.gcashQrBase64 || landlordData.mayaQrBase64) ? `
+                    <div style="border-top: 1px solid #eee; padding-top: 20px; margin-top: 10px;">
+                        <h4 style="margin: 0 0 15px 0; color: var(--text-dark); display: flex; align-items: center; gap: 10px;">
+                            <i class="fas fa-qrcode" style="color: var(--primary);"></i>
+                            Current Payment QR Codes
+                        </h4>
+                        <p style="color: var(--dark-gray); font-size: 0.9rem; margin: 0 0 15px 0;">Your existing QR codes are shown below. Upload new ones below to replace them.</p>
+
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; width: 100%; margin-bottom: 20px;">
+                            ${landlordData.gcashQrBase64 ? `
+                                <div style="background: #f8f9fa; border-radius: 12px; padding: 15px; text-align: center; border: 1px solid #e2e8f0;">
+                                    <div style="display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 10px;">
+                                        <div style="width: 8px; height: 8px; background: #0066cc; border-radius: 50%;"></div>
+                                        <span style="color: var(--text-dark); font-weight: 600; font-size: 0.9rem;">GCash</span>
+                                    </div>
+                                    <div style="background: white; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                                        <img src="${landlordData.gcashQrBase64}" alt="Current GCash QR Code" style="max-width: 100px; max-height: 100px; width: auto; height: auto; display: block; border-radius: 3px;">
+                                    </div>
+                                </div>
+                            ` : ''}
+                            ${landlordData.mayaQrBase64 ? `
+                                <div style="background: #f8f9fa; border-radius: 12px; padding: 15px; text-align: center; border: 1px solid #e2e8f0;">
+                                    <div style="display: flex; align-items: center; justify-content: center; gap: 6px; margin-bottom: 10px;">
+                                        <div style="width: 8px; height: 8px; background: #8b5cf6; border-radius: 50%;"></div>
+                                        <span style="color: var(--text-dark); font-weight: 600; font-size: 0.9rem;">Maya</span>
+                                    </div>
+                                    <div style="background: white; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0; display: inline-block; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                                        <img src="${landlordData.mayaQrBase64}" alt="Current Maya QR Code" style="max-width: 100px; max-height: 100px; width: auto; height: auto; display: block; border-radius: 3px;">
+                                    </div>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                    ` : ''}
+
+                    <!-- QR Code Uploads -->
+                    <div style="border-top: 1px solid #eee; padding-top: 20px; margin-top: 10px;">
+                        <h4 style="margin: 0 0 15px 0; color: var(--text-dark);">Payment QR Codes (Optional)</h4>
+                        <p style="color: var(--dark-gray); font-size: 0.9rem; margin: 0 0 15px 0;">Upload new QR codes to update your payment methods</p>
+                        
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                            <div class="form-group">
+                                <label class="form-label">GCash QR Code</label>
+                                <input type="file" class="form-input" id="editGcashQr" accept="image/*">
+                                <small style="color: var(--dark-gray);">Upload new GCash QR code</small>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Maya QR Code</label>
+                                <input type="file" class="form-input" id="editMayaQr" accept="image/*">
+                                <small style="color: var(--dark-gray);">Upload new Maya QR code</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="editLandlordProfileError" style="display: none; padding: 15px; background: #ffebee; border-radius: 8px; color: var(--danger); border-left: 4px solid var(--danger);">
+                        <i class="fas fa-exclamation-circle" style="margin-right: 8px;"></i>
+                        <span id="editLandlordProfileErrorText"></span>
+                    </div>
+                </div>
+            `;
+
+            ModalManager.openModal(modalContent, {
+                title: 'Edit Profile',
+                submitText: 'Save Changes',
+                cancelText: 'Cancel',
+                showFooter: true,
+                width: '600px',
+                onSubmit: () => this.saveLandlordProfileChanges(landlordData)
+            });
+
+        } catch (error) {
+            console.error('Error opening edit landlord profile modal:', error);
+            this.showNotification('Failed to load profile editor', 'error');
+        }
+    }
+
+    // Save Landlord Profile Changes
+    async saveLandlordProfileChanges(originalData) {
+        console.log('💾 Saving landlord profile changes...');
+        
+        try {
+            // Get form values
+            const name = document.getElementById('editLandlordName')?.value || '';
+            const phone = document.getElementById('editLandlordPhone')?.value || '';
+            const bankName = document.getElementById('editBankName')?.value || '';
+            const bankAccountName = document.getElementById('editBankAccountName')?.value || '';
+            const bankAccountNumber = document.getElementById('editBankAccountNumber')?.value || '';
+            const gcashQrFile = document.getElementById('editGcashQr')?.files?.[0] || null;
+            const mayaQrFile = document.getElementById('editMayaQr')?.files?.[0] || null;
+
+            // Validate
+            if (!name.trim()) {
+                this.showEditLandlordProfileError('Please enter your full name');
+                return;
+            }
+
+            if (phone && !/^[0-9\s\-+()]+$/.test(phone)) {
+                this.showEditLandlordProfileError('Please enter a valid phone number');
+                return;
+            }
+
+            if (bankAccountNumber && !/^[0-9]{10,16}$/.test(bankAccountNumber.replace(/\s/g, ''))) {
+                this.showEditLandlordProfileError('Bank account number must be 10-16 digits');
+                return;
+            }
+
+            // Prepare updates
+            const updates = {
+                name: name.trim(),
+                phone: phone.trim(),
+                bankName: bankName.trim(),
+                bankAccountName: bankAccountName.trim(),
+                bankAccountNumber: bankAccountNumber.replace(/\s/g, ''),
+                updatedAt: new Date().toISOString()
+            };
+
+            // Handle QR code uploads (convert to base64)
+            const fileToBase64 = (file) => {
+                if (!file) return Promise.resolve(null);
+                return new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(new Error('Failed to read file for base64 conversion'));
+                    reader.readAsDataURL(file);
+                });
+            };
+
+            if (gcashQrFile) {
+                try {
+                    updates.gcashQrBase64 = await fileToBase64(gcashQrFile);
+                } catch (e) {
+                    console.warn('Failed to convert GCash QR to base64:', e);
+                    this.showEditLandlordProfileError('Failed to process GCash QR code');
+                    return;
+                }
+            }
+
+            if (mayaQrFile) {
+                try {
+                    updates.mayaQrBase64 = await fileToBase64(mayaQrFile);
+                } catch (e) {
+                    console.warn('Failed to convert Maya QR to base64:', e);
+                    this.showEditLandlordProfileError('Failed to process Maya QR code');
+                    return;
+                }
+            }
+
+            // Update in Firestore
+            await firebaseDb.collection('users').doc(this.currentUser.uid).update(updates);
+
+            // Update local user data
+            this.currentUser = {
+                ...this.currentUser,
+                ...updates
+            };
+
+            console.log('✅ Landlord profile updated successfully');
+            this.showNotification('Profile updated successfully!', 'success');
+
+            // Close modal and reload page
+            setTimeout(() => {
+                this.showPage('landlordProfile');
+            }, 1500);
+
+        } catch (error) {
+            console.error('Error saving landlord profile:', error);
+            this.showEditLandlordProfileError(error.message || 'Failed to save changes');
+        }
+    }
+
+    showEditLandlordProfileError(message) {
+        const errorElement = document.getElementById('editLandlordProfileError');
+        const errorText = document.getElementById('editLandlordProfileErrorText');
+        
+        if (errorElement && errorText) {
+            errorText.textContent = message;
+            errorElement.style.display = 'block';
+        }
+    }
+
     async getTenantProfilePage() {
         console.log('📋 Loading tenant profile page...');
         
@@ -1073,6 +1412,246 @@ class CasaLink {
         } catch (error) {
             console.error('❌ Error loading tenant profile:', error);
             return this.getErrorDashboard('tenantProfile', error.message);
+        }
+    }
+
+    async getLandlordProfilePage() {
+        console.log('📋 Loading landlord profile page...');
+        
+        if (!this.currentUser) {
+            return this.getErrorDashboard('landlordProfile', 'User not authenticated');
+        }
+
+        try {
+            // Fetch complete landlord data from database (including QR codes)
+            const userDoc = await window.firebaseService.read('users', this.currentUser.uid);
+            const landlordData = userDoc ? userDoc.data() : null;
+            
+            if (!landlordData) {
+                return `
+                    <div class="page-content">
+                        <div class="page-header">
+                            <h1 class="page-title">My Profile</h1>
+                        </div>
+                        <div class="error-state">
+                            <i class="fas fa-exclamation-triangle"></i>
+                            <h3>Profile Not Found</h3>
+                            <p>Unable to load your profile information.</p>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // Get some stats for the landlord
+            let propertiesCount = 0;
+            let tenantsCount = 0;
+            let maintenanceCount = 0;
+            
+            try {
+                const [properties, tenants, maintenance] = await Promise.all([
+                    DataManager.getLandlordApartments(this.currentUser.uid).catch(() => []),
+                    DataManager.getTenants(this.currentUser.uid).catch(() => []),
+                    DataManager.getMaintenanceRequests(this.currentUser.uid).catch(() => [])
+                ]);
+                propertiesCount = properties?.length || 0;
+                tenantsCount = tenants?.length || 0;
+                
+                // Count open maintenance requests (status: open, assigned, in-progress)
+                maintenanceCount = maintenance?.filter(req => 
+                    ['open', 'assigned', 'in-progress'].includes((req.status || 'open').toLowerCase())
+                ).length || 0;
+            } catch (e) {
+                console.warn('Could not load landlord stats:', e);
+            }
+
+            const profileHTML = `
+                <div class="page-content">
+                    <div class="page-header">
+                        <div>
+                            <h1 class="page-title">My Profile</h1>
+                            <p style="color: var(--dark-gray); margin-top: 5px;">Manage your personal information and account settings</p>
+                        </div>
+                        <button class="btn btn-primary" onclick="casaLink.showEditLandlordProfileModal()">
+                            <i class="fas fa-edit"></i> Edit Profile
+                        </button>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 25px; max-width: 1200px;">
+                        <!-- Left Column: Profile Card -->
+                        <div style="display: flex; flex-direction: column; gap: 20px;">
+                            <!-- Profile Card -->
+                            <div class="card" style="text-align: center;">
+                                <div class="avatar" style="width: 80px; height: 80px; margin: 0 auto 15px; font-size: 2rem;">
+                                    ${landlordData.name.charAt(0).toUpperCase()}
+                                </div>
+                                <h2 style="margin: 0 0 5px 0; color: var(--text-dark);">${landlordData.name}</h2>
+                                <p style="color: var(--dark-gray); margin: 0 0 15px 0;">${landlordData.email}</p>
+                                <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                                    <span class="status-badge active">
+                                        <i class="fas fa-check-circle"></i> Active Landlord
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- Quick Stats -->
+                            <div class="card">
+                                <h3 style="margin: 0 0 15px 0; color: var(--text-dark);">Quick Stats</h3>
+                                <div style="display: flex; flex-direction: column; gap: 12px;">
+                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                                        <span style="color: var(--dark-gray);">Properties</span>
+                                        <strong>${propertiesCount}</strong>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                                        <span style="color: var(--dark-gray);">Active Tenants</span>
+                                        <strong>${tenantsCount}</strong>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                                        <span style="color: var(--dark-gray);">Open Maintenance</span>
+                                        <strong>${maintenanceCount}</strong>
+                                    </div>
+                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
+                                        <span style="color: var(--dark-gray);">Member Since</span>
+                                        <strong>${this.formatDate(landlordData.createdAt)}</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Column: Profile Details -->
+                        <div style="display: flex; flex-direction: column; gap: 20px;">
+                            <!-- Personal Information -->
+                            <div class="card">
+                                <h3 style="margin: 0 0 20px 0; color: var(--text-dark); border-bottom: 2px solid var(--royal-blue); padding-bottom: 10px;">
+                                    <i class="fas fa-user" style="color: var(--royal-blue); margin-right: 10px;"></i>
+                                    Personal Information
+                                </h3>
+                                
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                                    <div>
+                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Full Name</label>
+                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${landlordData.name}</p>
+                                    </div>
+                                    <div>
+                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Email Address</label>
+                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500; word-break: break-all;">${landlordData.email}</p>
+                                    </div>
+                                    <div>
+                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Phone Number</label>
+                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${landlordData.phone || 'Not provided'}</p>
+                                    </div>
+                                    <div>
+                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Account Status</label>
+                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500; color: var(--success);">Verified</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Banking & Payment Information -->
+                            <div class="card" style="overflow: visible;">
+                                <h3 style="margin: 0 0 20px 0; color: var(--text-dark); border-bottom: 2px solid var(--success); padding-bottom: 10px;">
+                                    <i class="fas fa-credit-card" style="color: var(--success); margin-right: 10px;"></i>
+                                    Banking & Payment Information
+                                </h3>
+
+                                <!-- Bank Account Details -->
+                                <div style="margin-bottom: ${(landlordData.gcashQrBase64 || landlordData.mayaQrBase64) ? '25px' : '0'};">
+                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px;">
+                                        <div>
+                                            <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Bank Name</label>
+                                            <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${landlordData.bankName || 'Not provided'}</p>
+                                        </div>
+                                        <div>
+                                            <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Account Name</label>
+                                            <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${landlordData.bankAccountName || 'Not provided'}</p>
+                                        </div>
+                                        <div>
+                                            <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Account Number</label>
+                                            <p style="margin: 0; color: var(--text-dark); font-weight: 500; font-family: 'Courier New', monospace;">${landlordData.bankAccountNumber ? '****' + landlordData.bankAccountNumber.slice(-4) : 'Not provided'}</p>
+                                        </div>
+                                        <div>
+                                            <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Payment Methods</label>
+                                            <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center;">
+                                                ${landlordData.gcashQrBase64 ? '<span style="display: inline-flex; align-items: center; gap: 6px; color: var(--success); font-weight: 500; font-size: 0.9rem;"><i class="fas fa-check-circle"></i>GCash</span>' : ''}
+                                                ${landlordData.mayaQrBase64 ? '<span style="display: inline-flex; align-items: center; gap: 6px; color: var(--success); font-weight: 500; font-size: 0.9rem;"><i class="fas fa-check-circle"></i>Maya</span>' : ''}
+                                                ${!landlordData.gcashQrBase64 && !landlordData.mayaQrBase64 ? '<span style="color: var(--dark-gray); font-style: italic;">None configured</span>' : ''}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- QR Code Images -->
+                                ${(landlordData.gcashQrBase64 || landlordData.mayaQrBase64) ? `
+                                <div style="border-top: 1px solid #e2e8f0; padding-top: 20px; margin-top: 10px;">
+                                    <h4 style="margin: 0 0 15px 0; color: var(--text-dark); font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 10px;">
+                                        <i class="fas fa-qrcode" style="color: var(--primary);"></i>
+                                        Payment QR Codes
+                                    </h4>
+
+                                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; width: 100%;">
+                                        ${landlordData.gcashQrBase64 ? `
+                                            <div style="background: #f8f9fa; border-radius: 12px; padding: 20px; text-align: center; border: 1px solid #e2e8f0;">
+                                                <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 15px;">
+                                                    <div style="width: 10px; height: 10px; background: #0066cc; border-radius: 50%;"></div>
+                                                    <span style="color: var(--text-dark); font-weight: 600; font-size: 1rem;">GCash</span>
+                                                </div>
+                                                <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; display: inline-block; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 10px;">
+                                                    <img src="${landlordData.gcashQrBase64}" alt="GCash QR Code" style="max-width: 140px; max-height: 140px; width: auto; height: auto; display: block; border-radius: 4px;">
+                                                </div>
+                                                <p style="margin: 0; color: var(--dark-gray); font-size: 0.85rem; line-height: 1.4;">Scan to pay with GCash</p>
+                                            </div>
+                                        ` : ''}
+                                        ${landlordData.mayaQrBase64 ? `
+                                            <div style="background: #f8f9fa; border-radius: 12px; padding: 20px; text-align: center; border: 1px solid #e2e8f0;">
+                                                <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 15px;">
+                                                    <div style="width: 10px; height: 10px; background: #8b5cf6; border-radius: 50%;"></div>
+                                                    <span style="color: var(--text-dark); font-weight: 600; font-size: 1rem;">Maya</span>
+                                                </div>
+                                                <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #e2e8f0; display: inline-block; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 10px;">
+                                                    <img src="${landlordData.mayaQrBase64}" alt="Maya QR Code" style="max-width: 140px; max-height: 140px; width: auto; height: auto; display: block; border-radius: 4px;">
+                                                </div>
+                                                <p style="margin: 0; color: var(--dark-gray); font-size: 0.85rem; line-height: 1.4;">Scan to pay with Maya</p>
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                                ` : ''}
+                            </div>
+
+                            <!-- Account Security -->
+                            <div class="card">
+                                <h3 style="margin: 0 0 20px 0; color: var(--text-dark); border-bottom: 2px solid var(--warning); padding-bottom: 10px;">
+                                    <i class="fas fa-lock" style="color: var(--warning); margin-right: 10px;"></i>
+                                    Account Security
+                                </h3>
+
+                                <div style="display: flex; flex-direction: column; gap: 15px;">
+                                    <div style="padding: 15px; background: #fffbf0; border-radius: 8px; border-left: 4px solid var(--warning);">
+                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Password</label>
+                                        <p style="margin: 0 0 10px 0; color: var(--text-dark);">••••••••</p>
+                                        <button class="btn btn-warning btn-sm" onclick="casaLink.showPasswordChangeModal()">
+                                            <i class="fas fa-key"></i> Change Password
+                                        </button>
+                                    </div>
+
+                                    <div style="padding: 15px; background: #f0fff4; border-radius: 8px;">
+                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 10px;">
+                                            <i class="fas fa-check-circle" style="color: var(--success); margin-right: 8px;"></i>
+                                            Two-Factor Authentication
+                                        </label>
+                                        <p style="margin: 0; color: var(--dark-gray); font-size: 0.9rem;">Enhance your account security with 2FA (Coming soon)</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            return profileHTML;
+
+        } catch (error) {
+            console.error('❌ Error loading landlord profile:', error);
+            return this.getErrorDashboard('landlordProfile', error.message);
         }
     }
 
@@ -1844,38 +2423,8 @@ class CasaLink {
         try {
             const fetchPromises = [];
             
-            // 1. Fetch Recent Tenants (only for landlords)
-            if (!isTenant) {
-                console.log('🔍 Fetching recent tenants (landlord view)...');
-                fetchPromises.push(
-                    firebaseDb.collection('users')
-                        .where('landlordId', '==', userId)
-                        .where('role', '==', 'tenant')
-                        .orderBy('createdAt', 'desc')
-                        .limit(20)
-                        .get().then(snapshot => {
-                            console.log(`✅ Found ${snapshot.size} tenants total`);
-                            snapshot.forEach(doc => {
-                                const tenant = doc.data();
-                                // Check if tenant is within date range
-                                const tenantDate = new Date(tenant.createdAt);
-                                if (tenantDate >= ninetyDaysAgo && tenantDate <= now) {
-                                    activities.push({
-                                        type: 'new_tenant',
-                                        title: 'New Tenant Registered',
-                                        description: `${tenant.name} - ${tenant.roomNumber || 'No room'}`,
-                                        timestamp: tenant.createdAt,
-                                        icon: 'fas fa-user-plus',
-                                        color: 'var(--success)',
-                                        data: { ...tenant, id: doc.id }
-                                    });
-                                }
-                            });
-                        }).catch(error => {
-                            console.error('❌ Error fetching tenants:', error);
-                        })
-                );
-            }
+            // NOTE: Recent tenants are now handled through the activities collection with proper tracking
+            // Removed old tenant fetching to prevent duplicates with the new activity system
 
             // 2. Fetch Recent Payments - SIMPLIFIED
             console.log('🔍 Fetching recent payments...');
@@ -1931,14 +2480,19 @@ class CasaLink {
                     snapshot.forEach(doc => {
                         const bill = doc.data();
                         const billDate = new Date(bill.createdAt);
+                        // Skip auto-generated bills since they now create proper activity entries with isSeen flag
+                        if (bill.isAutoGenerated) {
+                            console.log('⏭️ Skipping auto-generated bill from activity feed (has dedicated activity entry):', doc.id);
+                            return;
+                        }
                         if (billDate >= ninetyDaysAgo && billDate <= now) {
                             activities.push({
                                 type: 'bill_generated',
-                                title: bill.isAutoGenerated ? 'Auto-Generated Bill' : 'Manual Bill Created',
+                                title: 'Manual Bill Created',
                                 description: `₱${bill.totalAmount?.toLocaleString()} for ${bill.tenantName || 'Tenant'}`,
                                 timestamp: bill.createdAt,
                                 icon: 'fas fa-file-invoice',
-                                color: bill.isAutoGenerated ? 'var(--warning)' : 'var(--info)',
+                                color: 'var(--info)',
                                 data: { ...bill, id: doc.id }
                             });
                         }
@@ -1962,14 +2516,26 @@ class CasaLink {
                         const act = doc.data();
                         const actDate = new Date(act.timestamp);
                         if (actDate >= ninetyDaysAgo && actDate <= now) {
+                            // For new_tenant activities, ensure tenantId is included in data
+                            let activityData = { ...act.data };
+                            if (act.type === 'new_tenant' && act.tenantId) {
+                                activityData.id = act.tenantId;
+                            } else if (act.type === 'bill_created' && act.billId) {
+                                activityData.id = act.billId;
+                            } else if (!activityData.id) {
+                                activityData.id = doc.id;
+                            }
                             activities.push({
                                 type: act.type || 'custom',
                                 title: act.title || 'Activity',
-                                description: act.description || '',
+                                description: act.description || act.message || '',
                                 timestamp: act.timestamp,
                                 icon: act.icon || 'fas fa-info-circle',
                                 color: act.color || 'var(--info)',
-                                data: { ...act.data, id: doc.id }
+                                data: activityData,
+                                source: 'activities',
+                                isSeen: act.isSeen === 'seen' ? 'seen' : 'unseen',
+                                activityId: doc.id
                             });
                         }
                     });
@@ -2030,16 +2596,8 @@ class CasaLink {
 
             // If no activities found, check why
             if (activities.length === 0) {
-                console.log('❌ No activities found. Possible issues:');
-                console.log('   1. Date range too restrictive');
-                console.log('   2. Field names mismatch (createdAt vs timestamp)');
-                console.log('   3. No data in the collections');
-                console.log('   4. landlordId mismatch');
-                
-                // Provide sample data for demo
-                console.log('📝 Providing sample data for demonstration');
-                const sampleActivities = this.getSampleActivities();
-                return sampleActivities;
+                console.log('ℹ️ No activities found for landlord in the requested date range. Showing empty activity state.');
+                return [];
             }
 
             // Sort by timestamp (newest first)
@@ -2059,8 +2617,7 @@ class CasaLink {
 
         } catch (error) {
             console.error('❌ Error in fetchRecentActivities:', error);
-            console.log('🔄 Providing sample data due to error');
-            return this.getSampleActivities();
+            throw error;
         }
     }
 
@@ -2171,21 +2728,25 @@ class CasaLink {
             // Determine the most relevant entity id: prioritize apartmentId/propertyId, then generic id
             const entityId = (activity.data && (activity.data.apartmentId || activity.data.propertyId || activity.data.id)) || '';
             const entityPayload = encodeURIComponent(JSON.stringify(activity.data || {}));
+            const statusClass = activity.source === 'activities' ? (activity.isSeen === 'unseen' ? 'unseen-activity' : 'seen-activity') : '';
             return `
-            <div class="activity-item" 
+            <div class="activity-item ${statusClass}" 
                 data-activity-type="${activity.type}" 
                 data-activity-id="${entityId}"
-                onclick="casaLink.viewActivityDetails('${activity.type}', '${entityId}', '${entityPayload}')">
+                onclick="casaLink.handleActivityClick(${index}, '${activity.type}', '${entityId}', '${entityPayload}')">
                 <div class="activity-icon" style="background: ${activity.color}20; color: ${activity.color};">
                     <i class="${activity.icon}"></i>
                 </div>
                 <div class="activity-content">
-                    <div class="activity-title">${activity.title}</div>
+                    <div class="activity-title">
+                        ${activity.title}
+                        ${activity.source === 'activities' && activity.isSeen === 'unseen' ? '<span class="activity-badge unseen-badge">New</span>' : activity.source === 'activities' && activity.isSeen === 'seen' ? '<span class="activity-badge seen-badge"><i class="fas fa-check"></i></span>' : ''}
+                    </div>
                     <div class="activity-description">${activity.description}</div>
                     <div class="activity-time">${this.formatActivityTime(activity.timestamp)}</div>
                 </div>
                 <div class="activity-actions">
-                    <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.viewActivityDetails('${activity.type}', '${entityId}', '${entityPayload}')">
+                    <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.showActivityDetailsModal('${activity.type}', '${entityId}', '${entityPayload}', '${activity.isSeen || ''}')">
                         <i class="fas fa-eye"></i> View Details
                     </button>
                 </div>
@@ -2225,6 +2786,7 @@ class CasaLink {
         // ensure sorted newest first
         activities.sort((a, b) => new Date(b.timestamp || b.updatedAt || b.createdAt || 0) - new Date(a.timestamp || a.updatedAt || a.createdAt || 0));
         
+        this.currentActivities = activities; // Store for click handling
         activityList.innerHTML = this.renderActivitiesList(activities);
         this.updateActivitiesPaginationInfo();
     }
@@ -2283,6 +2845,9 @@ class CasaLink {
             this.activitiesCurrentPage = 1;
             this.activitiesTotalPages = Math.ceil(activities.length / this.activitiesItemsPerPage);
             
+            // Update the activity log badge count
+            this.updateActivityLogBadge();
+            
             console.log(`🎨 STEP 3.3: Setting up pagination - ${this.activitiesTotalPages} pages total`);
             
             // Display current page of activities
@@ -2331,7 +2896,7 @@ class CasaLink {
     }
 
     // Unified activity details modal - consolidates 6 similar modal methods into one
-    async showActivityDetailsModal(activityType, entityId, activityDataEncoded) {
+    async showActivityDetailsModal(activityType, entityId, activityDataEncoded, isSeen = null) {
         try {
             let data, modalTitle, modalContent;
             // Parse provided activity data payload (if any)
@@ -2347,8 +2912,10 @@ class CasaLink {
 
             switch (activityType) {
                 case 'bill_generated':
-                    data = { id: entityId, ...(await firebaseDb.collection('bills').doc(entityId).get()).data() };
-                    if (!data) throw new Error('Bill not found');
+                case 'bill_created':
+                    const billDoc = await firebaseDb.collection('bills').doc(entityId).get();
+                    if (!billDoc.exists) throw new Error('Bill not found');
+                    data = { id: entityId, ...billDoc.data() };
                     const dueDate = new Date(data.dueDate);
                     const isOverdue = data.status === 'pending' && dueDate < new Date();
                     modalTitle = 'Bill Details';
@@ -2359,12 +2926,13 @@ class CasaLink {
                                 <h3 style="margin-bottom: 10px;">${data.isAutoGenerated ? 'Auto-Generated Bill' : 'Manual Bill'}</h3>
                                 <p>Details for bill generation activity</p>
                             </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
                             <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                                 <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Bill Information</h4>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                                     <div><strong>Tenant:</strong><br>${data.tenantName || 'N/A'}</div>
                                     <div><strong>Room:</strong><br>${data.roomNumber || 'N/A'}</div>
-                                    <div><strong>Amount:</strong><br><span style="font-weight: 600; color: var(--royal-blue);">₱${(data.totalAmount || 0).toLocaleString()}</span></div>
+                                    <div><strong>Amount:</strong><br><span style="font-weight: 600; color: var(--royal-blue);">₱${(data.totalAmount || data.amount || 0).toLocaleString()}</span></div>
                                     <div><strong>Type:</strong><br>${(data.type || 'rent').charAt(0).toUpperCase() + (data.type || 'rent').slice(1)}</div>
                                     <div><strong>Due Date:</strong><br>${dueDate.toLocaleDateString()}${isOverdue ? '<br><small style="color: var(--danger);">Overdue</small>' : ''}</div>
                                     <div><strong>Status:</strong><br>${this.getBillStatusBadge(data)}</div>
@@ -2395,6 +2963,7 @@ class CasaLink {
                                 <h3 style="margin-bottom: 10px;">Lease Agreement</h3>
                                 <p>Details for lease activity</p>
                             </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
                             <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                                 <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Lease Information</h4>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
@@ -2416,30 +2985,48 @@ class CasaLink {
                     break;
 
                 case 'new_tenant':
-                    data = { id: entityId, ...(await firebaseDb.collection('users').doc(entityId).get()).data() };
+                    const tenantDocId = entityId; // entityId should be the tenant's user ID
+                    const tenantDoc = await firebaseDb.collection('users').doc(tenantDocId).get();
+                    data = tenantDoc.exists ? { id: tenantDocId, ...tenantDoc.data() } : null;
                     if (!data) throw new Error('Tenant not found');
-                    const leaseQuery = await firebaseDb.collection('leases').where('tenantId', '==', entityId).where('isActive', '==', true).limit(1).get();
+                    const leaseQuery = await firebaseDb.collection('leases').where('tenantId', '==', tenantDocId).where('isActive', '==', true).limit(1).get();
                     const lease = leaseQuery.empty ? null : { id: leaseQuery.docs[0].id, ...leaseQuery.docs[0].data() };
+                    
+                    // Format data for display
+                    const tenantName = data.name || 'Not provided';
+                    const tenantEmail = data.email || 'Not provided';
+                    const tenantPhone = data.phone || 'Not provided';
+                    const tenantOccupation = data.occupation || 'Not provided';
+                    const tenantAge = data.age ? `${data.age} years old` : 'Not provided';
+                    const tenantStatus = data.status ? data.status.toUpperCase() : 'UNVERIFIED';
+                    const tenantRegistered = data.createdAt ? new Date(data.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Unknown';
+                    const roomNumber = data.roomNumber || 'Not assigned';
+                    const apartmentName = data.apartmentName || 'Not provided';
+                    
                     modalTitle = 'Tenant Registration Details';
                     modalContent = `
                         <div class="activity-details-modal">
                             <div style="text-align: center; margin-bottom: 20px;">
-                                <i class="fas fa-user-plus" style="font-size: 3rem; color: var(--success); margin-bottom: 15px;"></i>
+                                <i class="fas fa-user-tie" style="font-size: 3rem; color: var(--info); margin-bottom: 15px;"></i>
                                 <h3 style="margin-bottom: 10px;">New Tenant Registration</h3>
-                                <p>Details for tenant registration activity</p>
+                                <p>Complete details for tenant registration</p>
                             </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
                             <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                                 <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Tenant Information</h4>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                                    <div><strong>Name:</strong><br>${data.name || 'N/A'}</div>
-                                    <div><strong>Email:</strong><br>${data.email || 'N/A'}</div>
-                                    <div><strong>Phone:</strong><br>${data.phone || 'N/A'}</div>
-                                    <div><strong>Occupation:</strong><br>${data.occupation || 'N/A'}</div>
-                                    <div><strong>Status:</strong><br><span class="status-badge ${data.status === 'verified' ? 'active' : 'warning'}">${data.status || 'unverified'}</span></div>
-                                    <div><strong>Registered:</strong><br>${data.createdAt ? new Date(data.createdAt).toLocaleDateString() : 'N/A'}</div>
+                                    <div><strong>Name:</strong><br><span style="color: #333;">${tenantName}</span></div>
+                                    <div><strong>Email:</strong><br><span style="color: #333;">${tenantEmail}</span></div>
+                                    <div><strong>Phone:</strong><br><span style="color: #333;">${tenantPhone}</span></div>
+                                    <div><strong>Occupation:</strong><br><span style="color: #333;">${tenantOccupation}</span></div>
+                                    <div><strong>Age:</strong><br><span style="color: #333;">${tenantAge}</span></div>
+                                    <div><strong>Status:</strong><br><span class="status-badge ${data.status === 'verified' ? 'active' : 'warning'}">${tenantStatus}</span></div>
+                                    <div><strong>Room Number:</strong><br><span style="color: #333;">${roomNumber}</span></div>
+                                    <div><strong>Apartment:</strong><br><span style="color: #333;">${apartmentName}</span></div>
+                                    <div style="grid-column: 1 / -1;"><strong>Registered:</strong><br><span style="color: #333;">${tenantRegistered}</span></div>
                                 </div>
                             </div>
-                            ${lease ? `<div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;"><h4 style="color: var(--royal-blue); margin-bottom: 15px;">Lease Information</h4><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;"><div><strong>Room Number:</strong><br>${lease.roomNumber || 'N/A'}</div><div><strong>Monthly Rent:</strong><br>₱${(lease.monthlyRent || 0).toLocaleString()}</div><div><strong>Lease Start:</strong><br>${lease.leaseStart ? new Date(lease.leaseStart).toLocaleDateString() : 'N/A'}</div><div><strong>Lease Status:</strong><br><span class="status-badge ${lease.isActive ? 'active' : 'inactive'}">${lease.isActive ? 'Active' : 'Inactive'}</span></div></div></div>` : ''}
+                            ${lease ? `<div style="background: #e3f2fd; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary-blue);"><h4 style="color: var(--royal-blue); margin-bottom: 15px;"><i class="fas fa-file-contract"></i> Lease Information</h4><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;"><div><strong>Monthly Rent:</strong><br><span style="color: #333; font-weight: bold;">₱${(lease.monthlyRent || 0).toLocaleString()}</span></div><div><strong>Lease Start:</strong><br><span style="color: #333;">${lease.leaseStart ? new Date(lease.leaseStart).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Not set'}</span></div><div><strong>Lease End:</strong><br><span style="color: #333;">${lease.leaseEnd ? new Date(lease.leaseEnd).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Not set'}</span></div><div><strong>Lease Status:</strong><br><span class="status-badge ${lease.isActive ? 'active' : 'inactive'}">${lease.isActive ? 'ACTIVE' : 'INACTIVE'}</span></div></div></div>` : '<div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--warning);"><i class="fas fa-info-circle"></i> <strong>No active lease found</strong></div>'}
                             <div class="modal-footer">
                                 <button class="btn btn-primary" onclick="casaLink.showPage('tenants')"><i class="fas fa-users"></i> Go to Tenant Management</button>
                                 <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
@@ -2460,6 +3047,7 @@ class CasaLink {
                                 <h3 style="margin-bottom: 10px;">Payment Received</h3>
                                 <p>Details for payment activity</p>
                             </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
                             <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                                 <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Payment Information</h4>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
@@ -2493,6 +3081,7 @@ class CasaLink {
                                     <h3 style="margin-bottom: 10px;">Payment Submitted</h3>
                                     <p>Tenant submitted a payment awaiting verification</p>
                                 </div>
+                                ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
                                 <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                                     <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Payment Information</h4>
                                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
@@ -2527,6 +3116,7 @@ class CasaLink {
                                     <h3 style="margin-bottom: 10px;">Payment Verified</h3>
                                     <p>Landlord verified a tenant payment</p>
                                 </div>
+                                ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
                                 <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                                     <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Payment Information</h4>
                                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
@@ -2595,6 +3185,7 @@ class CasaLink {
                                 <h3 style="margin-bottom: 10px;">Maintenance Request</h3>
                                 <p>Details for maintenance request activity</p>
                             </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
                             <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                                 <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Request Information</h4>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
@@ -2667,6 +3258,7 @@ class CasaLink {
                                 <h3 style="margin-bottom: 10px;">New Property Added</h3>
                                 <p>Details for newly created property</p>
                             </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
                             <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
                                 <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Property Information</h4>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
@@ -2716,15 +3308,42 @@ class CasaLink {
         }
     }
 
-    async viewActivityDetails(activityType, activityId, activityDataEncoded) {
-        console.log('🔍 Viewing activity details:', { activityType, activityId });
+    async handleActivityClick(index, activityType, entityId, entityPayload) {
+        const activity = this.currentActivities[index];
+        if (!activity) return;
         
-        try {
-            await this.showActivityDetailsModal(activityType, activityId, activityDataEncoded);
-        } catch (error) {
-            console.error('❌ Error viewing activity details:', error);
-            this.showNotification('Failed to load activity details', 'error');
+        // If it's from activities collection and unseen, mark as seen
+        if (activity.source === 'activities' && activity.isSeen === 'unseen') {
+            try {
+                if (activity.activityId) {
+                    await firebaseDb.collection('activities').doc(activity.activityId).update({
+                        isSeen: 'seen'
+                    });
+                } else {
+                    // Fallback: find the activity document by matching key properties
+                    const querySnapshot = await firebaseDb.collection('activities')
+                        .where('landlordId', '==', this.currentUser?.id || this.currentUser?.uid)
+                        .where('type', '==', activity.type)
+                        .where('timestamp', '==', activity.timestamp)
+                        .limit(1)
+                        .get();
+                    
+                    if (!querySnapshot.empty) {
+                        await querySnapshot.docs[0].ref.update({ isSeen: 'seen' });
+                    }
+                }
+                // Update the activity in the list
+                activity.isSeen = 'seen';
+                // Re-render the list to update the style
+                this.updateActivitiesList(this.getCurrentActivitiesPage());
+                // Update the badge count
+                this.updateActivityLogBadge();
+            } catch (error) {
+                console.error('Failed to mark activity as seen:', error);
+            }
         }
+        // Then view details
+        this.showActivityDetailsModal(activityType, entityId, entityPayload, activity.isSeen);
     }
 
     async loadMoreActivities() {
@@ -2759,8 +3378,85 @@ class CasaLink {
     }
 
     async markAllAsRead() {
-        // This would typically update a 'read' status in your database
-        this.showNotification('All activities marked as read', 'success');
+        try {
+            const userId = this.currentUser?.id || this.currentUser?.uid;
+            if (!userId) return;
+            
+            // Get all unseen activities for this landlord
+            const snapshot = await firebaseDb.collection('activities')
+                .where('landlordId', '==', userId)
+                .where('isSeen', '==', 'unseen')
+                .get();
+            
+            const batch = firebaseDb.batch();
+            snapshot.docs.forEach(doc => {
+                batch.update(doc.ref, { isSeen: 'seen' });
+            });
+            
+            await batch.commit();
+            
+            // Update the local data
+            this.activitiesAllData.forEach(activity => {
+                if (activity.source === 'activities' && activity.isSeen === 'unseen') {
+                    activity.isSeen = 'seen';
+                }
+            });
+            
+            // Re-render
+            this.updateActivitiesList(this.getCurrentActivitiesPage());
+            
+            this.showNotification('All activities marked as read', 'success');
+            // Update the badge count
+            this.updateActivityLogBadge();
+        } catch (error) {
+            console.error('Failed to mark all as read:', error);
+            this.showNotification('Failed to mark activities as read', 'error');
+        }
+    }
+
+    updateActivityLogBadge() {
+        const unseenCount = this.activitiesAllData.filter(activity => 
+            activity.source === 'activities' && activity.isSeen === 'unseen'
+        ).length;
+        
+        const badgeElement = document.getElementById('activity-log-count');
+        if (badgeElement) {
+            if (unseenCount > 0) {
+                badgeElement.textContent = unseenCount > 99 ? '99+' : unseenCount;
+                badgeElement.style.display = 'inline-block';
+            } else {
+                badgeElement.style.display = 'none';
+            }
+        }
+    }
+
+    async loadActivityBadgeCount() {
+        try {
+            const userId = this.currentUser?.id || this.currentUser?.uid;
+            if (!userId) return;
+
+            // Query only unseen activities for the badge count
+            const snapshot = await firebaseDb.collection('activities')
+                .where('landlordId', '==', userId)
+                .where('isSeen', '==', 'unseen')
+                .get();
+
+            const unseenCount = snapshot.size;
+            const badgeElement = document.getElementById('activity-log-count');
+            
+            if (badgeElement) {
+                if (unseenCount > 0) {
+                    badgeElement.textContent = unseenCount > 99 ? '99+' : unseenCount;
+                    badgeElement.style.display = 'inline-block';
+                } else {
+                    badgeElement.style.display = 'none';
+                }
+            }
+
+            console.log(`📊 Activity badge updated: ${unseenCount} unseen activities`);
+        } catch (error) {
+            console.error('❌ Error loading activity badge count:', error);
+        }
     }
 
     async setupDashboardEvents() {
@@ -2796,6 +3492,13 @@ class CasaLink {
             return;
         }
         
+        // For landlords, load activity badge count
+        if (this.currentRole === 'landlord') {
+            setTimeout(() => {
+                this.loadActivityBadgeCount();
+            }, 1000);
+        }
+        
         // Add Property Button
         document.getElementById('addPropertyBtn')?.addEventListener('click', () => {
             this.showAddPropertyForm();
@@ -2829,11 +3532,6 @@ class CasaLink {
             this.shouldAutoLoadUnitLayout = false;
         }
         
-        // Load recent activities when dashboard is shown 
-        setTimeout(() => {
-            this.loadRecentActivities();
-        }, 500);
-        
         // Setup real-time stats when dashboard is shown
         this.updateActiveNavState('dashboard');
         
@@ -2854,7 +3552,15 @@ class CasaLink {
             }
             
             // Fetch landlord's apartments
-            const apartments = await DataManager.getLandlordApartments(this.currentUser.id || this.currentUser.uid);
+            const dm = await this.waitForDataManager(3000, 100);
+            if (!dm) {
+                console.error('❌ DataManager unavailable in setupApartmentSelector after waiting; cannot fetch apartments.');
+                selector.innerHTML = '<option value="">Unable to load apartments</option>';
+                selector.disabled = true;
+                return { count: 0 };
+            }
+
+            const apartments = await dm.getLandlordApartments(this.currentUser.id || this.currentUser.uid);
             
             console.log('📍 Found apartments:', apartments.length);
             
@@ -3800,45 +4506,7 @@ class CasaLink {
                     </div>
                 </div>
 
-                <!-- RECENT ACTIVITY SECTION WITH PAGINATION -->
-                <div class="card-group-title">Recent Activity</div>
-                <div class="recent-activity-container">
-                    
-                    <div class="recent-activity-header">
-                        <h3>Recent Activities</h3>
-                        <div class="activities-pagination-info" id="activitiesPaginationInfo">
-                            Showing 0–0 of 0 activities
-                        </div>
-                    </div>
-
-                    <div id="recentActivityList" class="recent-activity-list">
-                        <div class="activity-loading">
-                            <i class="fas fa-spinner fa-spin"></i> Loading recent activity...
-                        </div>
-                    </div>
-
-                    <!-- Pagination Controls -->
-                    <div class="pagination-container" id="activitiesPagination" style="display: none; margin-top: 20px;">
-                        <div class="pagination-controls">
-                            <button class="btn btn-sm btn-secondary" id="activitiesPrevPage">
-                                <i class="fas fa-chevron-left"></i> Previous
-                            </button>
-                            <div class="pagination-numbers" id="activitiesPageNumbers"></div>
-                            <button class="btn btn-sm btn-secondary" id="activitiesNextPage">
-                                Next <i class="fas fa-chevron-right"></i>
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="recent-activity-footer">
-                        <button class="btn btn-secondary btn-sm" onclick="casaLink.loadMoreActivities()">
-                            <i class="fas fa-history"></i> Load Older Activities
-                        </button>
-                        <button class="btn btn-primary btn-sm" onclick="casaLink.markAllAsRead()">
-                            <i class="fas fa-check-double"></i> Mark All as Read
-                        </button>
-                    </div>
-                </div>
+                <!-- Recent Activity moved to dedicated Activity Log page -->
             </div>
         `;
     }
@@ -7386,6 +8054,24 @@ class CasaLink {
                 predictiveData
             };
 
+            const hasAnyReportData = !!(
+                quickMetrics.hasData ||
+                financialReports.hasData ||
+                propertyReports.hasData ||
+                tenantReports.hasData
+            );
+
+            if (!hasAnyReportData) {
+                this.showReportsNoDataState();
+                if (refreshBtn) {
+                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Data';
+                    refreshBtn.disabled = false;
+                }
+                return;
+            }
+
+            this.hideReportsNoDataState();
+
             // Initialize prediction charts (small cards + forecast chart)
             try {
                 if (window.chartsManager) {
@@ -7420,6 +8106,49 @@ class CasaLink {
                 refreshBtn.disabled = false;
             }
         }
+    }
+
+    showReportsNoDataState(message = 'Not enough data is available to generate reports and analytics. Collect invoices, payments, and maintenance records to unlock insights.') {
+        const emptyState = document.getElementById('reportsEmptyState');
+        const summary = document.getElementById('executiveSummary');
+        const predictions = document.getElementById('aiPredictionsDashboard');
+        const forecast = document.getElementById('forecastSection');
+        const recommendations = document.getElementById('recommendationsSection');
+
+        if (emptyState) {
+            emptyState.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-chart-line"></i>
+                    <h3>Not enough data</h3>
+                    <p>${message}</p>
+                </div>
+            `;
+            emptyState.style.display = 'block';
+        }
+        if (summary) summary.style.display = 'none';
+        if (predictions) predictions.style.display = 'none';
+        if (forecast) forecast.style.display = 'none';
+        if (recommendations) recommendations.style.display = 'none';
+        if (window.chartsManager && typeof window.chartsManager.destroyAllCharts === 'function') {
+            window.chartsManager.destroyAllCharts();
+        }
+    }
+
+    hideReportsNoDataState() {
+        const emptyState = document.getElementById('reportsEmptyState');
+        const summary = document.getElementById('executiveSummary');
+        const predictions = document.getElementById('aiPredictionsDashboard');
+        const forecast = document.getElementById('forecastSection');
+        const recommendations = document.getElementById('recommendationsSection');
+
+        if (emptyState) {
+            emptyState.innerHTML = '';
+            emptyState.style.display = 'none';
+        }
+        if (summary) summary.style.display = '';
+        if (predictions) predictions.style.display = '';
+        if (forecast) forecast.style.display = '';
+        if (recommendations) recommendations.style.display = '';
     }
 
     /* helpers for dynamic UI sections */
@@ -8376,6 +9105,16 @@ class CasaLink {
         switch (page) {
             case 'dashboard':
                 await this.setupDashboardEvents();
+                break;
+
+            case 'activity-log':
+                await this.loadRecentActivities();
+                // Start auto-refresh every 5 seconds
+                this.activityAutoRefreshInterval = setInterval(() => {
+                    console.log('🔄 Auto-refreshing activities...');
+                    this.loadRecentActivities();
+                }, 5000);
+                console.log('✅ Started activity auto-refresh (5s interval)');
                 break;
             case 'properties':
                 // special case: ensure the landlord properties controller
@@ -16620,6 +17359,11 @@ class CasaLink {
                 this.currentUser = user;
                 this.currentRole = user.role;
                 
+                // Set up real-time activity listener for landlords immediately after login
+                if (this.currentRole === 'landlord') {
+                    this.setupActivityRealtimeListener();
+                }
+                
                 console.log('🔄 Restoring session for:', user.email);
                 
                 // Handle user based on their status
@@ -16711,10 +17455,16 @@ class CasaLink {
     async loadDashboardData() {
         try {
             console.log('🔄 Loading FRESH dashboard data...');
+            const dm = await this.waitForDataManager(3000, 100);
+            if (!dm) {
+                console.error('❌ DataManager unavailable in loadDashboardData after waiting; initializing zero stats.');
+                this.initializeDashboardStatsToZero();
+                return;
+            }
             
             // For landlords with multiple apartments and no selection: show 0 stats
             if (this.currentRole === 'landlord') {
-                const apartments = await DataManager.getLandlordApartments(this.currentUser.uid);
+                const apartments = await dm.getLandlordApartments(this.currentUser.uid);
                 if (apartments.length > 1 && !this.currentApartmentAddress && !this.currentApartmentId) {
                     console.log('ℹ️ Multiple apartments with no selection - initializing stats to 0');
                     this.initializeDashboardStatsToZero();
@@ -16731,7 +17481,7 @@ class CasaLink {
                 // token for generic loader as well
                 this._dashboardLoadToken = Symbol('dashboard');
                 const myToken = this._dashboardLoadToken;
-                const stats = await DataManager.getDashboardStats(
+                const stats = await dm.getDashboardStats(
                     this.currentUser.id || this.currentUser.uid,
                     this.currentRole,
                     {
@@ -17613,6 +18363,13 @@ class CasaLink {
             ModalManager.closeModal(this.createBillModal);
             this.showNotification('Custom bill created successfully!', 'success');
 
+            // Update activity badge count for landlord
+            if (this.currentRole === 'landlord') {
+                setTimeout(() => {
+                    this.loadActivityBadgeCount();
+                }, 500);
+            }
+
             // Attempt to show a system push notification for the created custom bill
             try {
                 console.log('Notification debug: preparing custom bill notification', Notification.permission, !!window.NotificationManager);
@@ -18229,7 +18986,7 @@ class CasaLink {
                         </div>
                         
                         <div class="header-actions">
-                            <div class="user-profile" id="userProfile">
+                            <div class="user-profile" id="userProfile" data-page="${isLandlord ? 'landlordProfile' : 'tenantProfile'}" style="cursor: pointer;">
                                 <div class="avatar">${userAvatar}</div>
                                 <div>
                                     <div style="font-weight: 500;">${userName}</div>
@@ -18255,6 +19012,8 @@ class CasaLink {
                             <li><a href="#" data-page="lease-management"><i class="fas fa-file-contract"></i> <span>Lease Management</span></a></li>
                             <li><a href="#" data-page="archive"><i class="fas fa-archive"></i> <span>Archive</span></a></li>
                             <li><a href="#" data-page="reports"><i class="fas fa-chart-pie"></i> <span>Reports</span></a></li>
+                            <li><a href="#" data-page="activity-log"><i class="fas fa-history"></i> <span>Activity Log</span><span id="activity-log-count" class="menu-badge" style="display: none;">0</span></a></li>
+                            <li><a href="#" data-page="landlordProfile"><i class="fas fa-user"></i> <span>My Profile</span></a></li>
                             <li><a href="#" id="logoutBtn"><i class="fas fa-sign-out-alt"></i> <span>Logout</span></a></li>
                         ` : `
                             <li><a href="#" class="active" data-page="dashboard"><i class="fas fa-th-large"></i> <span>Dashboard</span></a></li>
@@ -18529,6 +19288,11 @@ class CasaLink {
                 this.currentUser = user;
                 this.currentRole = user.role;
 
+                // Set up real-time activity listener for landlords immediately after login
+                if (this.currentRole === 'landlord') {
+                    this.setupActivityRealtimeListener();
+                }
+
                 // Auto-init ReportsManager for landlord users so Reports page works immediately
                 try {
                     if (this.currentRole === 'landlord' && (window.dataManager || window.DataManager)) {
@@ -18603,6 +19367,188 @@ class CasaLink {
         }
     }
 
+    async handleLandlordValidationAndStaffSetup(modal) {
+        const errorElement = modal.querySelector('#signupError');
+        const setError = (msg) => {
+            if (errorElement) {
+                errorElement.textContent = msg;
+                errorElement.style.display = msg ? 'block' : 'none';
+            }
+        };
+
+        setError('');
+
+        const email = modal.querySelector('#signupEmail')?.value.trim();
+        const password = modal.querySelector('#signupPassword')?.value;
+        const confirmPassword = modal.querySelector('#signupConfirmPassword')?.value;
+        const name = modal.querySelector('#signupName')?.value.trim();
+        const rawPhone = modal.querySelector('#signupPhone')?.value.trim() || '';
+        const bankName = modal.querySelector('#signupBank')?.value.trim();
+        const bankAccountName = modal.querySelector('#signupBankName')?.value.trim();
+        const bankAccountNumber = modal.querySelector('#signupBankNumber')?.value.trim();
+        const gcashQrFile = modal.querySelector('#gcashQrInput')?.files?.[0] || null;
+        const mayaQrFile = modal.querySelector('#mayaQrInput')?.files?.[0] || null;
+
+        const submitBtn = modal.querySelector('#modalSubmit');
+        const originalBtnText = submitBtn ? submitBtn.innerHTML : 'Next: Maintenance Staff';
+
+        const highlightButtonError = () => {
+            if (!submitBtn) return;
+            submitBtn.style.backgroundColor = '#e74c3c';
+            submitBtn.style.borderColor = '#c0392b';
+            setTimeout(() => {
+                submitBtn.style.backgroundColor = '';
+                submitBtn.style.borderColor = '';
+            }, 1800);
+        };
+
+        // Clear any existing field highlights
+        const clearFieldHighlights = () => {
+            const fields = modal.querySelectorAll('#signupName, #signupEmail, #signupPassword, #signupConfirmPassword, #signupBank, #signupBankName, #signupBankNumber');
+            fields.forEach(field => {
+                field.style.borderColor = '';
+                field.style.boxShadow = '';
+            });
+            const fileFields = modal.querySelectorAll('#gcashQrInput, #mayaQrInput');
+            fileFields.forEach(field => {
+                field.style.borderColor = '';
+                field.style.boxShadow = '';
+            });
+        };
+
+        // Highlight empty required fields
+        const highlightEmptyFields = () => {
+            clearFieldHighlights();
+            
+            if (!name) {
+                const nameField = modal.querySelector('#signupName');
+                if (nameField) {
+                    nameField.style.borderColor = '#e74c3c';
+                    nameField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!email) {
+                const emailField = modal.querySelector('#signupEmail');
+                if (emailField) {
+                    emailField.style.borderColor = '#e74c3c';
+                    emailField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!password) {
+                const passwordField = modal.querySelector('#signupPassword');
+                if (passwordField) {
+                    passwordField.style.borderColor = '#e74c3c';
+                    passwordField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!confirmPassword) {
+                const confirmPasswordField = modal.querySelector('#signupConfirmPassword');
+                if (confirmPasswordField) {
+                    confirmPasswordField.style.borderColor = '#e74c3c';
+                    confirmPasswordField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!bankName) {
+                const bankField = modal.querySelector('#signupBank');
+                if (bankField) {
+                    bankField.style.borderColor = '#e74c3c';
+                    bankField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!gcashQrFile) {
+                const gcashField = modal.querySelector('#gcashQrInput');
+                if (gcashField) {
+                    gcashField.style.borderColor = '#e74c3c';
+                    gcashField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!mayaQrFile) {
+                const mayaField = modal.querySelector('#mayaQrInput');
+                if (mayaField) {
+                    mayaField.style.borderColor = '#e74c3c';
+                    mayaField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!bankAccountName) {
+                const bankNameField = modal.querySelector('#signupBankName');
+                if (bankNameField) {
+                    bankNameField.style.borderColor = '#e74c3c';
+                    bankNameField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!bankAccountNumber) {
+                const bankNumberField = modal.querySelector('#signupBankNumber');
+                if (bankNumberField) {
+                    bankNumberField.style.borderColor = '#e74c3c';
+                    bankNumberField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+        };
+
+        if (!email || !password || !confirmPassword || !name) {
+            setError('Please fill out all required fields.');
+            highlightEmptyFields();
+            highlightButtonError();
+            return;
+        }
+
+        if (password !== confirmPassword) {
+            setError('Passwords do not match.');
+            highlightButtonError();
+            return;
+        }
+
+        if (password.length < 6) {
+            setError('Password must be at least 6 characters.');
+            highlightButtonError();
+            return;
+        }
+
+        if (!bankName || !gcashQrFile || !mayaQrFile || !bankAccountName || !bankAccountNumber) {
+            setError('Please provide all required payment/bank details.');
+            highlightEmptyFields();
+            highlightButtonError();
+            return;
+        }
+
+        // Validate bank account number format (10-16 digits)
+        if (!/^[0-9]{10,16}$/.test(bankAccountNumber)) {
+            setError('Bank account number must be 10-16 digits.');
+            const bankNumberField = modal.querySelector('#signupBankNumber');
+            if (bankNumberField) {
+                bankNumberField.style.borderColor = '#e74c3c';
+                bankNumberField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+            }
+            highlightButtonError();
+            return;
+        }
+
+        // Store the validated data for the next step
+        this.tempLandlordData = {
+            email,
+            password,
+            name,
+            phone: rawPhone,
+            bankName,
+            gcashQrFile,
+            mayaQrFile,
+            bankAccountName,
+            bankAccountNumber
+        };
+
+        // Close current modal and show maintenance staff setup
+        ModalManager.closeModal(modal);
+        this.showMaintenanceStaffSetupModal();
+    }
+
     async handleLandlordSignup(modal) {
         const errorElement = modal.querySelector('#signupError');
         const setError = (msg) => {
@@ -18648,8 +19594,100 @@ class CasaLink {
             if (phone) phone = `+63${phone}`;
         }
 
+        // Clear any existing field highlights
+        const clearFieldHighlights = () => {
+            const fields = modal.querySelectorAll('#signupName, #signupEmail, #signupPassword, #signupConfirmPassword, #signupBank, #signupBankName, #signupBankNumber');
+            fields.forEach(field => {
+                field.style.borderColor = '';
+                field.style.boxShadow = '';
+            });
+            const fileFields = modal.querySelectorAll('#gcashQrInput, #mayaQrInput');
+            fileFields.forEach(field => {
+                field.style.borderColor = '';
+                field.style.boxShadow = '';
+            });
+        };
+
+        // Highlight empty required fields
+        const highlightEmptyFields = () => {
+            clearFieldHighlights();
+            
+            if (!name) {
+                const nameField = modal.querySelector('#signupName');
+                if (nameField) {
+                    nameField.style.borderColor = '#e74c3c';
+                    nameField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!email) {
+                const emailField = modal.querySelector('#signupEmail');
+                if (emailField) {
+                    emailField.style.borderColor = '#e74c3c';
+                    emailField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!password) {
+                const passwordField = modal.querySelector('#signupPassword');
+                if (passwordField) {
+                    passwordField.style.borderColor = '#e74c3c';
+                    passwordField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!confirmPassword) {
+                const confirmPasswordField = modal.querySelector('#signupConfirmPassword');
+                if (confirmPasswordField) {
+                    confirmPasswordField.style.borderColor = '#e74c3c';
+                    confirmPasswordField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!bankName) {
+                const bankField = modal.querySelector('#signupBank');
+                if (bankField) {
+                    bankField.style.borderColor = '#e74c3c';
+                    bankField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!gcashQrFile) {
+                const gcashField = modal.querySelector('#gcashQrInput');
+                if (gcashField) {
+                    gcashField.style.borderColor = '#e74c3c';
+                    gcashField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!mayaQrFile) {
+                const mayaField = modal.querySelector('#mayaQrInput');
+                if (mayaField) {
+                    mayaField.style.borderColor = '#e74c3c';
+                    mayaField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!bankAccountName) {
+                const bankNameField = modal.querySelector('#signupBankName');
+                if (bankNameField) {
+                    bankNameField.style.borderColor = '#e74c3c';
+                    bankNameField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+            
+            if (!bankAccountNumber) {
+                const bankNumberField = modal.querySelector('#signupBankNumber');
+                if (bankNumberField) {
+                    bankNumberField.style.borderColor = '#e74c3c';
+                    bankNumberField.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                }
+            }
+        };
+
         if (!email || !password || !confirmPassword || !name) {
             setError('Please fill out all required fields.');
+            highlightEmptyFields();
             highlightButtonError();
             return;
         }
@@ -18668,6 +19706,7 @@ class CasaLink {
 
         if (!bankName || !gcashQrFile || !mayaQrFile || !bankAccountName || !bankAccountNumber) {
             setError('Please provide all required payment/bank details.');
+            highlightEmptyFields();
             highlightButtonError();
             return;
         }
@@ -18693,6 +19732,11 @@ class CasaLink {
             this.currentUser = user;
             this.currentRole = user.role;
             this.authListenerEnabled = true;
+
+            // Set up real-time activity listener for the new landlord
+            if (this.currentRole === 'landlord') {
+                this.setupActivityRealtimeListener();
+            }
 
             this.showNotification('Landlord account created successfully! Redirecting...', 'success');
             ModalManager.closeModal(modal);
@@ -18815,11 +19859,12 @@ class CasaLink {
 
                 <div class="form-group">
                     <label class="form-label">Bank Account Number <span style="color:#e74c3c;">*</span></label>
-                    <input type="text" id="signupBankNumber" class="form-input" placeholder="Account Number">
+                    <input type="text" id="signupBankNumber" class="form-input" placeholder="Account Number" pattern="[0-9]{10,16}" maxlength="16" inputmode="numeric">
+                    <div style="font-size: 12px; color: #5f6368; margin-top: 6px;">Enter 10-16 digit account number</div>
                 </div>
 
                 <div style="font-size: 12px; color: #5f6368; margin-top: 12px;">
-                    By creating an account you agree that tenants will be able to view your payment QR codes and bank details for rent payments.
+                    Your GCash QR code and bank account information will be shared with your tenants to enable easy and convenient rent payments. This allows tenants to quickly scan and pay using their preferred payment method.
                 </div>
             </div>
         `;
@@ -18827,10 +19872,10 @@ class CasaLink {
         const modal = ModalManager.openModal(modalContent, {
             title: 'Landlord Sign Up',
             width: '520px',
-            submitText: 'Create Account',
+            submitText: 'Next: Maintenance Staff',
             cancelText: 'Cancel',
             onSubmit: async () => {
-                await this.handleLandlordSignup(modal);
+                await this.handleLandlordValidationAndStaffSetup(modal);
             }
         });
 
@@ -18870,6 +19915,17 @@ class CasaLink {
                 submitBtn.style.backgroundColor = '';
                 submitBtn.style.borderColor = '';
             }
+            // Clear field highlights
+            const fields = modal.querySelectorAll('#signupName, #signupEmail, #signupPassword, #signupConfirmPassword, #signupBank, #signupBankName, #signupBankNumber');
+            fields.forEach(field => {
+                field.style.borderColor = '';
+                field.style.boxShadow = '';
+            });
+            const fileFields = modal.querySelectorAll('#gcashQrInput, #mayaQrInput');
+            fileFields.forEach(field => {
+                field.style.borderColor = '';
+                field.style.boxShadow = '';
+            });
         };
 
         const watchedFields = modal.querySelectorAll('#signupName, #signupEmail, #signupPassword, #signupConfirmPassword, #signupPhone, #signupBank, #signupBankName, #signupBankNumber');
@@ -18883,6 +19939,327 @@ class CasaLink {
             phoneInput.addEventListener('input', (e) => {
                 e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
             });
+        }
+
+        // Validate bank account number (10-16 digits only)
+        const bankNumberInput = modal.querySelector('#signupBankNumber');
+        const submitBtn = modal.querySelector('#modalSubmit');
+        if (bankNumberInput && submitBtn) {
+            const validateBankNumber = () => {
+                const value = bankNumberInput.value;
+                const isValid = /^[0-9]{10,16}$/.test(value);
+                
+                if (value.length > 0 && !isValid) {
+                    bankNumberInput.style.borderColor = '#e74c3c';
+                    bankNumberInput.style.boxShadow = '0 0 0 3px rgba(231, 76, 60, 0.1)';
+                    submitBtn.disabled = true;
+                    submitBtn.style.opacity = '0.6';
+                    submitBtn.style.cursor = 'not-allowed';
+                } else if (value.length === 0 || isValid) {
+                    bankNumberInput.style.borderColor = '';
+                    bankNumberInput.style.boxShadow = '';
+                    submitBtn.disabled = false;
+                    submitBtn.style.opacity = '';
+                    submitBtn.style.cursor = '';
+                }
+            };
+
+            bankNumberInput.addEventListener('input', (e) => {
+                // Only allow digits
+                e.target.value = e.target.value.replace(/\D/g, '');
+                validateBankNumber();
+            });
+        }
+    }
+
+    showMaintenanceStaffSetupModal() {
+        const staffList = [];
+
+        const modalContent = `
+            <div style="max-width: 100%;">
+                <div id="staffError" style="display:none; color: #e74c3c; margin-bottom: 12px;"></div>
+
+                <div style="margin-bottom: 20px;">
+                    <h3 style="margin: 0 0 10px 0; color: #1a73e8;">Add Maintenance Staff</h3>
+                    <p style="margin: 0; font-size: 14px; color: #666;">
+                        Add staff members who will handle maintenance requests from your tenants. You can add multiple staff members.
+                    </p>
+                </div>
+
+                <div id="staffForm">
+                    <div class="form-group">
+                        <label class="form-label">Staff Name <span style="color:#e74c3c;">*</span></label>
+                        <input type="text" id="staffName" class="form-input" placeholder="John Doe">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Staff Email (optional)</label>
+                        <input type="email" id="staffEmail" class="form-input" placeholder="staff@example.com">
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Phone Number (optional)</label>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="padding: 10px 12px; background: #f1f3f4; border: 1px solid #dcdcdc; border-radius: 6px 0 0 6px; font-size: 0.95rem;">+63</span>
+                            <input type="tel" id="staffPhone" class="form-input" placeholder="9123456789" maxlength="10" inputmode="numeric" pattern="[0-9]*" style="border-radius: 0 6px 6px 0;">
+                        </div>
+                        <div style="font-size: 12px; color: #5f6368; margin-top: 6px;">Enter mobile number without the leading 0 (e.g., 9123456789).</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Specialization (optional)</label>
+                        <select id="staffSpecialization" class="form-input">
+                            <option value="">-- Select specialization --</option>
+                            <option>General Maintenance</option>
+                            <option>Electrical</option>
+                            <option>Plumbing</option>
+                            <option>Carpentry</option>
+                            <option>Painting</option>
+                            <option>HVAC</option>
+                            <option>Appliance Repair</option>
+                            <option>Cleaning</option>
+                            <option>Other</option>
+                        </select>
+                    </div>
+
+                    <button type="button" id="addStaffBtn" class="btn" style="width: 100%; margin-bottom: 20px;">Add Staff Member</button>
+                </div>
+
+                <div id="staffList" style="display: none;">
+                    <h4 style="margin: 20px 0 10px 0; color: #333;">Added Staff Members:</h4>
+                    <div id="staffItems" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; padding: 10px;"></div>
+                </div>
+            </div>
+        `;
+
+        const modal = ModalManager.openModal(modalContent, {
+            title: 'Maintenance Staff Setup',
+            width: '520px',
+            submitText: 'Complete Setup',
+            cancelText: 'Back',
+            onSubmit: async () => {
+                await this.completeLandlordSetup(modal, staffList);
+            },
+            onCancel: () => {
+                // Go back to landlord signup
+                this.showLandlordSignupModal();
+            }
+        });
+
+        // Initially disable the Complete Setup button since no staff are added yet
+        const submitBtn = modal.querySelector('#modalSubmit');
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.style.opacity = '0.6';
+            submitBtn.style.cursor = 'not-allowed';
+        }
+
+        const updateStaffList = () => {
+            const staffItems = modal.querySelector('#staffItems');
+            const staffListDiv = modal.querySelector('#staffList');
+
+            if (staffList.length > 0) {
+                staffListDiv.style.display = 'block';
+                staffItems.innerHTML = staffList.map((staff, index) => `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee;">
+                        <div>
+                            <strong>${staff.name}</strong>${staff.email ? ` - ${staff.email}` : ''}${staff.phone ? ` (${staff.phone})` : ''}
+                            ${staff.specialization ? `<br><small style="color: #666;">${staff.specialization}</small>` : ''}
+                        </div>
+                        <button type="button" class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="removeStaff(${index})">Remove</button>
+                    </div>
+                `).join('');
+            } else {
+                staffListDiv.style.display = 'none';
+            }
+
+            // Enable/disable Complete Setup button based on staff count
+            if (submitBtn) {
+                if (staffList.length > 0) {
+                    submitBtn.disabled = false;
+                    submitBtn.style.opacity = '';
+                    submitBtn.style.cursor = '';
+                    
+                    // Clear any error highlighting when staff are added
+                    const staffForm = modal.querySelector('#staffForm');
+                    if (staffForm) {
+                        staffForm.style.border = '';
+                        staffForm.style.borderRadius = '';
+                        staffForm.style.padding = '';
+                        staffForm.style.backgroundColor = '';
+                    }
+                    
+                    const errorEl = modal.querySelector('#staffError');
+                    if (errorEl) {
+                        errorEl.style.display = 'none';
+                        errorEl.textContent = '';
+                    }
+                } else {
+                    submitBtn.disabled = true;
+                    submitBtn.style.opacity = '0.6';
+                    submitBtn.style.cursor = 'not-allowed';
+                }
+            }
+        };
+
+        // Make removeStaff function available globally for the onclick
+        window.removeStaff = (index) => {
+            staffList.splice(index, 1);
+            updateStaffList();
+        };
+
+        modal.querySelector('#addStaffBtn').addEventListener('click', () => {
+            const name = modal.querySelector('#staffName').value.trim();
+            const email = modal.querySelector('#staffEmail').value.trim();
+            const phone = modal.querySelector('#staffPhone').value.trim();
+            const specialization = modal.querySelector('#staffSpecialization').value;
+
+            const errorEl = modal.querySelector('#staffError');
+            const setError = (msg) => {
+                if (errorEl) {
+                    errorEl.textContent = msg;
+                    errorEl.style.display = msg ? 'block' : 'none';
+                }
+            };
+
+            setError('');
+
+            if (!name) {
+                setError('Please enter the staff name.');
+                return;
+            }
+
+            // Validate email if provided
+            if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                setError('Please enter a valid email address.');
+                return;
+            }
+
+            // Validate phone if provided
+            if (phone && !/^[0-9]{10}$/.test(phone)) {
+                setError('Please enter a valid 10-digit phone number.');
+                return;
+            }
+
+            // Check for duplicate email only if email is provided
+            if (email && staffList.some(staff => staff.email === email)) {
+                setError('This email is already added.');
+                return;
+            }
+
+            staffList.push({
+                name,
+                email: email || null,
+                phone: phone ? `+63${phone}` : null,
+                specialization: specialization || null
+            });
+
+            // Clear form
+            modal.querySelector('#staffName').value = '';
+            modal.querySelector('#staffEmail').value = '';
+            modal.querySelector('#staffPhone').value = '';
+            modal.querySelector('#staffSpecialization').value = '';
+
+            updateStaffList();
+        });
+
+        // Restrict phone input to digits only
+        const phoneInput = modal.querySelector('#staffPhone');
+        if (phoneInput) {
+            phoneInput.addEventListener('input', (e) => {
+                e.target.value = e.target.value.replace(/\D/g, '').slice(0, 10);
+            });
+        }
+    }
+
+    async completeLandlordSetup(modal, staffList) {
+        // Validate that at least one staff member has been added
+        if (!staffList || staffList.length === 0) {
+            const errorEl = modal.querySelector('#staffError');
+            const setError = (msg) => {
+                if (errorEl) {
+                    errorEl.textContent = msg;
+                    errorEl.style.display = msg ? 'block' : 'none';
+                }
+            };
+            
+            setError('Please add at least one maintenance staff member before completing setup.');
+            
+            // Highlight the staff form area
+            const staffForm = modal.querySelector('#staffForm');
+            if (staffForm) {
+                staffForm.style.border = '2px solid #e74c3c';
+                staffForm.style.borderRadius = '6px';
+                staffForm.style.padding = '15px';
+                staffForm.style.backgroundColor = '#fff5f5';
+            }
+            
+            // Highlight the submit button with error styling
+            const submitBtn = modal.querySelector('#modalSubmit');
+            if (submitBtn) {
+                submitBtn.style.backgroundColor = '#e74c3c';
+                submitBtn.style.borderColor = '#c0392b';
+                setTimeout(() => {
+                    if (submitBtn) {
+                        submitBtn.style.backgroundColor = '';
+                        submitBtn.style.borderColor = '';
+                    }
+                }, 1800);
+            }
+            
+            return;
+        }
+
+        if (!this.tempLandlordData) {
+            this.showNotification('Setup data not found. Please start over.', 'error');
+            ModalManager.closeModal(modal);
+            return;
+        }
+
+        const submitBtn = modal.querySelector('#modalSubmit');
+        const originalBtnText = submitBtn ? submitBtn.innerHTML : 'Complete Setup';
+
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
+        }
+
+        try {
+            // Create the landlord account
+            const user = await AuthManager.createLandlordAccount({
+                ...this.tempLandlordData,
+                maintenanceStaff: staffList
+            });
+
+            this.currentUser = user;
+            this.currentRole = user.role;
+            this.authListenerEnabled = true;
+
+            // Set up real-time activity listener for the new landlord
+            if (this.currentRole === 'landlord') {
+                this.setupActivityRealtimeListener();
+            }
+
+            this.showNotification('Landlord account and maintenance staff setup completed successfully!', 'success');
+            ModalManager.closeModal(modal);
+
+            setTimeout(() => {
+                this.showDashboard();
+            }, 300);
+
+        } catch (error) {
+            console.error('Landlord setup error:', error);
+            const errorMsg = error?.message || 'Failed to complete setup';
+            const errorEl = modal.querySelector('#staffError');
+            if (errorEl) {
+                errorEl.textContent = errorMsg;
+                errorEl.style.display = 'block';
+            }
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = originalBtnText;
+            }
         }
     }
 
@@ -19212,7 +20589,7 @@ class CasaLink {
         // Remove tenant row click handlers (if using the container-specific approach)
         this.removeTenantRowClickHandlers();
         
-        // Remove Firestore listeners
+        // Remove Firestore listeners (but NOT activity listener - it persists)
         if (this.tenantsListener) {
             this.tenantsListener();
             this.tenantsListener = null;
@@ -19233,6 +20610,9 @@ class CasaLink {
             clearInterval(this.dashboardInterval);
             this.dashboardInterval = null;
         }
+        
+        // NOTE: Intentionally NOT cleaning up this.activityListener here
+        // The activity listener is persistent and should always be listening to update the badge
         
         console.log('✅ Dashboard listeners cleaned up');
     }
@@ -19302,6 +20682,45 @@ class CasaLink {
             
         } catch (error) {
             console.error('❌ Error setting up Firestore listeners:', error);
+        }
+    }
+
+    setupActivityRealtimeListener() {
+        if (this.currentRole !== 'landlord') return;
+        if (this.activityListener) return; // already listening
+
+        const landlordId = this.currentUser?.id || this.currentUser?.uid;
+        if (!landlordId) return;
+
+        console.log('👂 Setting up Activity Log real-time listener (PERSISTENT)...');
+
+        this.activityListener = firebaseDb.collection('activities')
+            .where('landlordId', '==', landlordId)
+            .onSnapshot((snapshot) => {
+                console.log('📝 Activity snapshot received:', snapshot.size);
+                // Update the badge count in real-time, regardless of current page
+                this.loadActivityBadgeCount();
+                // Only reload recent activities if on activity-log page
+                if (this.currentPage === 'activity-log') {
+                    this.loadRecentActivities();
+                }
+            }, (error) => {
+                console.error('❌ Activity realtime listener failed:', error);
+            });
+        
+        // Initial load
+        this.loadActivityBadgeCount();
+    }
+
+    cleanupActivityRealtimeListener() {
+        if (this.activityListener) {
+            console.log('🧹 Cleaning up Activity Log realtime listener');
+            try {
+                this.activityListener();
+            } catch (err) {
+                console.warn('⚠️ Error cleaning up activity listener:', err);
+            }
+            this.activityListener = null;
         }
     }
 
@@ -20406,7 +21825,7 @@ class CasaLink {
                 // Create activity for payment submission / pending
                 try {
                     const ts = new Date().toISOString();
-                    await firebaseDb.collection('activities').add({
+                    await DataManager.addActivity({
                         type: 'payment_submitted',
                         paymentId: paymentId,
                         billId: billId,
@@ -20416,7 +21835,8 @@ class CasaLink {
                         title: 'Payment Submitted',
                         message: `Tenant submitted a payment for bill ${billId}`,
                         createdAt: ts,
-                        timestamp: ts
+                        timestamp: ts,
+                        isSeen: 'unseen'
                     });
                 } catch (actErr) {
                     console.warn('Could not create activity for payment submission:', actErr);
@@ -20452,7 +21872,7 @@ class CasaLink {
                     // Create activity for verification
                     try {
                         const ts = new Date().toISOString();
-                        await firebaseDb.collection('activities').add({
+                        await DataManager.addActivity({
                             type: 'payment_verified',
                             paymentId: existingPaymentId,
                             billId: billId,
@@ -20462,7 +21882,8 @@ class CasaLink {
                             title: 'Payment Verified',
                             message: `Landlord verified payment for bill ${billId}`,
                             createdAt: ts,
-                            timestamp: ts
+                            timestamp: ts,
+                            isSeen: 'unseen'
                         });
                     } catch (actErr) {
                         console.warn('Could not create activity for payment verification:', actErr);
@@ -20474,7 +21895,7 @@ class CasaLink {
                     // Create verification activity for newly created payment
                     try {
                         const ts = new Date().toISOString();
-                        await firebaseDb.collection('activities').add({
+                        await DataManager.addActivity({
                             type: 'payment_verified',
                             paymentId: paymentId,
                             billId: billId,
@@ -20484,7 +21905,8 @@ class CasaLink {
                             title: 'Payment Verified',
                             message: `Landlord recorded and verified payment for bill ${billId}`,
                             createdAt: ts,
-                            timestamp: ts
+                            timestamp: ts,
+                            isSeen: 'unseen'
                         });
                     } catch (actErr) {
                         console.warn('Could not create activity for payment verification:', actErr);
@@ -20514,7 +21936,7 @@ class CasaLink {
                 // Record activity for bill paid
                 try {
                     const ts = new Date().toISOString();
-                    await firebaseDb.collection('activities').add({
+                    await DataManager.addActivity({
                         type: 'bill_paid',
                         billId: billId,
                         landlordId: userId,
@@ -20523,7 +21945,8 @@ class CasaLink {
                         title: 'Bill Paid',
                         message: `Bill ${billId} marked as paid`,
                         createdAt: ts,
-                        timestamp: ts
+                        timestamp: ts,
+                        isSeen: 'unseen'
                     });
                 } catch (actErr) {
                     console.warn('Could not create activity for bill paid:', actErr);
@@ -23888,6 +25311,27 @@ class CasaLink {
                 ModalManager.closeModal(this.passwordConfirmationModal);
                 this.showNotification('Tenant account and lease created successfully!', 'success');
 
+                // Create activity for new tenant registration
+                try {
+                    await DataManager.addActivity({
+                        type: 'new_tenant',
+                        tenantId: result.tenantId,
+                        landlordId: this.currentUser.uid,
+                        roomNumber: tenantData.roomNumber,
+                        tenantName: tenantData.name,
+                        title: 'New Tenant Registered',
+                        message: `${tenantData.name} registered for room ${tenantData.roomNumber}`,
+                        icon: 'fas fa-user-tie',
+                        color: 'var(--info)',
+                        createdAt: new Date().toISOString(),
+                        timestamp: new Date().toISOString(),
+                        isSeen: 'unseen'
+                    });
+                    console.log('✅ Activity created for new tenant registration');
+                } catch (activityError) {
+                    console.warn('⚠️ Failed to create activity for new tenant:', activityError);
+                }
+
                 // Reload tenants list
                 // Start silent post-add automation (archive -> restore, then refresh/select)
                 this._postTenantUnitAddAutomation(result.tenantId, leaseId, this.currentApartmentId, { silent: true })
@@ -24059,53 +25503,7 @@ class CasaLink {
         }
     }
 
-    async finalizeTenantCreation(tenantId, tenantData, leaseEndDate) {
-        try {
-            const submitBtn = document.querySelector('#modalSubmit');
-            if (submitBtn) {
-                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
-                submitBtn.disabled = true;
-            }
 
-            // Create SINGLE lease document
-            const leaseId = await this.createLeaseDocument(tenantId, tenantData, leaseEndDate);
-            
-            // Create rental bill for the new tenant
-            try {
-                await this.createRentalBillForNewTenant(tenantId, tenantData, leaseId);
-                console.log('✅ Rental bill created for new tenant');
-            } catch (billError) {
-                console.warn('⚠️ Rental bill creation failed:', billError);
-                this.showNotification('Tenant created but bill generation failed', 'warning');
-            }
-            
-            // Show success message
-            ModalManager.closeModal(this.leaseAgreementModal);
-            
-            this.showNotification('Tenant account and lease created successfully!', 'success');
-
-            // Reload tenants list
-            // Start silent post-add automation (archive -> restore, then refresh/select)
-            this._postTenantUnitAddAutomation(tenantId, leaseId, this.currentApartmentId, { silent: true })
-                .catch(err => {
-                    console.warn('Post-tenant add automation failed:', err);
-                    setTimeout(() => {
-                        this.loadTenantsData();
-                    }, 1000);
-                });
-
-        } catch (error) {
-            console.error('Error finalizing tenant creation:', error);
-            this.showNotification(`Failed to create lease: ${error.message}`, 'error');
-            
-            // Reset button
-            const submitBtn = document.querySelector('#modalSubmit');
-            if (submitBtn) {
-                submitBtn.innerHTML = 'Confirm & Create Tenant';
-                submitBtn.disabled = false;
-            }
-        }
-    }
 
     // Silent automation: archive then restore tenant+lease, then reload and re-select apartment
     async _postTenantUnitAddAutomation(tenantId, leaseId, propertyId, options = {}) {
@@ -24899,6 +26297,7 @@ class CasaLink {
                 apartment: tenantData.rentalAddress || '',
                 leaseId: leaseId,
                 amount: rentalAmount,
+                totalAmount: rentalAmount,
                 dueDate: dueDate.toISOString(),
                 status: 'pending',
                 paymentMethod: tenantData.paymentMethod || 'bank_transfer',
@@ -24907,6 +26306,7 @@ class CasaLink {
                 isAutoGenerated: true,
                 type: 'rent',
                 billType: 'rent',
+                isSeen: 'unseen',
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
                 paidAmount: 0,
@@ -24926,21 +26326,26 @@ class CasaLink {
             const billRef = await firebaseDb.collection('bills').add(billData);
             console.log('✅ Rental bill created with ID:', billRef.id);
 
-            // Create activity record for the bill
+            // Create activity for auto-generated rental bill
             try {
-                await firebaseDb.collection('activities').add({
+                await DataManager.addActivity({
                     type: 'bill_created',
                     billId: billRef.id,
                     tenantId: tenantId,
                     landlordId: this.currentUser.uid,
                     amount: rentalAmount,
+                    billType: 'rental',
                     title: 'Auto-generated Rental Bill',
                     message: `Rental bill created for ${tenantData.name}`,
-                    createdAt: new Date().toISOString()
+                    icon: 'fas fa-receipt',
+                    color: 'var(--warning)',
+                    createdAt: new Date().toISOString(),
+                    timestamp: new Date().toISOString(),
+                    isSeen: 'unseen'
                 });
-                console.log('✅ Activity record created for bill');
-            } catch (actErr) {
-                console.warn('⚠️ Could not create activity record:', actErr.message);
+                console.log('✅ Activity created for auto-generated rental bill');
+            } catch (activityError) {
+                console.warn('⚠️ Failed to create activity for rental bill:', activityError);
             }
 
             // --- Create security deposit bill (auto-generated) ---
@@ -24972,6 +26377,7 @@ class CasaLink {
                         isAutoGenerated: true,
                         type: 'security_deposit',
                         billType: 'security_deposit',
+                        isSeen: 'unseen',
                         createdAt: new Date().toISOString(),
                         updatedAt: new Date().toISOString(),
                         paidAmount: 0,
@@ -24982,26 +26388,39 @@ class CasaLink {
                     const depositRef = await firebaseDb.collection('bills').add(depositBillData);
                     console.log('✅ Security deposit bill created with ID:', depositRef.id);
 
+                    // Create activity for auto-generated security deposit bill
                     try {
-                        await firebaseDb.collection('activities').add({
+                        await DataManager.addActivity({
                             type: 'bill_created',
                             billId: depositRef.id,
                             tenantId: tenantId,
                             landlordId: this.currentUser.uid,
                             amount: depositAmount,
+                            billType: 'security_deposit',
                             title: 'Auto-generated Security Deposit Bill',
                             message: `Security deposit bill created for ${tenantData.name}`,
-                            createdAt: new Date().toISOString()
+                            icon: 'fas fa-receipt',
+                            color: 'var(--danger)',
+                            createdAt: new Date().toISOString(),
+                            timestamp: new Date().toISOString(),
+                            isSeen: 'unseen'
                         });
-                        console.log('✅ Activity record created for security deposit bill');
-                    } catch (actErr2) {
-                        console.warn('⚠️ Could not create activity record for deposit bill:', actErr2.message);
+                        console.log('✅ Activity created for auto-generated security deposit bill');
+                    } catch (activityError) {
+                        console.warn('⚠️ Failed to create activity for security deposit bill:', activityError);
                     }
                 } else {
                     console.log('ℹ️ Security deposit amount is 0 or not provided; skipping deposit bill creation');
                 }
             } catch (depositErr) {
                 console.warn('⚠️ Failed to create security deposit bill:', depositErr.message || depositErr);
+            }
+
+            // Update activity badge count for landlord
+            if (this.currentRole === 'landlord') {
+                setTimeout(() => {
+                    this.loadActivityBadgeCount();
+                }, 500); // Small delay to ensure activities are saved
             }
 
             return billRef.id;

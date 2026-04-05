@@ -343,6 +343,13 @@ class PWAManager {
                         const worker = registration.installing;
                         if (!worker) return resolve();
 
+                        // If the worker already reached a terminal state before listener attachment,
+                        // resolve immediately to avoid false timeout warnings.
+                        if (['activated', 'installed', 'redundant'].includes(worker.state)) {
+                            console.log('🔧 Service Worker already in terminal state:', worker.state);
+                            return resolve();
+                        }
+
                         const onStateChange = () => {
                             console.log('🔧 Service Worker state:', worker.state);
                             // Consider activated/installed as success; treat redundant as non-fatal
@@ -365,7 +372,11 @@ class PWAManager {
 
                         // Fallback timeout to avoid hanging indefinitely
                         setTimeout(() => {
-                            console.warn('⚠️ SW install wait timed out — continuing');
+                            if (worker.state !== 'installed' && worker.state !== 'activated' && worker.state !== 'redundant') {
+                                console.warn('⚠️ SW install wait timed out — continuing');
+                            } else {
+                                console.log('🔧 SW install fallback timeout fired after terminal state:', worker.state);
+                            }
                             cleanup();
                             resolve();
                         }, 10000);

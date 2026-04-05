@@ -15,6 +15,7 @@ class Bill {
     this.status = data.status || 'pending'; // pending, paid, overdue, partial
     this.paymentMethod = data.paymentMethod || null;
     this.notes = data.notes || '';
+    this.isSeen = data.isSeen || 'seen'; // seen, unseen
     this.createdAt = data.createdAt || new Date();
     this.updatedAt = data.updatedAt || new Date();
     this.lateFeeAmount = data.lateFeeAmount || 0;
@@ -98,6 +99,7 @@ class Bill {
       status: this.status,
       paymentMethod: this.paymentMethod,
       notes: this.notes,
+      isSeen: this.isSeen,
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
       lateFeeAmount: this.lateFeeAmount,
