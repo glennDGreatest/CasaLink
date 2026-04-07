@@ -72,10 +72,10 @@
     transition: border-color 0.3s;
 }
 
-.login-form input:focus {
-    border-color: #4f46e5;
-    outline: none;
-}
+ .login-form input:focus {
+     border-color: #4f46e5;
+     outline: none;
+ }
 
 .login-footer {
     text-align: center;
@@ -84,11 +84,11 @@
     border-top: 1px solid #eee;
 }
 
-.login-footer a {
-    color: #4f46e5;
-    text-decoration: none;
-    font-size: 14px;
-}
+ .login-footer a {
+     color: #4f46e5;
+     text-decoration: none;
+     font-size: 14px;
+ }
 
 .login-info h3 {
     font-size: 24px;
@@ -153,16 +153,16 @@
     border-left: 3px solid transparent;
 }
 
-.nav-menu a:hover {
-    background: #f8f9fa;
-    color: #4f46e5;
-}
+ .nav-menu a:hover {
+     background: #f8f9fa;
+     color: #4f46e5;
+ }
 
-.nav-menu li.active a {
-    background: #f0f2ff;
-    color: #4f46e5;
-    border-left-color: #4f46e5;
-}
+ .nav-menu li.active a {
+     background: #f0f2ff;
+     color: #4f46e5;
+     border-left-color: #4f46e5;
+ }
 
 .nav-footer {
     padding: 20px;
@@ -235,7 +235,7 @@
     border-radius: 12px;
 }
 
-.stat-icon.primary { background: #e0e7ff; color: #4f46e5; }
+ .stat-icon.primary { background: #e0e7ff; color: #4f46e5; }
 .stat-icon.success { background: #d1fae5; color: #10b981; }
 .stat-icon.warning { background: #fef3c7; color: #f59e0b; }
 .stat-icon.danger { background: #fee2e2; color: #ef4444; }
@@ -474,10 +474,14 @@
     color: white;
 }
 
+.btn-primary {
+    background: #4f46e5;
+    color: white;
+}
+
 .btn-primary:hover {
     background: #4338ca;
 }
-
 .btn-outline {
     background: transparent;
     border: 1px solid #4f46e5;
@@ -488,10 +492,6 @@
     background: #4f46e5;
     color: white;
 }
-
-.btn-sm {
-    padding: 6px 12px;
-    font-size: 12px;
 }
 
 .btn-block {

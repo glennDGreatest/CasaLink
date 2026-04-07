@@ -250,7 +250,7 @@
 .property-header-info h3 {
     margin: 0 0 0.5rem 0;
     font-size: 1.5rem;
-    color: #1e3a5f;
+    color: var(--primary-dark);
 }
 
 .property-details-address {
@@ -712,14 +712,14 @@
    Error State
    ============================================ */
 
-.error-state {
+    color: var(--primary-dark);
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     padding: 3rem 2rem;
     text-align: center;
-    background-color: #fef2f2;
+    color: var(--accent);
     border-radius: 12px;
     border: 1px solid #fecaca;
 }
@@ -733,7 +733,7 @@
 .error-state h3 {
     color: #991b1b;
     margin-bottom: 0.5rem;
-}
+    color: var(--primary-dark);
 
 .error-state p {
     color: #7f1d1d;
@@ -757,7 +757,7 @@
     animation: loading 1.5s infinite;
     border-radius: var(--property-radius);
     height: 400px;
-}
+    color: var(--primary-dark);
 
 @keyframes loading {
     0% {

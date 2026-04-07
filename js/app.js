@@ -59,6 +59,8 @@ class CasaLink {
         this.activityListener = null;
         this.activityRealtimeInitialized = false;
         this.activityBadgeNotificationShown = false;
+        this.activityBadgeInterval = null; // interval id for 5-minute badge notifications
+        this.lastActivityBadgeNotifiedAt = 0; // timestamp of last badge notification shown
         
         // 🔥 ADD BILLING VIEW TRACKING
         this.currentBillingView = 'bills'; // Default to Bills Management
@@ -186,11 +188,38 @@ class CasaLink {
         
         // Set up persistent activity listener for landlords
         if (this.currentRole === 'landlord') {
+            // Reset badge notification state on login so user receives login summary
+            this.activityBadgeNotificationShown = false;
+            this.lastActivityBadgeNotifiedAt = 0;
             this.setupActivityRealtimeListener();
+
+            // Immediately notify about unseen items at login
+            this.loadActivityBadgeCount(true);
+
+            // Start 5-minute interval to notify about unseen items
+            try {
+                if (this.activityBadgeInterval) clearInterval(this.activityBadgeInterval);
+                this.activityBadgeInterval = setInterval(() => {
+                    this.loadActivityBadgeCount(true);
+                }, 5 * 60 * 1000);
+            } catch (e) {
+                console.warn('Could not start activity badge interval:', e);
+            }
         } else if (this.currentRole === 'tenant') {
-            // For tenants, load badge count immediately and set up real-time listener
-            this.loadActivityBadgeCount();
+            // For tenants, reset badge state, notify at login and set up real-time listener
+            this.activityBadgeNotificationShown = false;
+            this.lastActivityBadgeNotifiedAt = 0;
+            this.loadActivityBadgeCount(true);
             this.setupActivityRealtimeListener();
+
+            try {
+                if (this.activityBadgeInterval) clearInterval(this.activityBadgeInterval);
+                this.activityBadgeInterval = setInterval(() => {
+                    this.loadActivityBadgeCount(true);
+                }, 5 * 60 * 1000);
+            } catch (e) {
+                console.warn('Could not start activity badge interval for tenant:', e);
+            }
         }
     }
 
@@ -206,6 +235,15 @@ class CasaLink {
         }
 
         this.cleanupActivityRealtimeListener();
+        // Clear periodic badge notifier
+        try {
+            if (this.activityBadgeInterval) {
+                clearInterval(this.activityBadgeInterval);
+                this.activityBadgeInterval = null;
+            }
+        } catch (e) {
+            console.warn('Error clearing activity badge interval on logout:', e);
+        }
     }
 
     setupCacheBusting() {
@@ -3205,6 +3243,7 @@ class CasaLink {
                 pageButton.onclick = () => {
                     console.log(`🔢 Page ${i} clicked`);
                     this.activitiesCurrentPage = i;
+                    try { sessionStorage.setItem('casalink_activities_page', String(this.activitiesCurrentPage)); } catch (e) { /* ignore */ }
                     this.updateActivitiesList(this.getCurrentActivitiesPage());
                     this.setupActivitiesPagination();
                 };
@@ -3223,6 +3262,7 @@ class CasaLink {
                 console.log('⬅️ Previous page clicked');
                 if (this.activitiesCurrentPage > 1) {
                     this.activitiesCurrentPage--;
+                    try { sessionStorage.setItem('casalink_activities_page', String(this.activitiesCurrentPage)); } catch (e) { /* ignore */ }
                     this.updateActivitiesList(this.getCurrentActivitiesPage());
                     this.setupActivitiesPagination();
                     console.log(`📄 Now on page ${this.activitiesCurrentPage}`);
@@ -3235,6 +3275,7 @@ class CasaLink {
                 console.log('➡️ Next page clicked');
                 if (this.activitiesCurrentPage < this.activitiesTotalPages) {
                     this.activitiesCurrentPage++;
+                    try { sessionStorage.setItem('casalink_activities_page', String(this.activitiesCurrentPage)); } catch (e) { /* ignore */ }
                     this.updateActivitiesList(this.getCurrentActivitiesPage());
                     this.setupActivitiesPagination();
                     console.log(`📄 Now on page ${this.activitiesCurrentPage}`);
@@ -3413,8 +3454,14 @@ class CasaLink {
             }
             this.activitiesAllData = activities;
             this.activitiesFilteredData = [...activities];
-            this.activitiesCurrentPage = 1;
-            this.activitiesTotalPages = Math.ceil(activities.length / this.activitiesItemsPerPage);
+            // Preserve the current page across table refreshes. Prefer sessionStorage value
+            // (so the selection persists for the browser session), otherwise reuse the in-memory page.
+            const storedActivitiesPage = parseInt(sessionStorage.getItem('casalink_activities_page'), 10);
+            const prevPage = Number.isInteger(storedActivitiesPage) && storedActivitiesPage > 0
+                ? storedActivitiesPage
+                : (this.activitiesCurrentPage || 1);
+            this.activitiesTotalPages = Math.max(1, Math.ceil(activities.length / this.activitiesItemsPerPage));
+            this.activitiesCurrentPage = Math.min(Math.max(1, prevPage), this.activitiesTotalPages);
             
             // Update the activity log badge count
             this.updateActivityLogBadge();
@@ -4451,7 +4498,7 @@ class CasaLink {
         }
     }
 
-    async loadActivityBadgeCount() {
+    async loadActivityBadgeCount(forceNotify = false) {
         try {
             const userId = this.currentUser?.id || this.currentUser?.uid;
             if (!userId) return;
@@ -4486,12 +4533,18 @@ class CasaLink {
                 });
             }
 
-            if (unseenCount > 0 && !this.activityBadgeNotificationShown) {
+            const now = Date.now();
+            const fiveMinutes = 5 * 60 * 1000;
+
+            const shouldNotify = unseenCount > 0 && (forceNotify || (!this.lastActivityBadgeNotifiedAt) || (now - this.lastActivityBadgeNotifiedAt >= fiveMinutes));
+            if (shouldNotify) {
+                this.lastActivityBadgeNotifiedAt = now;
                 this.activityBadgeNotificationShown = true;
                 if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
                     window.NotificationManager.showNotification('Unread Activity Log', {
                         body: `You have ${unseenCount} unread activity log item${unseenCount === 1 ? '' : 's'}.`,
                         tag: 'activity-unseen-count',
+                        renotify: true,
                         icon: '/icons/icon-192x192.png',
                         badge: '/icons/icon-72x72.png'
                     });
@@ -19210,8 +19263,25 @@ class CasaLink {
                 // Set up real-time activity listener for landlords and tenants immediately after login
                 if (this.currentRole === 'landlord' || this.currentRole === 'tenant') {
                     this.setupActivityRealtimeListener();
-                    // Ensure tenant sees badge immediately
-                    if (this.currentRole === 'tenant') this.loadActivityBadgeCount();
+                    // Reset badge state and immediately notify about unseen items
+                    try {
+                        this.activityBadgeNotificationShown = false;
+                        this.lastActivityBadgeNotifiedAt = 0;
+                        this.loadActivityBadgeCount(true);
+
+                        // Clear any existing interval to avoid duplicates
+                        if (this.activityBadgeInterval) {
+                            clearInterval(this.activityBadgeInterval);
+                            this.activityBadgeInterval = null;
+                        }
+
+                        // Start periodic 5-minute notifier
+                        this.activityBadgeInterval = setInterval(() => {
+                            this.loadActivityBadgeCount(true);
+                        }, 5 * 60 * 1000);
+                    } catch (e) {
+                        console.warn('Could not initialize activity badge notifier:', e);
+                    }
                 }
                 
                 console.log('🔄 Restoring session for:', user.email);
@@ -21127,17 +21197,24 @@ class CasaLink {
                     <i class="fas fa-bars"></i>
                 </button>
 
-                <!-- Header Logo/Title -->
-                <div style="flex: 1; display: flex; align-items: center; gap: 12px;">
+                <!-- Header Logo -->
+                <div style="display: flex; align-items: center; gap: 12px;">
                     <i class="fas fa-home" style="font-size: 20px; color: var(--royal-blue);"></i>
                     <h1 style="margin: 0; font-size: 18px; white-space: nowrap; color: var(--text-dark);">CasaLink</h1>
+                </div>
+
+                <!-- Header Center Description (role-specific) -->
+                <div style="flex: 1; text-align: center;">
+                    <div id="appHeaderDesc" style="font-size: 14px; color: var(--dark-gray);">
+                        ${isLandlord ? 'Manage properties, tenants, and payments from one place.' : 'View your payments, maintenance requests, and lease details.'}
+                    </div>
                 </div>
 
                 <!-- Header Right (User Profile) -->
                 <div style="display: flex; gap: 12px; align-items: center;">
                     <div class="user-profile" id="userProfile" data-page="${isLandlord ? 'landlordProfile' : 'tenantProfile'}" style="cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; transition: background 0.2s;">
-                        <div class="avatar" style="width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${userAvatar}</div>
-                        <div style="display: none; font-size: 13px;">
+                        <div class="avatar" style="width: 40px; height: 40px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${userAvatar}</div>
+                        <div style="font-size: 13px; display: flex; flex-direction: column;">
                             <div style="font-weight: 500; color: var(--text-dark);">${userName}</div>
                             <div style="color: var(--dark-gray);">${isLandlord ? 'Landlord' : 'Tenant'}</div>
                         </div>
@@ -22886,6 +22963,8 @@ class CasaLink {
 
         const userId = this.currentUser?.id || this.currentUser?.uid;
         if (!userId) return;
+        // Ensure we treat the upcoming snapshot as the initial snapshot
+        this.activityRealtimeInitialized = false;
 
         console.log(`👂 Setting up Activity Log real-time listener (PERSISTENT) for ${this.currentRole}...`);
 
@@ -22905,6 +22984,8 @@ class CasaLink {
                 snapshot.docChanges().forEach((change) => {
                     if (!isInitialSnapshot && change.type === 'added') {
                         const activity = change.doc.data();
+                        // Only notify for unseen activities
+                        if (!activity || activity.isSeen !== 'unseen') return;
                         if (activity && ['maintenance_request', 'payment_submitted', 'bill_paid'].includes(activity.type)) {
                             let title = activity.title || 'New Activity';
                             let body = activity.message || '';
@@ -22969,6 +23050,8 @@ class CasaLink {
                 console.warn('⚠️ Error cleaning up activity listener:', err);
             }
             this.activityListener = null;
+            // Reset initialization flag so next listener run treats snapshot as initial
+            this.activityRealtimeInitialized = false;
         }
     }
 
