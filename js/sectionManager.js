@@ -6,7 +6,7 @@ class SectionManager {
 
     initializeEventListeners() {
         // Navigation links in header and sidebar
-        document.querySelectorAll('.nav-links a, .sidebar-menu a').forEach(link => {
+        document.querySelectorAll('.nav-links a[data-section], .sidebar-menu a[data-section]').forEach(link => {
             link.addEventListener('click', (e) => {
                 e.preventDefault();
                 const section = e.target.getAttribute('data-section');
@@ -122,10 +122,9 @@ class SectionManager {
 
                 ensureReportsInit();
             }
-        }
 
         // Update active nav links
-        document.querySelectorAll('.nav-links a, .sidebar-menu a').forEach(link => {
+        document.querySelectorAll('.nav-links a[data-section], .sidebar-menu a[data-section]').forEach(link => {
             link.classList.remove('active');
             if (link.getAttribute('data-section') === sectionId) {
                 link.classList.add('active');

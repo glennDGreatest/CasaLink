@@ -14,6 +14,9 @@ class Formatters {
     if (!date) return 'N/A';
 
     const d = new Date(date);
+    // Check if the date is valid
+    if (isNaN(d.getTime())) return 'N/A';
+    
     const formats = {
       'short': d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: '2-digit' }),
       'long': d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),

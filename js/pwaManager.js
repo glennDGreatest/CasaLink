@@ -29,6 +29,27 @@ class PWAManager {
         }, 3000);
     }
 
+    static isIOS() {
+        const userAgent = navigator.userAgent;
+        return /iPad|iPhone|iPod/.test(userAgent) || 
+               (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
+    static isIOSChrome() {
+        const userAgent = navigator.userAgent;
+        return this.isIOS() && /CriOS/.test(userAgent);
+    }
+
+    static isAndroid() {
+        const userAgent = navigator.userAgent;
+        return /Android/i.test(userAgent);
+    }
+
+    static isAndroidChrome() {
+        const userAgent = navigator.userAgent;
+        return this.isAndroid() && /Chrome/i.test(userAgent) && !/Edg/i.test(userAgent);
+    }
+
     static detectAdminPage() {
         // Check if we're on an admin page
         const path = window.location.pathname || '';
@@ -118,6 +139,15 @@ class PWAManager {
         // Wait a bit for the service worker to be ready
         await new Promise(resolve => setTimeout(resolve, 2000));
         
+        // On iOS and Android, always show the install prompt since PWA installation is important
+        if (this.isIOS() || this.isAndroid()) {
+            const deviceType = this.isIOS() ? 'iOS' : 'Android';
+            console.log(`📱 ${deviceType} detected - showing install prompt for PWA installation`);
+            this.showPersistentInstallPromotion();
+            return;
+        }
+        
+        // For desktop/other browsers, check for deferred prompt
         if (this.deferredPrompt && !this.isInstalled && !this.userDismissedPrompt()) {
             console.log('🎯 Showing install prompt automatically');
             this.showPersistentInstallPromotion();
@@ -132,7 +162,47 @@ class PWAManager {
         }
         
         console.log('🔄 Install PWA method called');
+        console.log('📱 Device type:', this.isIOS() ? 'iOS' : this.isAndroid() ? 'Android' : 'Other');
         
+        // Handle iOS differently - iOS doesn't support beforeinstallprompt
+        if (this.isIOS()) {
+            console.log('🍎 iOS detected - showing manual installation instructions');
+            this.showIOSInstallInstructions();
+            return;
+        }
+        
+        // Handle Android - try native install prompt first
+        if (this.isAndroid()) {
+            console.log('🤖 Android detected');
+            if (this.deferredPrompt) {
+                try {
+                    console.log('🎯 Showing Android browser install prompt...');
+                    await this.deferredPrompt.prompt();
+                    
+                    const choiceResult = await this.deferredPrompt.userChoice;
+                    console.log(`✅ Android user response: ${choiceResult.outcome}`);
+                    
+                    if (choiceResult.outcome === 'accepted') {
+                        console.log('🎉 Android user accepted PWA installation');
+                        this.handleSuccessfulInstallation();
+                    } else {
+                        console.log('❌ Android user dismissed PWA installation');
+                        this.markPromptDismissed();
+                        // Show Android-specific instructions as fallback
+                        this.showAndroidInstallInstructions();
+                    }
+                } catch (error) {
+                    console.error('❌ Error during Android PWA installation:', error);
+                    this.showAndroidInstallInstructions();
+                }
+            } else {
+                console.log('⚠️ No deferred prompt available for Android - showing instructions');
+                this.showAndroidInstallInstructions();
+            }
+            return;
+        }
+        
+        // Other browsers (desktop, etc.) - use standard install prompt
         if (this.deferredPrompt) {
             try {
                 console.log('🎯 Showing browser install prompt...');
@@ -148,17 +218,15 @@ class PWAManager {
                     this.handleSuccessfulInstallation();
                 } else {
                     console.log('❌ User dismissed PWA installation');
-                    this.setPromptDismissed();
+                    this.markPromptDismissed();
                 }
-                
-                this.deferredPrompt = null;
-                
             } catch (error) {
-                console.error('❌ Error showing install prompt:', error);
+                console.error('❌ Error during PWA installation:', error);
+                // Fallback to manual instructions
                 this.showManualInstallInstructions();
             }
         } else {
-            console.log('📋 No install prompt available');
+            console.log('⚠️ No deferred prompt available - showing manual instructions');
             this.showManualInstallInstructions();
         }
     }
@@ -450,7 +518,14 @@ class PWAManager {
                 <p style="margin-bottom: 20px;">To install CasaLink as an app:</p>
                 
                 <div style="text-align: left; background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <strong>Chrome/Edge:</strong><br>
+                    <strong>Android Chrome:</strong><br>
+                    • Look for the <strong>install icon (📱)</strong> in the address bar<br>
+                    • Or tap the <strong>menu (⋮) → "Install CasaLink"</strong><br><br>
+                    
+                    <strong>Android Other Browsers:</strong><br>
+                    • Look for <strong>"Add to Home Screen"</strong> in the browser menu<br><br>
+                    
+                    <strong>Desktop Chrome/Edge:</strong><br>
                     • Look for the <strong>install icon (⎙)</strong> in the address bar<br>
                     • Or click <strong>⋮ menu → "Install CasaLink"</strong><br><br>
                     
@@ -473,6 +548,101 @@ class PWAManager {
             });
         } else {
             alert('Install CasaLink: Look for the install icon in your browser\'s address bar or menu.');
+        }
+    }
+
+    static showAndroidInstallInstructions() {
+        // Skip on admin pages
+        if (this.isAdminPage) {
+            console.log('🔒 Android install instructions disabled on admin pages');
+            return;
+        }
+        
+        const modalContent = `
+            <div style="text-align: center; padding: 20px;">
+                <i class="fab fa-android" style="font-size: 3rem; color: #3ddc84; margin-bottom: 15px;"></i>
+                <h3 style="margin-bottom: 15px;">Install CasaLink on Android</h3>
+                <p style="margin-bottom: 20px;">Follow these steps to add CasaLink to your home screen:</p>
+                
+                <div style="text-align: left; background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                    <strong>Option 1 - Chrome (Recommended):</strong><br>
+                    • Look for the <strong>install icon (📱)</strong> in the address bar<br>
+                    • Tap it and select <strong>"Install"</strong><br><br>
+                    
+                    <strong>Option 2 - Chrome Menu:</strong><br>
+                    • Tap the <strong>menu button (⋮)</strong> in the top right<br>
+                    • Select <strong>"Install CasaLink"</strong> or <strong>"Add to Home Screen"</strong><br><br>
+                    
+                    <strong>Option 3 - Other Browsers:</strong><br>
+                    • Look for <strong>"Add to Home Screen"</strong> in your browser menu<br>
+                    • Or look for an <strong>install/share icon</strong>
+                </div>
+                
+                <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: left;">
+                    <strong>💡 Pro Tips:</strong><br>
+                    • Make sure you're using Chrome for the best experience<br>
+                    • The app will work offline and receive notifications<br>
+                    • You can organize it with your other apps on the home screen
+                </div>
+                
+                <button class="btn btn-primary" onclick="location.reload()">
+                    <i class="fas fa-redo"></i> Refresh & Try Again
+                </button>
+            </div>
+        `;
+        
+        if (window.ModalManager) {
+            ModalManager.openModal(modalContent, {
+                title: 'Install CasaLink on Android',
+                submitText: 'Close',
+                showFooter: true
+            });
+        } else {
+            alert('To install CasaLink on Android: Look for the install icon in Chrome\'s address bar or tap the menu and select "Install CasaLink".');
+        }
+    }
+
+    static showIOSInstallInstructions() {
+        // Skip on admin pages
+        if (this.isAdminPage) {
+            console.log('🔒 iOS install instructions disabled on admin pages');
+            return;
+        }
+        
+        const modalContent = `
+            <div style="text-align: center; padding: 20px;">
+                <i class="fas fa-mobile-alt" style="font-size: 3rem; color: var(--primary-blue); margin-bottom: 15px;"></i>
+                <h3 style="margin-bottom: 15px;">Install CasaLink on iOS</h3>
+                <p style="margin-bottom: 20px;">Follow these steps to add CasaLink to your home screen:</p>
+                
+                <div style="text-align: left; background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                    <strong>Step 1:</strong> Tap the <strong>Share button</strong> <i class="fas fa-share-square" style="color: #007aff;"></i> at the bottom of the screen<br><br>
+                    <strong>Step 2:</strong> Scroll down and tap <strong>"Add to Home Screen"</strong> <i class="fas fa-plus-square" style="color: #007aff;"></i><br><br>
+                    <strong>Step 3:</strong> Tap <strong>"Add"</strong> in the top right corner<br><br>
+                    <strong>Step 4:</strong> CasaLink will now appear on your home screen as an app!
+                </div>
+                
+                <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: left;">
+                    <strong>💡 Pro Tips:</strong><br>
+                    • Make sure you're using Safari or Chrome on iOS<br>
+                    • The app will work offline and receive notifications<br>
+                    • You can remove it like any other app from your home screen
+                </div>
+                
+                <button class="btn btn-primary" onclick="location.reload()">
+                    <i class="fas fa-redo"></i> Refresh & Try Again
+                </button>
+            </div>
+        `;
+        
+        if (window.ModalManager) {
+            ModalManager.openModal(modalContent, {
+                title: 'Install CasaLink on iOS',
+                submitText: 'Close',
+                showFooter: true
+            });
+        } else {
+            alert('To install CasaLink on iOS: Tap the Share button, then "Add to Home Screen".');
         }
     }
 

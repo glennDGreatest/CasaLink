@@ -16,20 +16,51 @@ class PredictionCharts {
         const ctx = document.getElementById('revenueForecastChart');
         if (!ctx) return;
 
-        // Get historical data for context
-        const historicalData = await this.getHistoricalRevenueData();
+        let historicalData = [];
+        try {
+            if (window.reportsManager && window.reportsManager.predictiveAnalytics && typeof window.reportsManager.predictiveAnalytics.getHistoricalRevenueData === 'function') {
+                historicalData = await window.reportsManager.predictiveAnalytics.getHistoricalRevenueData();
+            }
+        } catch (err) {
+            console.warn('Could not load actual historical revenue data:', err);
+        }
+
+        if (!historicalData || !historicalData.length) {
+            historicalData = [];
+        }
         
         const historicalLabels = historicalData.map(d => {
-            const [year, month] = d.month.split('-');
-            return new Date(parseInt(year), parseInt(month)).toLocaleDateString('en-US', { month: 'short' });
+            const [year, month] = String(d.month || '').split('-');
+            const monthIndex = Number(month);
+            if (!isNaN(monthIndex)) {
+                return new Date(parseInt(year), monthIndex).toLocaleDateString('en-US', { month: 'short' });
+            }
+            return String(d.month || '').slice(0, 3);
         });
 
-        const predictionLabels = revenueData.predictions.map((_, i) => {
+        const predictionLabels = Array.isArray(revenueData?.predictions) ? revenueData.predictions.map((_, i) => {
             const date = new Date();
             date.setMonth(date.getMonth() + i + 1);
             return date.toLocaleDateString('en-US', { month: 'short' });
-        });
-
+        }) : [];
+        if (!historicalData.length && !predictionLabels.length) {
+            const wrapper = ctx.parentNode;
+            if (wrapper) {
+                ctx.style.display = 'none';
+                let message = wrapper.querySelector('.chart-no-data');
+                if (!message) {
+                    message = document.createElement('div');
+                    message.className = 'chart-no-data';
+                    message.style.padding = '24px';
+                    message.style.textAlign = 'center';
+                    message.style.color = '#666';
+                    message.style.fontSize = '14px';
+                    wrapper.appendChild(message);
+                }
+                message.textContent = 'Insufficient historical revenue data to render the forecast chart.';
+            }
+            return;
+        }
         // Destroy existing chart if it exists
         if (this.predictionCharts.has('revenueTrend')) {
             this.predictionCharts.get('revenueTrend').destroy();

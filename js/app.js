@@ -57,6 +57,8 @@ class CasaLink {
         this.activitiesFilteredData = [];
         this.activityAutoRefreshInterval = null;
         this.activityListener = null;
+        this.activityRealtimeInitialized = false;
+        this.activityBadgeNotificationShown = false;
         
         // 🔥 ADD BILLING VIEW TRACKING
         this.currentBillingView = 'bills'; // Default to Bills Management
@@ -122,6 +124,55 @@ class CasaLink {
         `;
     }
 
+    getTenantActivityLogPage() {
+        return `
+            <div class="page-content">
+                <div class="page-header with-hint">
+                    <div class="page-header-left">
+                        <h1 class="page-title">Activity Log</h1>
+                        <p class="dashboard-hint">Track your payments, maintenance requests, lease updates, and other important activity related to your tenancy.</p>
+                    </div>
+                </div>
+
+                <div class="recent-activity-container">
+                    <div class="recent-activity-header">
+                        <h3>Recent Activities</h3>
+                        <div class="activities-pagination-info" id="activitiesPaginationInfo">
+                            Showing 0–0 of 0 activities
+                        </div>
+                    </div>
+
+                    <div id="recentActivityList" class="recent-activity-list">
+                        <div class="activity-loading">
+                            <i class="fas fa-spinner fa-spin"></i> Loading recent activity...
+                        </div>
+                    </div>
+
+                    <div class="pagination-container" id="activitiesPagination" style="display: none; margin-top: 20px;">
+                        <div class="pagination-controls">
+                            <button class="btn btn-sm btn-secondary" id="activitiesPrevPage">
+                                <i class="fas fa-chevron-left"></i> Previous
+                            </button>
+                            <div class="pagination-numbers" id="activitiesPageNumbers"></div>
+                            <button class="btn btn-sm btn-secondary" id="activitiesNextPage">
+                                Next <i class="fas fa-chevron-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="recent-activity-footer">
+                        <button class="btn btn-secondary btn-sm" onclick="casaLink.loadMoreActivities()">
+                            <i class="fas fa-history"></i> Load Older Activities
+                        </button>
+                        <button class="btn btn-primary btn-sm" onclick="casaLink.markAllAsRead()">
+                            <i class="fas fa-check-double"></i> Mark All as Read
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     onLoginSuccess(user) {
         // Remove login-page class from body
         document.body.classList.remove('login-page');
@@ -135,6 +186,10 @@ class CasaLink {
         
         // Set up persistent activity listener for landlords
         if (this.currentRole === 'landlord') {
+            this.setupActivityRealtimeListener();
+        } else if (this.currentRole === 'tenant') {
+            // For tenants, load badge count immediately and set up real-time listener
+            this.loadActivityBadgeCount();
             this.setupActivityRealtimeListener();
         }
     }
@@ -581,6 +636,15 @@ class CasaLink {
                     console.log('🛑 Stopped activity auto-refresh');
                 }
                 break;
+
+            case 'tenantActivityLog':
+                // Stop tenant activity auto-refresh when leaving the page
+                if (this.activityAutoRefreshInterval) {
+                    clearInterval(this.activityAutoRefreshInterval);
+                    this.activityAutoRefreshInterval = null;
+                    console.log('🛑 Stopped tenant activity auto-refresh');
+                }
+                break;
             case 'tenantMaintenance':
                 if (this.tenantMaintenanceListener) {
                     console.log('🧹 Removing tenant maintenance listener');
@@ -633,6 +697,13 @@ class CasaLink {
         // Now we can safely show the page content
         const finalContentArea = document.getElementById('contentArea');
         console.log('✅ Content area found, loading page content...');
+
+        // Ensure activity badge is refreshed now that the layout/nav exists
+        try {
+            this.loadActivityBadgeCount();
+        } catch (err) {
+            console.warn('Could not refresh activity badge after rendering layout:', err);
+        }
         
         // Show loading state
         finalContentArea.innerHTML = `
@@ -677,6 +748,10 @@ class CasaLink {
 
                 case 'activity-log':
                     pageContent = await this.getActivityLogPage();
+                    break;
+
+                case 'tenantActivityLog':
+                    pageContent = await this.getTenantActivityLogPage();
                     break;
 
                 case 'tenantMaintenance':
@@ -802,11 +877,11 @@ class CasaLink {
                     </div>
                 </div>
 
-                <!-- Executive Summary (top KPIs with trends) -->
+                <!-- Executive Summary (Financial and Operational Overview cards) -->
                 <div class="section-title">
                     <i class="fas fa-tachometer-alt"></i> Executive Summary
                 </div>
-                <div class="quick-stats-row" id="executiveSummary"></div>
+                <div class="card-group" id="executiveSummary"></div>
 
                 <!-- ML Predictions -->
                 <div class="predictive-section" id="aiPredictionsDashboard">
@@ -858,7 +933,7 @@ class CasaLink {
                             <img src="${url}" alt="Photo" style="max-width:100%; height:auto; border-radius:8px;" />
                         </div>
                     `;
-                    ModalManager.openModal(content, { title: 'Photo', showFooter: false });
+                    window.ModalManager.openModal(content, { title: 'Photo', showFooter: false });
                 } catch (err) {
                     console.error('Error opening image modal:', err);
                     // fallback to opening in new tab
@@ -913,7 +988,7 @@ class CasaLink {
                 </div>
             `;
 
-            ModalManager.openModal(modalContent, {
+            window.ModalManager.openModal(modalContent, {
                 title: 'Edit Profile',
                 submitText: 'Save Changes',
                 cancelText: 'Cancel',
@@ -1106,7 +1181,7 @@ class CasaLink {
                 </div>
             `;
 
-            ModalManager.openModal(modalContent, {
+            window.ModalManager.openModal(modalContent, {
                 title: 'Edit Profile',
                 submitText: 'Save Changes',
                 cancelText: 'Cancel',
@@ -1642,6 +1717,45 @@ class CasaLink {
                                     </div>
                                 </div>
                             </div>
+
+                            <!-- Staff Management -->
+                            <div class="card">
+                                <h3 style="margin: 0 0 20px 0; color: var(--text-dark); border-bottom: 2px solid var(--info); padding-bottom: 10px;">
+                                    <i class="fas fa-users" style="color: var(--info); margin-right: 10px;"></i>
+                                    Maintenance Staff
+                                </h3>
+
+                                <div style="display: flex; flex-direction: column; gap: 15px;">
+                                    <div style="padding: 15px; background: #f0f8ff; border-radius: 8px; border-left: 4px solid var(--info);">
+                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 10px;">
+                                            <i class="fas fa-tools" style="color: var(--info); margin-right: 8px;"></i>
+                                            Staff Members (${landlordData.maintenanceStaff ? landlordData.maintenanceStaff.length : 0})
+                                        </label>
+                                        ${landlordData.maintenanceStaff && landlordData.maintenanceStaff.length > 0 ? `
+                                            <div style="display: grid; gap: 8px;">
+                                                ${landlordData.maintenanceStaff.map(staff => `
+                                                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background: white; border-radius: 6px; border: 1px solid #e2e8f0;">
+                                                        <div>
+                                                            <span style="font-weight: 500; color: var(--text-dark);">${staff.name}</span>
+                                                            ${staff.specialization ? `<span style="font-size: 0.8rem; color: var(--dark-gray); margin-left: 8px;">• ${staff.specialization}</span>` : ''}
+                                                        </div>
+                                                        <div style="display: flex; gap: 8px;">
+                                                            <span style="font-size: 0.8rem; color: var(--dark-gray);">${staff.contact || 'No contact'}</span>
+                                                        </div>
+                                                    </div>
+                                                `).join('')}
+                                            </div>
+                                        ` : `
+                                            <p style="margin: 0; color: var(--dark-gray); font-style: italic;">No maintenance staff added yet</p>
+                                        `}
+                                        <div style="margin-top: 15px;">
+                                            <button class="btn btn-info btn-sm" onclick="casaLink.showMaintenanceStaffSetupModal()">
+                                                <i class="fas fa-plus"></i> ${landlordData.maintenanceStaff && landlordData.maintenanceStaff.length > 0 ? 'Manage Staff' : 'Add Staff'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1810,6 +1924,7 @@ class CasaLink {
                         <button class="btn btn-outline-primary" data-archive-filter="all">All</button>
                         <button class="btn btn-outline-primary" data-archive-filter="tenant">Tenants</button>
                         <button class="btn btn-outline-primary" data-archive-filter="lease">Leases</button>
+                        <button class="btn btn-outline-primary" data-archive-filter="bill">Bills</button>
                     </div>
 
                     <div id="archiveTableContainer">
@@ -1858,12 +1973,12 @@ class CasaLink {
             const title = item.data?.name || item.data?.tenantName || item.data?.apartmentName || item.data?.apartmentAddress || item.originalId;
             const date = item.archivedAt ? new Date(item.archivedAt).toLocaleString() : 'Unknown';
 
-            const restoreButton = item.type === 'tenant'
+            const restoreButton = ['tenant', 'bill'].includes(item.type)
                 ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.restoreArchivedItem('${item.id}')"><i class="fas fa-undo"></i> Restore</button>`
-                : `<button class="btn btn-sm btn-secondary" disabled title="Only tenant restoration is allowed in this view"><i class="fas fa-undo"></i> Restore</button>`;
+                : `<button class="btn btn-sm btn-secondary" disabled title="Restore unavailable for this item type"><i class="fas fa-undo"></i> Restore</button>`;
 
             return `
-                <tr data-archive-id="${item.id}" data-archive-type="${item.type}">
+                <tr class="archive-row" style="cursor:pointer;" data-archive-id="${item.id}" data-archive-type="${item.type}">
                     <td>${typeLabel}</td>
                     <td>${title || 'N/A'}</td>
                     <td>${date}</td>
@@ -1907,8 +2022,127 @@ class CasaLink {
             };
         });
 
+        const container = document.getElementById('archiveTableContainer');
+        if (container) {
+            if (this.archiveRowClickHandler) {
+                container.removeEventListener('click', this.archiveRowClickHandler);
+            }
+            this.archiveRowClickHandler = (e) => {
+                const row = e.target.closest('tr[data-archive-id]');
+                if (!row) return;
+                const archiveId = row.getAttribute('data-archive-id');
+                if (!archiveId) return;
+                this.showArchiveItemModal(archiveId);
+            };
+            container.addEventListener('click', this.archiveRowClickHandler);
+        }
+
         // Set default active filter (All)
         this.updateArchiveFilterUI('all');
+    }
+
+    async showArchiveItemModal(archiveId) {
+        try {
+            let item = Array.isArray(this.archiveData) ? this.archiveData.find(entry => entry.id === archiveId) : null;
+            if (!item && typeof firebaseDb !== 'undefined') {
+                const snap = await firebaseDb.collection('archive').doc(archiveId).get();
+                if (snap.exists) {
+                    item = { id: snap.id, ...snap.data() };
+                }
+            }
+
+            if (!item) {
+                throw new Error('Archived item not found');
+            }
+
+            const typeLabel = item.type ? item.type.charAt(0).toUpperCase() + item.type.slice(1) : 'Item';
+            const title = item.data?.name || item.data?.tenantName || item.data?.apartmentName || item.data?.apartmentAddress || item.originalId || 'Archived Item';
+            const archivedAt = item.archivedAt ? new Date(item.archivedAt).toLocaleString() : 'Unknown';
+            const archivedBy = item.archivedBy || 'System';
+
+            let detailsHtml = '';
+            const data = item.data || {};
+
+            switch (item.type) {
+                case 'tenant':
+                    detailsHtml = `
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:0.95rem;">
+                            <div><strong>Name:</strong><br>${data.name || 'N/A'}</div>
+                            <div><strong>Email:</strong><br>${data.email || 'N/A'}</div>
+                            <div><strong>Phone:</strong><br>${data.phone || 'N/A'}</div>
+                            <div><strong>Room:</strong><br>${data.roomNumber || 'N/A'}</div>
+                            <div><strong>Apartment:</strong><br>${data.apartmentName || data.apartmentAddress || 'N/A'}</div>
+                            <div><strong>Status:</strong><br>${(data.status || 'archived').toString().toUpperCase()}</div>
+                        </div>
+                    `;
+                    break;
+                case 'lease':
+                    detailsHtml = `
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:0.95rem;">
+                            <div><strong>Tenant:</strong><br>${data.tenantName || 'N/A'}</div>
+                            <div><strong>Room:</strong><br>${data.roomNumber || 'N/A'}</div>
+                            <div><strong>Apartment:</strong><br>${data.apartmentName || data.apartmentAddress || 'N/A'}</div>
+                            <div><strong>Monthly Rent:</strong><br>₱${(data.monthlyRent || 0).toLocaleString()}</div>
+                            <div><strong>Lease Start:</strong><br>${data.leaseStart ? new Date(data.leaseStart).toLocaleDateString() : 'N/A'}</div>
+                            <div><strong>Lease End:</strong><br>${data.leaseEnd ? new Date(data.leaseEnd).toLocaleDateString() : 'N/A'}</div>
+                        </div>
+                    `;
+                    break;
+                case 'bill':
+                    detailsHtml = `
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:0.95rem;">
+                            <div><strong>Tenant:</strong><br>${data.tenantName || 'N/A'}</div>
+                            <div><strong>Apartment:</strong><br>${data.apartment || data.apartmentName || data.apartmentAddress || 'N/A'}</div>
+                            <div><strong>Amount:</strong><br>₱${(data.totalAmount || data.amount || 0).toLocaleString()}</div>
+                            <div><strong>Due Date:</strong><br>${data.dueDate ? new Date(data.dueDate).toLocaleDateString() : 'N/A'}</div>
+                            <div><strong>Status:</strong><br>${data.status || 'N/A'}</div>
+                            <div><strong>Description:</strong><br>${data.description || 'N/A'}</div>
+                        </div>
+                    `;
+                    break;
+                default:
+                    detailsHtml = `
+                        <div style="font-size:0.95rem; line-height:1.6;">${item.data ? `<pre style="white-space:pre-wrap; word-break:break-word;">${this.escapeHtml(JSON.stringify(item.data, null, 2))}</pre>` : 'No detail data available.'}</div>
+                    `;
+                    break;
+            }
+
+            const modalContent = `
+                <div class="archive-details-modal">
+                    <div style="background:#f8f9fa;padding:20px;border-radius:8px;margin-bottom:18px;">
+                        <h3 style="margin:0 0 10px 0;">${typeLabel} Details</h3>
+                        <p style="margin:0;color:var(--dark-gray);">${title}</p>
+                    </div>
+                    <div style="background:white;padding:20px;border-radius:8px;border:1px solid #e9ecef;margin-bottom:18px;">
+                        <h4 style="margin:0 0 12px 0;color:var(--royal-blue);">Archived Information</h4>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:0.95rem;">
+                            <div><strong>Type:</strong><br>${typeLabel}</div>
+                            <div><strong>Original ID:</strong><br>${item.originalId || 'N/A'}</div>
+                            <div><strong>Archived At:</strong><br>${archivedAt}</div>
+                            <div><strong>Archived By:</strong><br>${archivedBy}</div>
+                            <div><strong>Original Collection:</strong><br>${item.originalCollection || 'archive'}</div>
+                        </div>
+                    </div>
+                    <div style="background:white;padding:20px;border-radius:8px;border:1px solid #e9ecef;margin-bottom:18px;">
+                        <h4 style="margin:0 0 12px 0;color:var(--royal-blue);">Details</h4>
+                        ${detailsHtml}
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                        ${['tenant', 'bill'].includes(item.type) ? `<button class="btn btn-primary" onclick="window.casaLink.restoreArchivedItem('${archiveId}'); window.ModalManager.closeModal(this.closest('.modal-overlay'))">Restore ${typeLabel}</button>` : ''}
+                    </div>
+                </div>
+            `;
+
+            window.ModalManager.openModal(modalContent, {
+                title: `Archived ${typeLabel}`,
+                width: '720px',
+                maxWidth: '95%'
+            });
+        } catch (error) {
+            console.error('Error opening archived item modal:', error);
+            this.showNotification('Failed to open archived item details', 'error');
+        }
     }
 
     updateArchiveFilterUI(activeFilter) {
@@ -1938,8 +2172,198 @@ class CasaLink {
 
     async restoreArchivedItem(archiveId) {
         try {
+            // Fetch archived item details before restoring for activity creation
+            let archivedItem = null;
+            try {
+                const archiveDoc = await firebaseDb.collection('archive').doc(archiveId).get();
+                if (archiveDoc.exists) {
+                    archivedItem = { id: archiveDoc.id, ...archiveDoc.data() };
+                }
+            } catch (fetchErr) {
+                console.warn('Could not fetch archived item details for activity:', fetchErr);
+            }
+
+            if (archivedItem) {
+                const itemData = archivedItem.data || {};
+                const landlordId = this.currentUser?.id || this.currentUser?.uid;
+
+                // Check for duplicates before restoring
+                let hasDuplicate = false;
+                let duplicateCheckMessage = '';
+
+                if (archivedItem.type === 'tenant') {
+                    // Check if tenant already exists
+                    const tenantId = archivedItem.originalId || itemData.id || itemData.userId || itemData.tenantId;
+                    if (tenantId) {
+                        const tenantDoc = await firebaseDb.collection('users').doc(tenantId).get();
+                        if (tenantDoc.exists && !tenantDoc.data().archived) {
+                            hasDuplicate = true;
+                            duplicateCheckMessage = `Tenant ${itemData.name || 'Unknown'} already exists`;
+                        }
+                    }
+                } else if (archivedItem.type === 'bill') {
+                    // Check if a similar bill already exists (same tenant, month, type)
+                    const billData = itemData;
+                    if (billData.tenantId && billData.dueDate && billData.type) {
+                        const dueDate = new Date(billData.dueDate);
+                        const billMonth = dueDate.getMonth();
+                        const billYear = dueDate.getFullYear();
+                        
+                        // Query for bills with same tenant, type, and due month
+                        const existingBillsQuery = await firebaseDb.collection('bills')
+                            .where('tenantId', '==', billData.tenantId)
+                            .where('type', '==', billData.type)
+                            .get();
+                        
+                        // Check if any existing bill has the same due month/year
+                        for (const doc of existingBillsQuery.docs) {
+                            const existingBill = doc.data();
+                            if (!existingBill.archived) {
+                                const existingDueDate = new Date(existingBill.dueDate);
+                                const existingMonth = existingDueDate.getMonth();
+                                const existingYear = existingDueDate.getFullYear();
+                                
+                                if (existingMonth === billMonth && existingYear === billYear) {
+                                    hasDuplicate = true;
+                                    duplicateCheckMessage = `Bill for ${billData.tenantName || 'Unknown tenant'} (${billData.type}) already exists for ${dueDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (hasDuplicate) {
+                    // Delete archive item and log activity
+                    await firebaseDb.collection('archive').doc(archiveId).delete();
+                    
+                    const activityData = {
+                        type: 'archive_duplicate_discarded',
+                        title: 'Archive Item Discarded',
+                        description: `${duplicateCheckMessage} - Archive entry removed`,
+                        landlordId,
+                        createdAt: new Date().toISOString(),
+                        timestamp: new Date().toISOString(),
+                        isSeen: 'unseen',
+                        icon: 'fas fa-trash-alt',
+                        color: 'var(--warning)',
+                        data: {
+                            archiveId,
+                            itemType: archivedItem.type,
+                            originalId: archivedItem.originalId,
+                            discardedAt: new Date().toISOString(),
+                            reason: 'duplicate_exists'
+                        }
+                    };
+
+                    if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                        await DataManager.addActivity(activityData);
+                    } else if (typeof firebaseDb !== 'undefined') {
+                        await firebaseDb.collection('activities').add(activityData);
+                    }
+
+                    await this.loadArchiveData();
+                    this.showNotification(`Archive item discarded - ${duplicateCheckMessage}`, 'info');
+                    return;
+                }
+            }
+
             this.showNotification('Restoring item...', 'info');
             await DataManager.restoreArchivedItem(archiveId);
+
+            // Create activity for landlord if it's a tenant or bill restoration
+            if (archivedItem) {
+                try {
+                    const itemData = archivedItem.data || {};
+                    const landlordId = this.currentUser?.id || this.currentUser?.uid;
+
+                    if (archivedItem.type === 'tenant') {
+                        const tenantId = archivedItem.originalId || itemData.id;
+                        let roomNumber = 'N/A';
+                        let apartmentName = 'N/A';
+
+                        try {
+                            const leaseQuery = await firebaseDb.collection('leases')
+                                .where('tenantId', '==', tenantId)
+                                .where('isActive', '==', true)
+                                .limit(1)
+                                .get();
+
+                            if (!leaseQuery.empty) {
+                                const leaseData = leaseQuery.docs[0].data();
+                                roomNumber = leaseData.roomNumber || 'N/A';
+                                apartmentName = leaseData.apartmentName || leaseData.rentalAddress || 'N/A';
+                            }
+                        } catch (leaseErr) {
+                            console.warn('Could not fetch restored lease details for activity:', leaseErr);
+                        }
+
+                        const activityData = {
+                            type: 'tenant_restored',
+                            title: 'Tenant Restored',
+                            message: `Tenant ${itemData.name || 'Unknown'} and their lease have been restored`,
+                            landlordId,
+                            tenantId,
+                            apartmentId: itemData.apartmentId || itemData.propertyId,
+                            createdAt: new Date().toISOString(),
+                            timestamp: new Date().toISOString(),
+                            isSeen: 'unseen',
+                            icon: 'fas fa-undo',
+                            color: 'var(--success)',
+                            data: {
+                                id: tenantId,
+                                tenantId,
+                                tenantName: itemData.name || 'Unknown Tenant',
+                                roomNumber,
+                                apartmentName,
+                                restoredAt: new Date().toISOString()
+                            }
+                        };
+
+                        if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                            await DataManager.addActivity(activityData);
+                        } else if (typeof firebaseDb !== 'undefined') {
+                            await firebaseDb.collection('activities').add(activityData);
+                        }
+
+                        console.log('✅ Activity created for tenant restoration');
+                    }
+
+                    if (archivedItem.type === 'bill') {
+                        const billId = archivedItem.originalId;
+                        const activityData = {
+                            type: 'bill_restored',
+                            title: 'Bill Restored',
+                            message: `Bill ${itemData.description || billId} has been restored`,
+                            landlordId,
+                            billId,
+                            createdAt: new Date().toISOString(),
+                            timestamp: new Date().toISOString(),
+                            isSeen: 'unseen',
+                            icon: 'fas fa-undo',
+                            color: 'var(--success)',
+                            data: {
+                                billId,
+                                tenantId: itemData.tenantId,
+                                tenantName: itemData.tenantName,
+                                amount: itemData.totalAmount || itemData.amount || 0,
+                                restoredAt: new Date().toISOString()
+                            }
+                        };
+
+                        if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                            await DataManager.addActivity(activityData);
+                        } else if (typeof firebaseDb !== 'undefined') {
+                            await firebaseDb.collection('activities').add(activityData);
+                        }
+
+                        console.log('✅ Activity created for bill restoration');
+                    }
+                } catch (actErr) {
+                    console.warn('⚠️ Could not create activity for item restoration:', actErr);
+                }
+            }
+
             await this.loadArchiveData();
             await this.loadTenantsData();
             await this.refreshUnitLayout();
@@ -1955,8 +2379,125 @@ class CasaLink {
     async permanentlyDeleteArchivedItem(archiveId) {
         try {
             if (!confirm('This will permanently delete this record and cannot be undone. Continue?')) return;
+
+            // Fetch archived item details before deletion for notification
+            let archivedItem = null;
+            try {
+                const archiveDoc = await firebaseDb.collection('archive').doc(archiveId).get();
+                if (archiveDoc.exists) {
+                    archivedItem = { id: archiveDoc.id, ...archiveDoc.data() };
+                }
+            } catch (fetchErr) {
+                console.warn('Could not fetch archived item details for notification:', fetchErr);
+            }
+
             this.showNotification('Permanently deleting item...', 'info');
             await DataManager.permanentlyDeleteArchivedItem(archiveId);
+
+            // Create activity for permanent deletion
+            if (archivedItem) {
+                try {
+                    const itemData = archivedItem.data || {};
+                    const landlordId = this.currentUser?.id || this.currentUser?.uid;
+                    
+                    let activityTitle = 'Item Permanently Deleted';
+                    let activityDescription = '';
+                    let itemDetails = {};
+
+                    if (archivedItem.type === 'tenant') {
+                        activityTitle = 'Tenant Permanently Deleted';
+                        activityDescription = `Tenant ${itemData.name || itemData.fullName || 'Unknown'} permanently removed from system`;
+                        itemDetails = {
+                            tenantId: archivedItem.originalId,
+                            tenantName: itemData.name || itemData.fullName || 'Unknown',
+                            deletedAt: new Date().toISOString()
+                        };
+                    } else if (archivedItem.type === 'bill') {
+                        activityTitle = 'Bill Permanently Deleted';
+                        activityDescription = `Bill ${itemData.description || archivedItem.originalId} permanently removed`;
+                        itemDetails = {
+                            billId: archivedItem.originalId,
+                            tenantId: itemData.tenantId,
+                            amount: itemData.totalAmount || itemData.amount || 0,
+                            deletedAt: new Date().toISOString()
+                        };
+                    } else if (archivedItem.type === 'lease') {
+                        activityTitle = 'Lease Permanently Deleted';
+                        activityDescription = `Lease for ${itemData.tenantName || 'Unknown tenant'} permanently removed`;
+                        itemDetails = {
+                            leaseId: archivedItem.originalId,
+                            tenantId: itemData.tenantId,
+                            roomNumber: itemData.roomNumber,
+                            deletedAt: new Date().toISOString()
+                        };
+                    } else {
+                        activityDescription = `${archivedItem.type} item permanently removed from archive`;
+                        itemDetails = {
+                            itemId: archivedItem.originalId,
+                            itemType: archivedItem.type,
+                            deletedAt: new Date().toISOString()
+                        };
+                    }
+
+                    const activityData = {
+                        type: 'archive_item_deleted',
+                        title: activityTitle,
+                        description: activityDescription,
+                        landlordId,
+                        createdAt: new Date().toISOString(),
+                        timestamp: new Date().toISOString(),
+                        isSeen: 'unseen',
+                        icon: 'fas fa-trash',
+                        color: 'var(--danger)',
+                        data: itemDetails
+                    };
+
+                    if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                        await DataManager.addActivity(activityData);
+                    } else if (typeof firebaseDb !== 'undefined') {
+                        await firebaseDb.collection('activities').add(activityData);
+                    }
+
+                    console.log('✅ Activity created for permanent deletion');
+                } catch (actErr) {
+                    console.warn('⚠️ Could not create activity for permanent deletion:', actErr);
+                }
+            }
+
+            // Create push notification for tenant permanent deletion
+            if (archivedItem && archivedItem.type === 'tenant') {
+                try {
+                    const tenantData = archivedItem.data || {};
+                    const tenantName = tenantData.name || tenantData.fullName || 'Unknown Tenant';
+
+                    // Create push notification
+                    const title = `Tenant Permanently Deleted: ${tenantName}`;
+                    const body = `${tenantName} has been permanently removed from the system. All associated data has been deleted.`;
+
+                    if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                        await window.NotificationManager.showNotification(title, {
+                            body: body,
+                            tag: 'tenant-deleted',
+                            icon: '/icons/icon-192x192.png',
+                            badge: '/icons/icon-192x192.png'
+                        });
+                        console.log('🔔 Push notification sent for tenant permanent deletion');
+                    } else if ('Notification' in window && Notification.permission === 'granted') {
+                        // Fallback to browser notification
+                        new Notification(title, {
+                            body: body,
+                            icon: '/icons/icon-192x192.png',
+                            tag: 'tenant-deleted'
+                        });
+                        console.log('🔔 Browser notification sent for tenant permanent deletion');
+                    } else {
+                        console.log('ℹ️ Notification not available for tenant permanent deletion');
+                    }
+                } catch (notifErr) {
+                    console.warn('⚠️ Could not send notification for tenant permanent deletion:', notifErr);
+                }
+            }
+
             await this.loadArchiveData();
             this.showNotification('Item permanently deleted', 'success');
         } catch (error) {
@@ -2446,15 +2987,8 @@ class CasaLink {
                         const payment = doc.data();
                         const paymentDate = new Date(payment.paymentDate || payment.createdAt);
                         if (paymentDate >= ninetyDaysAgo && paymentDate <= now) {
-                            activities.push({
-                                type: 'payment_received',
-                                title: 'Payment Received',
-                                description: `₱${payment.amount?.toLocaleString()} from ${payment.tenantName || 'Tenant'}`,
-                                timestamp: payment.paymentDate || payment.createdAt,
-                                icon: 'fas fa-credit-card',
-                                color: 'var(--success)',
-                                data: { ...payment, id: doc.id }
-                            });
+                            // Payment activities are now created in the activities collection
+                            // Removed direct payment_received creation to avoid duplicates
                         }
                     });
                 }).catch(error => {
@@ -2462,122 +2996,136 @@ class CasaLink {
                 })
             );
 
-            // 3. Fetch Recent Bills - SIMPLIFIED
-            console.log('🔍 Fetching recent bills...');
-            let billsQuery = firebaseDb.collection('bills')
-                .orderBy('createdAt', 'desc')
-                .limit(50);
+            // 3. Fetch Recent Bills - REMOVED
+            // Activity lookup now relies on the activities collection for bill events.
+            // This prevents duplicate manual bill feed entries when a custom bill already
+            // generates a 'bill_created' activity through DataManager.
 
-            if (isTenant) {
-                billsQuery = billsQuery.where('tenantId', '==', userId);
-            } else {
-                billsQuery = billsQuery.where('landlordId', '==', userId);
-            }
-
-            fetchPromises.push(
-                billsQuery.get().then(snapshot => {
-                    console.log(`✅ Found ${snapshot.size} bills total`);
-                    snapshot.forEach(doc => {
-                        const bill = doc.data();
-                        const billDate = new Date(bill.createdAt);
-                        // Skip auto-generated bills since they now create proper activity entries with isSeen flag
-                        if (bill.isAutoGenerated) {
-                            console.log('⏭️ Skipping auto-generated bill from activity feed (has dedicated activity entry):', doc.id);
-                            return;
-                        }
-                        if (billDate >= ninetyDaysAgo && billDate <= now) {
-                            activities.push({
-                                type: 'bill_generated',
-                                title: 'Manual Bill Created',
-                                description: `₱${bill.totalAmount?.toLocaleString()} for ${bill.tenantName || 'Tenant'}`,
-                                timestamp: bill.createdAt,
-                                icon: 'fas fa-file-invoice',
-                                color: 'var(--info)',
-                                data: { ...bill, id: doc.id }
-                            });
-                        }
-                    });
-                }).catch(error => {
-                    console.error('❌ Error fetching bills:', error);
-                })
-            );
-
-            // 4.5 Fetch custom activities collection (landlord-scoped)
+            // 4.5 Fetch custom activities collection (landlord and tenant scoped)
             console.log('🔍 Fetching custom activities...');
-            let activitiesQuery = firebaseDb.collection('activities')
-                .where('landlordId', '==', userId)
-                .orderBy('timestamp', 'desc')
-                .limit(50);
 
-            fetchPromises.push(
-                activitiesQuery.get().then(snapshot => {
-                    console.log(`✅ Found ${snapshot.size} custom activities`);
-                    snapshot.forEach(doc => {
-                        const act = doc.data();
-                        const actDate = new Date(act.timestamp);
-                        if (actDate >= ninetyDaysAgo && actDate <= now) {
-                            // For new_tenant activities, ensure tenantId is included in data
-                            let activityData = { ...act.data };
-                            if (act.type === 'new_tenant' && act.tenantId) {
-                                activityData.id = act.tenantId;
-                            } else if (act.type === 'bill_created' && act.billId) {
-                                activityData.id = act.billId;
-                            } else if (!activityData.id) {
-                                activityData.id = doc.id;
+            // For activities, we need to query differently for landlords vs tenants
+            // Landlords see activities where they are the landlord
+            // Tenants see activities where they are the tenant
+            const activityPromises = [];
+
+            if (!isTenant) {
+                // Landlord: fetch activities where landlordId matches
+                const landlordActivitiesQuery = firebaseDb.collection('activities')
+                    .where('landlordId', '==', userId)
+                    .orderBy('timestamp', 'desc')
+                    .limit(50);
+
+                activityPromises.push(
+                    landlordActivitiesQuery.get().then(snapshot => {
+                        console.log(`✅ Found ${snapshot.size} landlord activities`);
+                        snapshot.forEach(doc => {
+                            const act = doc.data();
+                            const actDate = new Date(act.timestamp);
+                            if (actDate >= ninetyDaysAgo && actDate <= now) {
+                                // For new_tenant activities, ensure tenantId is included in data
+                                let activityData = { ...act.data };
+                                if (act.type === 'new_tenant' && act.tenantId) {
+                                    activityData.id = act.tenantId;
+                                } else if (act.type === 'bill_created' && act.billId) {
+                                    activityData.id = act.billId;
+                                } else if (act.type === 'payment_received' && act.paymentId) {
+                                    activityData.id = act.paymentId;
+                                } else if (act.type === 'payment_submitted' && act.paymentId) {
+                                    activityData.id = act.paymentId;
+                                } else if (act.type === 'bill_paid' && act.paymentId) {
+                                    activityData.id = act.paymentId;
+                                } else if (act.type === 'maintenance_request' && act.maintenanceId) {
+                                    activityData.id = act.maintenanceId;
+                                } else if (act.type === 'maintenance_assigned' && act.maintenanceId) {
+                                    activityData.id = act.maintenanceId;
+                                } else if (act.type === 'maintenance_completed' && act.maintenanceId) {
+                                    activityData.id = act.maintenanceId;
+                                } else if (act.type === 'tenant_removed' && act.tenantId) {
+                                    activityData.id = act.tenantId;
+                                } else if (act.type === 'tenant_restored' && act.tenantId) {
+                                    activityData.id = act.tenantId;
+                                } else if (act.type === 'property_edited' && (act.apartmentId || act.propertyId)) {
+                                    activityData.id = act.apartmentId || act.propertyId;
+                                } else if (!activityData.id) {
+                                    activityData.id = doc.id;
+                                }
+                                activities.push({
+                                    type: act.type || 'custom',
+                                    title: act.title || 'Activity',
+                                    description: act.description || act.message || '',
+                                    timestamp: act.timestamp,
+                                    icon: act.icon || 'fas fa-info-circle',
+                                    color: act.color || 'var(--info)',
+                                    data: activityData,
+                                    source: 'activities',
+                                    isSeen: act.isSeen === 'seen' ? 'seen' : 'unseen',
+                                    activityId: doc.id
+                                });
                             }
-                            activities.push({
-                                type: act.type || 'custom',
-                                title: act.title || 'Activity',
-                                description: act.description || act.message || '',
-                                timestamp: act.timestamp,
-                                icon: act.icon || 'fas fa-info-circle',
-                                color: act.color || 'var(--info)',
-                                data: activityData,
-                                source: 'activities',
-                                isSeen: act.isSeen === 'seen' ? 'seen' : 'unseen',
-                                activityId: doc.id
-                            });
-                        }
-                    });
-                }).catch(error => {
-                    console.error('❌ Error fetching custom activities:', error);
-                })
-            );
-
-            // 4. Fetch Maintenance Requests - SIMPLIFIED
-            console.log('🔍 Fetching maintenance requests...');
-            let maintenanceQuery = firebaseDb.collection('maintenance')
-                .orderBy('createdAt', 'desc')
-                .limit(50);
-
-            if (isTenant) {
-                maintenanceQuery = maintenanceQuery.where('tenantId', '==', userId);
+                        });
+                    }).catch(error => {
+                        console.error('❌ Error fetching landlord activities:', error);
+                    })
+                );
             } else {
-                maintenanceQuery = maintenanceQuery.where('landlordId', '==', userId);
+                // Tenant: fetch activities where tenantId matches
+                const tenantActivitiesQuery = firebaseDb.collection('activities')
+                    .where('tenantId', '==', userId)
+                    .orderBy('timestamp', 'desc')
+                    .limit(50);
+
+                activityPromises.push(
+                    tenantActivitiesQuery.get().then(snapshot => {
+                        console.log(`✅ Found ${snapshot.size} tenant activities`);
+                        snapshot.forEach(doc => {
+                            const act = doc.data();
+                            const actDate = new Date(act.timestamp);
+                            if (actDate >= ninetyDaysAgo && actDate <= now) {
+                                // For payment_submitted activities, ensure paymentId is included in data
+                                let activityData = { ...act.data };
+                                if (act.type === 'payment_submitted' && act.paymentId) {
+                                    activityData.id = act.paymentId;
+                                } else if (act.type === 'bill_paid' && act.paymentId) {
+                                    activityData.id = act.paymentId;
+                                } else if (act.type === 'bill_created' && act.billId) {
+                                    activityData.id = act.billId;
+                                } else if (act.type === 'maintenance_request' && act.maintenanceId) {
+                                    activityData.id = act.maintenanceId;
+                                } else if (act.type === 'maintenance_assigned' && act.maintenanceId) {
+                                    activityData.id = act.maintenanceId;
+                                } else if (act.type === 'maintenance_completed' && act.maintenanceId) {
+                                    activityData.id = act.maintenanceId;
+                                } else if (!activityData.id) {
+                                    activityData.id = doc.id;
+                                }
+                                activities.push({
+                                    type: act.type || 'custom',
+                                    title: act.title || 'Activity',
+                                    description: act.description || act.message || '',
+                                    timestamp: act.timestamp,
+                                    icon: act.icon || 'fas fa-info-circle',
+                                    color: act.color || 'var(--info)',
+                                    data: activityData,
+                                    source: 'activities',
+                                    isSeen: act.isSeen === 'seen' ? 'seen' : 'unseen',
+                                    activityId: doc.id
+                                });
+                            }
+                        });
+                    }).catch(error => {
+                        console.error('❌ Error fetching tenant activities:', error);
+                    })
+                );
             }
 
-            fetchPromises.push(
-                maintenanceQuery.get().then(snapshot => {
-                    console.log(`✅ Found ${snapshot.size} maintenance requests total`);
-                    snapshot.forEach(doc => {
-                        const request = doc.data();
-                        const requestDate = new Date(request.createdAt);
-                        if (requestDate >= ninetyDaysAgo && requestDate <= now) {
-                            activities.push({
-                                type: 'maintenance_request',
-                                title: 'Maintenance Request',
-                                description: `${request.type || 'General'} issue from ${request.tenantName || 'Tenant'}`,
-                                timestamp: request.createdAt,
-                                icon: 'fas fa-tools',
-                                color: 'var(--info)',
-                                data: { ...request, id: doc.id }
-                            });
-                        }
-                    });
-                }).catch(error => {
-                    console.error('❌ Error fetching maintenance:', error);
-                })
-            );
+            // Add the activity promises to the main fetch promises
+            fetchPromises.push(...activityPromises);
+
+            // 4. Fetch Maintenance Requests - DISABLED (now handled via activities collection)
+            // Maintenance request activities are now created in the activities collection
+            // when requests are submitted, so we don't need to fetch them separately here
+            console.log('🔍 Skipping direct maintenance fetch (handled via activities collection)');
 
             // Wait for all queries
             await Promise.allSettled(fetchPromises);
@@ -2588,8 +3136,12 @@ class CasaLink {
             const activityCounts = {
                 tenants: activities.filter(a => a.type === 'new_tenant').length,
                 payments: activities.filter(a => a.type === 'payment_received').length,
+                bill_paid: activities.filter(a => a.type === 'bill_paid').length,
                 bills: activities.filter(a => a.type === 'bill_generated').length,
-                maintenance: activities.filter(a => a.type === 'maintenance_request').length
+                maintenance: activities.filter(a => a.type === 'maintenance_request').length,
+                assigned: activities.filter(a => a.type === 'maintenance_assigned').length,
+                completed: activities.filter(a => a.type === 'maintenance_completed').length,
+                custom: activities.filter(a => a.source === 'activities').length
             };
             
             console.log('🔍 Activities found by type:', activityCounts);
@@ -2708,6 +3260,26 @@ class CasaLink {
         this.setupActivitiesPagination();
     }
 
+    getActivityEntityId(activity) {
+        if (!activity || !activity.data) return '';
+        const data = activity.data || {};
+        const type = activity.type;
+
+        if (['payment_submitted', 'payment_received', 'payment_verified'].includes(type)) {
+            return data.paymentId || data.billId || data.maintenanceId || data.tenantId || data.apartmentId || data.propertyId || data.id || '';
+        }
+
+        if (type === 'bill_paid') {
+            return data.billId || data.paymentId || data.id || '';
+        }
+
+        if (type === 'maintenance_request' || type.startsWith('maintenance')) {
+            return data.maintenanceId || data.id || '';
+        }
+
+        return data.apartmentId || data.propertyId || data.billId || data.paymentId || data.maintenanceId || data.leaseId || data.tenantId || data.id || '';
+    }
+
     updateActivitiesPaginationInfo() {
         const infoElement = document.getElementById('activitiesPaginationInfo');
         if (infoElement) {
@@ -2725,8 +3297,7 @@ class CasaLink {
         console.log(`🎨 Rendering ${activities.length} activity items`);
         
         return activities.map((activity, index) => {
-            // Determine the most relevant entity id: prioritize apartmentId/propertyId, then generic id
-            const entityId = (activity.data && (activity.data.apartmentId || activity.data.propertyId || activity.data.id)) || '';
+            const entityId = this.getActivityEntityId(activity);
             const entityPayload = encodeURIComponent(JSON.stringify(activity.data || {}));
             const statusClass = activity.source === 'activities' ? (activity.isSeen === 'unseen' ? 'unseen-activity' : 'seen-activity') : '';
             return `
@@ -2898,7 +3469,14 @@ class CasaLink {
     // Unified activity details modal - consolidates 6 similar modal methods into one
     async showActivityDetailsModal(activityType, entityId, activityDataEncoded, isSeen = null) {
         try {
+            if (!entityId) {
+                console.warn('⚠️ No entity ID provided for activity type:', activityType);
+                this.showNotification('Unable to load activity details: Missing entity ID', 'error');
+                return;
+            }
+
             let data, modalTitle, modalContent;
+            data = null; // Initialize to prevent "before initialization" errors
             // Parse provided activity data payload (if any)
             let activityData = null;
             try {
@@ -2944,7 +3522,94 @@ class CasaLink {
                             <div class="modal-footer">
                                 <button class="btn btn-primary" onclick="casaLink.switchBillingView('bills')"><i class="fas fa-file-invoice-dollar"></i> View All Bills</button>
                                 ${data.status !== 'paid' ? `<button class="btn btn-success" ${data.status === 'pending' ? 'disabled title="Pending bill - cannot record payment"' : ''} onclick="casaLink.recordPaymentModal('${data.id}')"><i class="fas fa-credit-card"></i> Record Payment</button>` : ''}
-                                <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'bill_edited':
+                    const editedBillDoc = await firebaseDb.collection('bills').doc(entityId).get();
+                    if (!editedBillDoc.exists) throw new Error('Bill not found');
+                    data = { id: entityId, ...editedBillDoc.data() };
+                    const editedDueDate = new Date(data.dueDate);
+                    modalTitle = 'Bill Edited';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-edit" style="font-size: 3rem; color: var(--warning); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Bill Edited</h3>
+                                <p>Details for the updated bill</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Updated Bill Information</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Tenant:</strong><br>${data.tenantName || 'N/A'}</div>
+                                    <div><strong>Room:</strong><br>${data.roomNumber || 'N/A'}</div>
+                                    <div><strong>Amount:</strong><br><span style="font-weight: 600; color: var(--royal-blue);">₱${(data.totalAmount || data.amount || 0).toLocaleString()}</span></div>
+                                    <div><strong>Type:</strong><br>${(data.type || 'rent').charAt(0).toUpperCase() + (data.type || 'rent').slice(1)}</div>
+                                    <div><strong>Due Date:</strong><br>${editedDueDate.toLocaleDateString()}</div>
+                                    <div><strong>Status:</strong><br>${this.getBillStatusBadge(data)}</div>
+                                    <div style="grid-column: 1 / -1;"><strong>Description:</strong><br>${data.description || 'No description'}</div>
+                                </div>
+                            </div>
+                            ${activityData ? `<div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin-bottom: 20px;"><h4 style="color: var(--warning); margin-bottom: 15px;">Edit Summary</h4><div style="display: grid; grid-template-columns: 1fr; gap: 10px;"><div><strong>Changed Description:</strong><br>${this.escapeHtml(activityData.description || 'N/A')}</div><div><strong>Changed Amount:</strong><br>₱${(activityData.amount || 0).toLocaleString()}</div></div></div>` : ''}
+                            <div class="modal-footer">
+                                <button class="btn btn-primary" onclick="casaLink.switchBillingView('bills')"><i class="fas fa-file-invoice-dollar"></i> View All Bills</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'bill_deleted':
+                case 'bill_restored':
+                    console.log('📋 Loading activity details for bill:', { activityType, entityId, activityData });
+                    const deletedBillDoc = await firebaseDb.collection('bills').doc(entityId).get();
+                    if (!deletedBillDoc.exists) {
+                        // Check archive if bill is archived
+                        const archiveSnap = await firebaseDb.collection('archive')
+                            .where('originalId', '==', entityId)
+                            .where('type', '==', 'bill')
+                            .limit(1)
+                            .get();
+                        
+                        if (!archiveSnap.empty) {
+                            data = archiveSnap.docs[0].data().data || {};
+                            data.id = entityId;
+                        } else {
+                            throw new Error('Bill not found');
+                        }
+                    } else {
+                        data = { id: entityId, ...deletedBillDoc.data() };
+                    }
+                    
+                    const billAmount = data.totalAmount || data.amount || 0;
+                    const billDue = data.dueDate ? new Date(data.dueDate) : null;
+                    modalTitle = activityType === 'bill_deleted' ? 'Bill Deleted' : 'Bill Restored';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-${activityType === 'bill_deleted' ? 'trash' : 'undo'}" style="font-size: 3rem; color: var(--${activityType === 'bill_deleted' ? 'danger' : 'success'}); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">${activityType === 'bill_deleted' ? 'Bill Deleted' : 'Bill Restored'}</h3>
+                                <p>${activityType === 'bill_deleted' ? 'This bill has been moved to Archive' : 'This bill has been restored'}</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Bill Information</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Tenant:</strong><br>${data.tenantName || 'N/A'}</div>
+                                    <div><strong>Apartment:</strong><br>${data.apartment || data.apartmentName || data.apartmentAddress || 'N/A'}</div>
+                                    <div><strong>Amount:</strong><br><span style="font-weight: 600; color: var(--royal-blue);">₱${billAmount.toLocaleString()}</span></div>
+                                    <div><strong>Status:</strong><br>${(data.status || 'unknown').charAt(0).toUpperCase() + (data.status || 'unknown').slice(1)}</div>
+                                    <div><strong>Description:</strong><br>${data.description || 'No description'}</div>
+                                    <div><strong>Due Date:</strong><br>${billDue ? billDue.toLocaleDateString() : 'N/A'}</div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                ${activityType === 'bill_deleted' ? `<button class="btn btn-secondary" onclick="casaLink.switchBillingView('bills'); window.ModalManager.closeModal(this.closest('.modal-overlay'))"><i class="fas fa-file-invoice-dollar"></i> View Bills</button>` : `<button class="btn btn-secondary" onclick="casaLink.switchBillingView('bills'); window.ModalManager.closeModal(this.closest('.modal-overlay'))"><i class="fas fa-file-invoice-dollar"></i> View Bills</button>`}
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                             </div>
                         </div>
                     `;
@@ -2978,7 +3643,7 @@ class CasaLink {
                             ${data.occupants && data.occupants.length > 0 ? `<div style="background: rgba(52, 168, 83, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px;"><h5 style="margin: 0 0 10px 0; color: var(--success);">Occupants</h5><ul style="margin: 0;">${data.occupants.map(occupant => `<li>${occupant}</li>`).join('')}</ul></div>` : ''}
                             <div class="modal-footer">
                                 <button class="btn btn-primary" onclick="casaLink.showPage('tenants')"><i class="fas fa-users"></i> View Tenant Details</button>
-                                <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                             </div>
                         </div>
                     `;
@@ -3029,14 +3694,19 @@ class CasaLink {
                             ${lease ? `<div style="background: #e3f2fd; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--primary-blue);"><h4 style="color: var(--royal-blue); margin-bottom: 15px;"><i class="fas fa-file-contract"></i> Lease Information</h4><div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;"><div><strong>Monthly Rent:</strong><br><span style="color: #333; font-weight: bold;">₱${(lease.monthlyRent || 0).toLocaleString()}</span></div><div><strong>Lease Start:</strong><br><span style="color: #333;">${lease.leaseStart ? new Date(lease.leaseStart).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Not set'}</span></div><div><strong>Lease End:</strong><br><span style="color: #333;">${lease.leaseEnd ? new Date(lease.leaseEnd).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Not set'}</span></div><div><strong>Lease Status:</strong><br><span class="status-badge ${lease.isActive ? 'active' : 'inactive'}">${lease.isActive ? 'ACTIVE' : 'INACTIVE'}</span></div></div></div>` : '<div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--warning);"><i class="fas fa-info-circle"></i> <strong>No active lease found</strong></div>'}
                             <div class="modal-footer">
                                 <button class="btn btn-primary" onclick="casaLink.showPage('tenants')"><i class="fas fa-users"></i> Go to Tenant Management</button>
-                                <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                             </div>
                         </div>
                     `;
                     break;
 
                 case 'payment_received':
-                    data = { id: entityId, ...(await firebaseDb.collection('payments').doc(entityId).get()).data() };
+                    // For activities from activities collection, paymentId is in activityData
+                    let paymentId = entityId;
+                    if (activityData && activityData.paymentId) {
+                        paymentId = activityData.paymentId;
+                    }
+                    data = { id: paymentId, ...(await firebaseDb.collection('payments').doc(paymentId).get()).data() };
                     if (!data) throw new Error('Payment not found');
                     const paymentDate = new Date(data.paymentDate || data.createdAt);
                     modalTitle = 'Payment Details';
@@ -3062,7 +3732,7 @@ class CasaLink {
                             ${data.billId ? `<div style="background: rgba(52, 168, 83, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px;"><p style="margin: 0;"><i class="fas fa-receipt"></i> <strong>Bill Paid:</strong> This payment was applied to bill ${data.billId.substring(0, 8)}</p></div>` : ''}
                             <div class="modal-footer">
                                 <button class="btn btn-primary" onclick="casaLink.switchBillingView('payments')"><i class="fas fa-money-check"></i> View All Payments</button>
-                                <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                             </div>
                         </div>
                     `;
@@ -3096,7 +3766,7 @@ class CasaLink {
                                 ${data.billId ? `<div style="background: rgba(251,188,4,0.08); padding: 15px; border-radius: 8px; margin-bottom: 20px;"><p style="margin:0;"><i class="fas fa-info-circle"></i> <strong>Bill:</strong> Payment is pending verification for bill ${data.billId.substring(0,8)}</p></div>` : ''}
                                 <div class="modal-footer">
                                     <button class="btn btn-primary" onclick="casaLink.switchBillingView('payments')"><i class="fas fa-money-check"></i> View All Payments</button>
-                                    <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                                    <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                                 </div>
                             </div>
                         `;
@@ -3131,7 +3801,7 @@ class CasaLink {
                                 ${data.billId ? `<div style="background: rgba(52,168,83,0.08); padding: 15px; border-radius: 8px; margin-bottom: 20px;"><p style="margin:0;"><i class="fas fa-receipt"></i> <strong>Bill:</strong> Payment applied to bill ${data.billId.substring(0,8)}</p></div>` : ''}
                                 <div class="modal-footer">
                                     <button class="btn btn-primary" onclick="casaLink.switchBillingView('bills')"><i class="fas fa-file-invoice-dollar"></i> View Bills</button>
-                                    <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                                    <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                                 </div>
                             </div>
                         `;
@@ -3139,7 +3809,11 @@ class CasaLink {
                     break;
 
                 case 'bill_paid':
-                    data = { id: entityId, ...(await firebaseDb.collection('bills').doc(entityId).get()).data() };
+                    let billId = entityId;
+                    if (activityData && activityData.billId) {
+                        billId = activityData.billId;
+                    }
+                    data = { id: billId, ...(await firebaseDb.collection('bills').doc(billId).get()).data() };
                     if (!data) throw new Error('Bill not found');
                     {
                         const due = new Date(data.dueDate);
@@ -3164,11 +3838,38 @@ class CasaLink {
                                 </div>
                                 <div class="modal-footer">
                                     <button class="btn btn-primary" onclick="casaLink.switchBillingView('bills')"><i class="fas fa-file-invoice-dollar"></i> View Bills</button>
-                                    <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                                    <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                                 </div>
                             </div>
                         `;
                     }
+                    break;
+
+                case 'report_downloaded':
+                    const reportFilename = activityData?.filename || 'Report.pdf';
+                    const reportType = activityData?.reportType || 'Report';
+                    modalTitle = 'Report Downloaded';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-file-pdf" style="font-size: 3rem; color: var(--info); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">${this.escapeHtml(reportType)}</h3>
+                                <p>Downloaded report details</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Download Information</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Report Type:</strong><br>${this.escapeHtml(reportType)}</div>
+                                    <div><strong>Filename:</strong><br>${this.escapeHtml(reportFilename)}</div>
+                                    <div style="grid-column: 1 / -1;"><strong>Notes:</strong><br>This activity was created when the report was downloaded as a PDF.</div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
                     break;
 
                 case 'maintenance_request':
@@ -3203,6 +3904,18 @@ class CasaLink {
                                 <div><strong>Description:</strong><br><p style="margin: 10px 0; line-height: 1.6; background: white; padding: 15px; border-radius: 6px;">${data.description || 'No description provided'}</p></div>
                             </div>
                             ${data.assignedName ? `<div style="background: rgba(26, 115, 232, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px;"><p style="margin: 0;"><i class="fas fa-user-check"></i> <strong>Assigned To:</strong> ${data.assignedName}</p></div>` : ''}
+                            ${data.completionPhotos && data.completionPhotos.length > 0 ? `
+                            <div style="background: rgba(248, 249, 250, 1); padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;"><i class="fas fa-images"></i> Completion Photo Evidence (${data.completionPhotos.length})</h4>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;">
+                                    ${data.completionPhotos.map(photoURL => `
+                                        <div style="border-radius: 6px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.08); cursor: pointer;" onclick='window.openFullSizeImage(${JSON.stringify(photoURL)})'>
+                                            <img src="${photoURL}" alt="Completion evidence" style="width: 100%; height: 120px; object-fit: cover; display: block;" />
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : ''}
                             <div class="modal-footer">
                                 <button class="btn btn-primary" onclick="casaLink.showPage('maintenance')"><i class="fas fa-tools"></i> View All Maintenance</button>
                                 <!-- status-specific actions -->
@@ -3217,7 +3930,97 @@ class CasaLink {
                                 ` : data.status !== 'completed' ? `
                                     <button class="btn btn-warning" onclick="casaLink.updateMaintenanceRequest('${data.id}')"><i class="fas fa-edit"></i> Update Status</button>
                                 ` : ''}
-                                <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'maintenance_assigned':
+                    data = await DataManager.getMaintenanceRequest(entityId);
+                    if (!data) throw new Error('Maintenance request not found');
+                    const assignedDate = new Date(data.assignedAt);
+                    modalTitle = 'Maintenance Request Assigned';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-user-check" style="font-size: 3rem; color: var(--success); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Staff Assigned</h3>
+                                <p>Maintenance request has been assigned to staff</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Assignment Details</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Tenant:</strong><br>${data.tenantName || 'N/A'}</div>
+                                    <div><strong>Room:</strong><br>${data.roomNumber || 'N/A'}</div>
+                                    <div><strong>Assigned To:</strong><br><span style="color: var(--success); font-weight: 600;">${data.assignedName || 'Staff'}</span></div>
+                                    <div><strong>Assigned Date:</strong><br>${assignedDate.toLocaleDateString()}</div>
+                                    <div><strong>Status:</strong><br><span class="status-badge in-progress">In Progress</span></div>
+                                    <div><strong>Priority:</strong><br><span class="status-badge ${this.getPriorityBadge(data.priority).split('"')[1]}">${data.priority}</span></div>
+                                </div>
+                                ${data.assignmentNotes ? `<div style="margin-top: 15px; grid-column: 1 / -1;"><strong>Assignment Notes:</strong><br><p style="margin: 5px 0; background: white; padding: 10px; border-radius: 4px;">${data.assignmentNotes}</p></div>` : ''}
+                                ${data.estimatedCompletion ? `<div style="margin-top: 10px;"><strong>Estimated Completion:</strong><br>${new Date(data.estimatedCompletion).toLocaleDateString()}</div>` : ''}
+                                ${data.estimatedCost ? `<div style="margin-top: 10px;"><strong>Estimated Cost:</strong><br>₱${data.estimatedCost.toLocaleString()}</div>` : ''}
+                            </div>
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Issue Details</h4>
+                                <div><strong>Title:</strong><br><p style="margin: 10px 0; font-weight: 500;">${data.title || 'No title'}</p></div>
+                                <div><strong>Description:</strong><br><p style="margin: 10px 0; line-height: 1.6; background: white; padding: 15px; border-radius: 6px;">${data.description || 'No description provided'}</p></div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-primary" onclick="casaLink.showPage('maintenance')"><i class="fas fa-tools"></i> View All Maintenance</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'maintenance_completed':
+                    data = await DataManager.getMaintenanceRequest(entityId);
+                    if (!data) throw new Error('Maintenance request not found');
+                    const completedDate = new Date(data.completedDate);
+                    modalTitle = 'Maintenance Request Completed';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-check-circle" style="font-size: 3rem; color: var(--success); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Request Completed</h3>
+                                <p>Maintenance request has been successfully completed</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Completion Details</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Tenant:</strong><br>${data.tenantName || 'N/A'}</div>
+                                    <div><strong>Room:</strong><br>${data.roomNumber || 'N/A'}</div>
+                                    <div><strong>Completed By:</strong><br><span style="color: var(--success); font-weight: 600;">${data.assignedName || 'Staff'}</span></div>
+                                    <div><strong>Completed Date:</strong><br>${completedDate.toLocaleDateString()}</div>
+                                    <div><strong>Status:</strong><br><span class="status-badge completed">Completed</span></div>
+                                    <div><strong>Actual Cost:</strong><br><span style="font-weight: 600; color: var(--success);">₱${(data.actualCost || 0).toLocaleString()}</span></div>
+                                </div>
+                                ${data.remarks ? `<div style="margin-top: 15px; grid-column: 1 / -1;"><strong>Completion Remarks:</strong><br><p style="margin: 5px 0; background: white; padding: 10px; border-radius: 4px;">${data.remarks}</p></div>` : ''}
+                            </div>
+                            ${data.completionPhotos && data.completionPhotos.length > 0 ? `
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;"><i class="fas fa-images"></i> Completion Photos (${data.completionPhotos.length})</h4>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;">
+                                    ${data.completionPhotos.map(photoURL => `
+                                        <div style="border-radius: 6px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.1); cursor: pointer;" onclick='window.openFullSizeImage("${photoURL}")'>
+                                            <img src="${photoURL}" alt="Completion photo" style="width: 100%; height: 120px; object-fit: cover;" />
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            ` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Issue Details</h4>
+                                <div><strong>Title:</strong><br><p style="margin: 10px 0; font-weight: 500;">${data.title || 'No title'}</p></div>
+                                <div><strong>Description:</strong><br><p style="margin: 10px 0; line-height: 1.6; background: white; padding: 15px; border-radius: 6px;">${data.description || 'No description provided'}</p></div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-primary" onclick="casaLink.showPage('maintenance')"><i class="fas fa-tools"></i> View All Maintenance</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                             </div>
                         </div>
                     `;
@@ -3272,7 +4075,219 @@ class CasaLink {
                             </div>
                             <div class="modal-footer">
                                 <button class="btn btn-primary" onclick="casaLink.showPage('properties')"><i class="fas fa-building"></i> View Properties</button>
-                                <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'tenant_removed':
+                    data = activityData || {};
+                    modalTitle = 'Tenant Removed';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-user-times" style="font-size: 3rem; color: var(--danger); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Tenant Removed</h3>
+                                <p>Tenant has been removed from their room</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Removal Details</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Tenant Name:</strong><br>${data.tenantName || 'N/A'}</div>
+                                    <div><strong>Room Number:</strong><br>${data.roomNumber || 'N/A'}</div>
+                                    <div><strong>Apartment:</strong><br>${data.apartmentName || 'N/A'}</div>
+                                    <div><strong>Removed Date:</strong><br>${data.removedAt ? new Date(data.removedAt).toLocaleDateString() : 'N/A'}</div>
+                                </div>
+                            </div>
+                            <div style="background: rgba(220, 53, 69, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--danger);">
+                                <p style="margin: 0;"><i class="fas fa-info-circle"></i> <strong>Note:</strong> The tenant's lease has been archived and the room is now available for new tenants.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-primary" onclick="casaLink.showPage('tenants')"><i class="fas fa-users"></i> View Tenants</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'tenant_restored':
+                    data = activityData || {};
+                    modalTitle = 'Tenant Restored';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-undo" style="font-size: 3rem; color: var(--success); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Tenant Restored</h3>
+                                <p>Tenant and their lease have been restored from archive</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Restoration Details</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Tenant Name:</strong><br>${data.tenantName || 'N/A'}</div>
+                                    <div><strong>Room Number:</strong><br>${data.roomNumber || 'N/A'}</div>
+                                    <div><strong>Apartment:</strong><br>${data.apartmentName || 'N/A'}</div>
+                                    <div><strong>Restored Date:</strong><br>${data.restoredAt ? new Date(data.restoredAt).toLocaleDateString() : 'N/A'}</div>
+                                </div>
+                            </div>
+                            <div style="background: rgba(52, 168, 83, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--success);">
+                                <p style="margin: 0;"><i class="fas fa-info-circle"></i> <strong>Note:</strong> The tenant's lease has been reactivated and they can now access the system again.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-primary" onclick="casaLink.showPage('tenants')"><i class="fas fa-users"></i> View Tenants</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'property_edited':
+                    // Display details for edited property/apartment
+                    modalTitle = 'Property Updated';
+                    
+                    // Always fetch current property data from Firestore for accurate display
+                    let currentPropertyData = null;
+                    try {
+                        if (entityId) {
+                            const propertyDoc = await firebaseDb.collection('apartments').doc(entityId).get();
+                            if (propertyDoc.exists) {
+                                currentPropertyData = { id: entityId, ...propertyDoc.data() };
+                            }
+                        }
+                    } catch (err) {
+                        console.warn('⚠️ Error fetching current property data:', err);
+                    }
+                    
+                    // Use current property data as primary source, fallback to activity data
+                    data = currentPropertyData || activityData || {};
+                    
+                    // Ensure we have some data to display
+                    if (!data || Object.keys(data).length === 0) {
+                        data = {};
+                        console.warn('⚠️ No property data available for property_edited activity');
+                    }
+
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-edit" style="font-size: 3rem; color: var(--warning); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Property Updated</h3>
+                                <p>Details for property that was recently edited</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Property Information</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Name:</strong><br>${data.name || data.propertyName || data.apartmentAddress || 'N/A'}</div>
+                                    <div><strong>Address:</strong><br>${data.address || data.location || data.apartmentAddress || 'N/A'}</div>
+                                    <div><strong>Units:</strong><br>${data.numberOfUnits || data.numberOfRooms || data.roomsCreated || 'N/A'}</div>
+                                    <div><strong>Owner:</strong><br>${data.landlordName || data.ownerName || 'N/A'}</div>
+                                </div>
+                            </div>
+                            ${activityData ? `
+                            <div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--warning);">
+                                <h4 style="color: var(--warning); margin-bottom: 15px;"><i class="fas fa-history"></i> Edit Summary</h4>
+                                ${activityData.changes && Object.keys(activityData.changes).length > 0 ? `
+                                <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+                                    ${Object.entries(activityData.changes).map(([field, change]) => {
+                                        // Format field names - special handling for room changes
+                                        let fieldName, icon = '✏️';
+                                        if (field === 'numberOfRooms') fieldName = 'Number of Rooms';
+                                        else if (field === 'numberOfFloors') fieldName = 'Number of Floors';
+                                        else if (field === 'roomsAdded') { fieldName = 'Rooms Added'; icon = '➕'; }
+                                        else if (field === 'roomsModified') { fieldName = 'Rooms Modified'; icon = '✏️'; }
+                                        else if (field === 'roomsDeleted') { fieldName = 'Rooms Deleted'; icon = '🗑️'; }
+                                        else fieldName = field.charAt(0).toUpperCase() + field.slice(1);
+                                        
+                                        return `<div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #dee2e6;">
+                                            <strong>${icon} ${fieldName}:</strong><br>
+                                            <span style="color: var(--danger); text-decoration: line-through; font-size: 0.9rem;">${change.from}</span> → 
+                                            <span style="color: var(--success); font-weight: 600; font-size: 0.95rem;">${change.to}</span>
+                                        </div>`;
+                                    }).join('')}
+                                </div>
+                                ` : `
+                                <div style="background: white; padding: 15px; border-radius: 6px; border: 1px solid #dee2e6;">
+                                    <em style="color: var(--text-muted);">Property was updated, but specific changes could not be tracked.</em>
+                                </div>
+                                `}
+                            </div>
+                            ` : ''}
+                            <div style="background: rgba(255, 193, 7, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--warning);">
+                                <p style="margin: 0;"><i class="fas fa-info-circle"></i> <strong>Note:</strong> This property has been recently updated. Changes may include property details, room configurations, or other information.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-primary" onclick="casaLink.showPage('properties')"><i class="fas fa-building"></i> View Properties</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'archive_item_deleted':
+                    // For permanently deleted items, use activity data since item no longer exists
+                    data = activityData || {};
+                    modalTitle = 'Item Permanently Deleted';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-trash" style="font-size: 3rem; color: var(--danger); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Permanently Deleted</h3>
+                                <p>This item has been permanently removed from the system</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Deletion Details</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Item Type:</strong><br>${(data.itemType || 'Unknown').charAt(0).toUpperCase() + (data.itemType || 'Unknown').slice(1)}</div>
+                                    <div><strong>Original ID:</strong><br>${data.itemId || data.billId || data.tenantId || data.leaseId || 'N/A'}</div>
+                                    ${data.tenantName ? `<div><strong>Tenant:</strong><br>${data.tenantName}</div>` : ''}
+                                    ${data.amount ? `<div><strong>Amount:</strong><br><span style="font-weight: 600; color: var(--royal-blue);">₱${data.amount.toLocaleString()}</span></div>` : ''}
+                                    ${data.roomNumber ? `<div><strong>Room:</strong><br>${data.roomNumber}</div>` : ''}
+                                    <div><strong>Deleted At:</strong><br>${data.deletedAt ? new Date(data.deletedAt).toLocaleString() : 'Unknown'}</div>
+                                </div>
+                            </div>
+                            <div style="background: rgba(220, 38, 38, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                                <p style="margin: 0; color: var(--danger);"><i class="fas fa-exclamation-triangle"></i> <strong>Warning:</strong> This item has been permanently deleted and cannot be recovered.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-secondary" onclick="casaLink.showPage('archive')"><i class="fas fa-archive"></i> View Archive</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'archive_duplicate_discarded':
+                    // For discarded archive items due to duplicates, use activity data
+                    data = activityData || {};
+                    modalTitle = 'Archive Item Discarded';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-trash-alt" style="font-size: 3rem; color: var(--warning); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Archive Item Discarded</h3>
+                                <p>This archived item was automatically discarded because a duplicate already exists</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Discard Details</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Item Type:</strong><br>${(data.itemType || 'Unknown').charAt(0).toUpperCase() + (data.itemType || 'Unknown').slice(1)}</div>
+                                    <div><strong>Original ID:</strong><br>${data.originalId || 'N/A'}</div>
+                                    <div><strong>Archive ID:</strong><br>${data.archiveId || 'N/A'}</div>
+                                    <div><strong>Reason:</strong><br>Duplicate exists</div>
+                                    <div style="grid-column: 1 / -1;"><strong>Discarded At:</strong><br>${data.discardedAt ? new Date(data.discardedAt).toLocaleString() : 'Unknown'}</div>
+                                </div>
+                            </div>
+                            <div style="background: rgba(251, 188, 4, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                                <p style="margin: 0; color: var(--warning);"><i class="fas fa-info-circle"></i> <strong>Info:</strong> This archive entry was removed because an active item with the same details already exists in the system.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-secondary" onclick="casaLink.showPage('archive')"><i class="fas fa-archive"></i> View Archive</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                             </div>
                         </div>
                     `;
@@ -3282,14 +4297,17 @@ class CasaLink {
                     throw new Error('Unknown activity type: ' + activityType);
             }
 
-            ModalManager.openModal(modalContent, {
+            window.ModalManager.openModal(modalContent, {
                 title: modalTitle,
                 showFooter: false
             });
 
         } catch (error) {
             console.error('❌ Error displaying activity details:', error);
-            this.showNotification('Failed to load details', 'error');
+            console.error('   Activity Type:', activityType);
+            console.error('   Entity ID:', entityId);
+            console.error('   Activity Data:', activityDataEncoded);
+            this.showNotification('Failed to load details: ' + error.message, 'error');
         }
     }
 
@@ -3419,14 +4437,17 @@ class CasaLink {
             activity.source === 'activities' && activity.isSeen === 'unseen'
         ).length;
         
-        const badgeElement = document.getElementById('activity-log-count');
-        if (badgeElement) {
-            if (unseenCount > 0) {
-                badgeElement.textContent = unseenCount > 99 ? '99+' : unseenCount;
-                badgeElement.style.display = 'inline-block';
-            } else {
-                badgeElement.style.display = 'none';
-            }
+        // Update all matching badge elements (some layouts render multiple badges)
+        const badgeElements = document.querySelectorAll('.activity-log-count');
+        if (badgeElements && badgeElements.length > 0) {
+            badgeElements.forEach(badgeElement => {
+                if (unseenCount > 0) {
+                    badgeElement.textContent = unseenCount > 99 ? '99+' : unseenCount;
+                    badgeElement.style.display = 'inline-block';
+                } else {
+                    badgeElement.style.display = 'none';
+                }
+            });
         }
     }
 
@@ -3435,25 +4456,49 @@ class CasaLink {
             const userId = this.currentUser?.id || this.currentUser?.uid;
             if (!userId) return;
 
-            // Query only unseen activities for the badge count
-            const snapshot = await firebaseDb.collection('activities')
-                .where('landlordId', '==', userId)
-                .where('isSeen', '==', 'unseen')
-                .get();
+            let query;
+            if (this.currentRole === 'landlord') {
+                // Query only unseen activities for the landlord
+                query = firebaseDb.collection('activities')
+                    .where('landlordId', '==', userId)
+                    .where('isSeen', '==', 'unseen');
+            } else if (this.currentRole === 'tenant') {
+                // Query only unseen activities for the tenant
+                query = firebaseDb.collection('activities')
+                    .where('tenantId', '==', userId)
+                    .where('isSeen', '==', 'unseen');
+            } else {
+                return; // Unknown role
+            }
 
+            const snapshot = await query.get();
             const unseenCount = snapshot.size;
-            const badgeElement = document.getElementById('activity-log-count');
-            
-            if (badgeElement) {
-                if (unseenCount > 0) {
-                    badgeElement.textContent = unseenCount > 99 ? '99+' : unseenCount;
-                    badgeElement.style.display = 'inline-block';
-                } else {
-                    badgeElement.style.display = 'none';
+            // Update all matching badge elements so tenant and landlord navs both reflect count
+            const badgeElements = document.querySelectorAll('.activity-log-count');
+            if (badgeElements && badgeElements.length > 0) {
+                badgeElements.forEach(badgeElement => {
+                    if (unseenCount > 0) {
+                        badgeElement.textContent = unseenCount > 99 ? '99+' : unseenCount;
+                        badgeElement.style.display = 'inline-block';
+                    } else {
+                        badgeElement.style.display = 'none';
+                    }
+                });
+            }
+
+            if (unseenCount > 0 && !this.activityBadgeNotificationShown) {
+                this.activityBadgeNotificationShown = true;
+                if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                    window.NotificationManager.showNotification('Unread Activity Log', {
+                        body: `You have ${unseenCount} unread activity log item${unseenCount === 1 ? '' : 's'}.`,
+                        tag: 'activity-unseen-count',
+                        icon: '/icons/icon-192x192.png',
+                        badge: '/icons/icon-72x72.png'
+                    });
                 }
             }
 
-            console.log(`📊 Activity badge updated: ${unseenCount} unseen activities`);
+            console.log(`📊 Activity badge updated: ${unseenCount} unseen activities for ${this.currentRole}`);
         } catch (error) {
             console.error('❌ Error loading activity badge count:', error);
         }
@@ -3481,10 +4526,7 @@ class CasaLink {
             // load stats each time dashboard is entered
             await this.loadDashboardData();
 
-            // still show recent activities and setup realtime listeners
-            setTimeout(() => {
-                this.loadRecentActivities();
-            }, 500);
+            // Tenants no longer have recent activities on dashboard
             this.updateActiveNavState('dashboard');
             this.setupRealTimeStats();
 
@@ -3877,13 +4919,13 @@ class CasaLink {
                     </div>
 
                     <div style="margin-top: 25px; display: flex; gap: 10px; justify-content: flex-end;">
-                        <button type="button" class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Cancel</button>
+                        <button type="button" class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Cancel</button>
                         <button type="button" class="btn btn-primary" id="nextToStep2Btn">Next: Add Room Details</button>
                     </div>
                 </div>
             `;
 
-            const modal = ModalManager.openModal(step1HTML, {
+            const modal = window.ModalManager.openModal(step1HTML, {
                 title: 'Add New Apartment',
                 showFooter: false,
                 width: '600px'
@@ -4226,7 +5268,7 @@ class CasaLink {
                 if (window.notificationManager && typeof window.notificationManager.success === 'function') {
                     window.notificationManager.success(`Apartment created with ${result.roomsCreated} rooms!`);
                 }
-                ModalManager.closeModal(modal);
+                window.ModalManager.closeModal(modal);
 
                 // Immediately refresh landlord properties section if it's active
                 try {
@@ -4351,6 +5393,8 @@ class CasaLink {
     const methodsToBind = [
         'showUnitLayoutDashboard',
         'showUnitDetails',
+        'editUnit',
+        'addTenantToUnit',
         'startAddTenantForUnit',
         'refreshUnitLayout',
         'setupUnitClickHandlers',
@@ -4433,79 +5477,6 @@ class CasaLink {
 
 
 
-                <!-- FINANCIAL OVERVIEW SECTION -->
-                <div class="card-group-title">Financial Overview</div>
-                <div class="dashboard-hint" style="color: var(--dark-gray); font-size:0.95rem; margin:6px 0 12px;">Quick summary of rent roll, collections, and unpaid bills.</div>
-                <div class="card-group">
-                    <div class="card" data-clickable="collection" style="cursor: pointer;" title="Click to view collection details">
-                        <div class="card-header">
-                            <div class="card-title">Rent Collection</div>
-                            <div class="card-icon collection"><i class="fas fa-chart-line"></i></div>
-                        </div>
-                        <div class="card-value" id="collectionRate">0%</div>
-                        <div class="card-subtitle">This month</div>
-                    </div>
-
-                    <div class="card" data-clickable="revenue" style="cursor: pointer;" title="Click to view revenue details">
-                        <div class="card-header">
-                            <div class="card-title">Monthly Revenue</div>
-                            <div class="card-icon revenue"><i class="fas fa-cash-register"></i></div>
-                        </div>
-                        <div class="card-value" id="monthlyRevenue">₱0</div>
-                        <div class="card-subtitle">Current month</div>
-                    </div>
-
-                    <div class="card" data-clickable="late" style="cursor: pointer;" title="Click to view late payments">
-                        <div class="card-header">
-                            <div class="card-title">Late Payments</div>
-                            <div class="card-icon late"><i class="fas fa-clock"></i></div>
-                        </div>
-                        <div class="card-value" id="latePayments">0</div>
-                        <div class="card-subtitle">Overdue rent</div>
-                    </div>
-
-                    <div class="card" data-clickable="unpaid" style="cursor: pointer;" title="Click to view unpaid bills">
-                        <div class="card-header">
-                            <div class="card-title">Unpaid Bills</div>
-                            <div class="card-icon unpaid"><i class="fas fa-money-bill-wave"></i></div>
-                        </div>
-                        <div class="card-value" id="unpaidBills">0</div>
-                        <div class="card-subtitle">Pending payments</div>
-                    </div>
-                </div>
-
-                <!-- OPERATIONS SECTION -->
-                <div class="card-group-title">Operations Overview</div>
-                <div class="dashboard-hint" style="color: var(--dark-gray); font-size:0.95rem; margin:6px 0 12px;">Operational alerts and tasks — maintenance, renewals, and expirations.</div>
-                <div class="card-group">
-                    <div class="card" data-clickable="renewals" style="cursor: pointer;" title="Click to view lease renewals">
-                        <div class="card-header">
-                            <div class="card-title">Lease Renewals</div>
-                            <div class="card-icon renewals"><i class="fas fa-calendar-alt"></i></div>
-                        </div>
-                        <div class="card-value" id="upcomingRenewals">0</div>
-                        <div class="card-subtitle">Next 30 days</div>
-                    </div>
-
-                    <div class="card" data-clickable="open-maintenance" style="cursor: pointer;" title="Click to view open maintenance requests">
-                        <div class="card-header">
-                            <div class="card-title">Open Maintenance</div>
-                            <div class="card-icon maintenance"><i class="fas fa-tools"></i></div>
-                        </div>
-                        <div class="card-value" id="openMaintenance">0</div>
-                        <div class="card-subtitle">New requests</div>
-                    </div>
-
-                    <div class="card" data-clickable="backlog" style="cursor: pointer;" title="Click to view maintenance backlog">
-                        <div class="card-header">
-                            <div class="card-title">Maintenance Backlog</div>
-                            <div class="card-icon backlog"><i class="fas fa-list-alt"></i></div>
-                        </div>
-                        <div class="card-value" id="maintenanceBacklog">0</div>
-                        <div class="card-subtitle">Pending work</div>
-                    </div>
-                </div>
-
                 <!-- Recent Activity moved to dedicated Activity Log page -->
             </div>
         `;
@@ -4524,12 +5495,12 @@ class CasaLink {
                         <span class="visually-hidden">Loading...</span>
                     </div>
                     <p class="mt-3" style="font-size: 1.1rem; color: var(--gray-600);">
-                        Loading units from database...
+                        Loading apartments and units from database...
                     </p>
                 </div>
             `;
             
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Apartment Unit Layout',
                 showFooter: false,
                 width: '98%',
@@ -4537,9 +5508,29 @@ class CasaLink {
                 height: '90vh'
             });
             
-            // Fetch units from Firestore
-            console.log('📡 Fetching units from Firestore...');
+            // Fetch units and apartments
+            console.log('📡 Fetching units and apartments from Firestore...');
+            const landlordId = this.currentUser?.id || this.currentUser?.uid;
             const units = await this.fetchAllUnitsFromFirestore();
+            
+            // Fetch landlord's apartments for the dropdown
+            let apartments = [];
+            try {
+                const aptsSnapshot = await firebaseDb.collection('apartments')
+                    .where('landlordId', '==', landlordId)
+                    .orderBy('createdAt', 'desc')
+                    .get();
+                
+                apartments = aptsSnapshot.docs.map(doc => ({
+                    id: doc.id,
+                    name: doc.data().name || doc.data().apartmentName || 'Unnamed',
+                    address: doc.data().address || doc.data().apartmentAddress || '',
+                    ...doc.data()
+                }));
+                console.log(`✅ Loaded ${apartments.length} apartments for dropdown`);
+            } catch (err) {
+                console.warn('⚠️ Could not load apartments for dropdown:', err);
+            }
             
             if (!units || units.length === 0) {
                 this.showNoUnitsFoundView(modal);
@@ -4548,7 +5539,55 @@ class CasaLink {
             
             console.log(`✅ Loaded ${units.length} units from Firestore`);
             
-            // Generate and display the dynamic layout
+            // Add apartment selector dropdown to modal header
+            const modalHeader = modal.querySelector('.modal-header');
+            if (modalHeader && apartments.length > 0) {
+                const apartmentSelector = document.createElement('div');
+                apartmentSelector.id = 'apartmentUnitSelector';
+                apartmentSelector.style.cssText = `
+                    position: absolute;
+                    top: 15px;
+                    right: 50px;
+                    z-index: 1000;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                `;
+                
+                apartmentSelector.innerHTML = `
+                    <label style="font-weight: 600; color: var(--text-dark); white-space: nowrap;">Filter by Apartment:</label>
+                    <select id="apartmentUnitFilter" style="
+                        padding: 8px 12px;
+                        border: 1px solid #dee2e6;
+                        border-radius: 6px;
+                        background: white;
+                        font-size: 0.95rem;
+                        min-width: 250px;
+                        cursor: pointer;
+                    ">
+                        <option value="">-- All Apartments --</option>
+                        ${apartments.map(apt => `
+                            <option value="${apt.id}" data-address="${apt.address}">
+                                ${apt.name} (${apt.address})
+                            </option>
+                        `).join('')}
+                    </select>
+                `;
+                
+                modalHeader.appendChild(apartmentSelector);
+                
+                // Setup apartment filter change event
+                const apartmentFilter = modal.querySelector('#apartmentUnitFilter');
+                if (apartmentFilter) {
+                    apartmentFilter.addEventListener('change', (e) => {
+                        const selectedAptId = e.target.value;
+                        const selectedAddress = e.target.options[e.target.selectedIndex]?.getAttribute('data-address') || '';
+                        this.updateUnitLayoutByApartment(modal, units, selectedAptId, selectedAddress);
+                    });
+                }
+            }
+            
+            // Generate and display the dynamic layout for all apartments initially
             this.generateDynamicUnitLayout(modal, units);
             
             // Setup real-time updates
@@ -4559,9 +5598,55 @@ class CasaLink {
             
         } catch (error) {
             console.error('❌ Error loading unit layout:', error);
-            ModalManager.closeModal();
+            window.ModalManager.closeModal();
             ToastManager.showToast('Error loading unit layout: ' + error.message, 'error');
         }
+    }
+
+    updateUnitLayoutByApartment(modal, allUnits, apartmentId, apartmentAddress) {
+        console.log(`🔄 Filtering units by apartment: ${apartmentId || 'all'}`);
+        
+        let filteredUnits = allUnits.slice();
+        
+        // Filter by apartment ID if provided
+        if (apartmentId) {
+            filteredUnits = filteredUnits.filter(u =>
+                u.apartmentId === apartmentId ||
+                u.propertyId === apartmentId ||
+                u.rentalPropertyId === apartmentId
+            );
+        }
+        
+        // Further filter by address if provided
+        if (apartmentAddress) {
+            filteredUnits = filteredUnits.filter(u =>
+                u.apartmentAddress === apartmentAddress ||
+                u.rentalAddress === apartmentAddress
+            );
+        }
+        
+        console.log(`📊 Found ${filteredUnits.length} units for selected apartment`);
+        
+        if (!filteredUnits || filteredUnits.length === 0) {
+            const modalBody = modal.querySelector('.modal-body');
+            if (modalBody) {
+                modalBody.innerHTML = `
+                    <div style="padding: 60px 20px; text-align: center;">
+                        <div style="font-size: 3rem; margin-bottom: 20px; color: var(--gray-400);">
+                            <i class="fas fa-inbox"></i>
+                        </div>
+                        <h4 style="margin-bottom: 15px; color: var(--text-dark);">No Units Found</h4>
+                        <p style="color: var(--dark-gray); margin-bottom: 25px;">
+                            This apartment doesn't have any units yet. Add units to get started.
+                        </p>
+                    </div>
+                `;
+            }
+            return;
+        }
+        
+        // Regenerate layout with filtered units
+        this.generateDynamicUnitLayout(modal, filteredUnits);
     }
 
     async loadAndDisplayUnitLayoutInDashboard() {
@@ -4778,7 +5863,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Apartment Units',
                 showFooter: false,
                 width: '90%',
@@ -4871,7 +5956,7 @@ class CasaLink {
                 const footer = document.createElement('div');
                 footer.className = 'modal-footer';
                 footer.innerHTML = `
-                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                    <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
                 `;
                 modal.querySelector('.modal-content').appendChild(footer);
             }
@@ -5340,50 +6425,23 @@ class CasaLink {
 
     async fetchAllUnitsFromFirestore() {
         try {
-            console.log('🔄 Fetching all units from Firestore...');
+            console.log('🔄 Fetching units for current landlord from Firestore...');
             
-            const roomsSnapshot = await firebaseDb.collection('rooms').get();
+            const landlordId = this.currentUser?.id || this.currentUser?.uid;
+            if (!landlordId) {
+                console.warn('⚠️ No landlord ID found for current user');
+                return [];
+            }
+
+            // Use DataManager to fetch units filtered by landlord
+            const units = await DataManager.getLandlordUnits(landlordId);
             
-            if (roomsSnapshot.empty) {
-                console.log('📦 No rooms found in Firestore');
+            if (!units || units.length === 0) {
+                console.log('📦 No units found for landlord:', landlordId);
                 return [];
             }
             
-            const units = roomsSnapshot.docs.map(doc => {
-                const room = doc.data();
-                return {
-                    id: doc.id,
-                    roomNumber: room.roomNumber || `Unit-${doc.id.substring(0, 8)}`,
-                    floor: parseInt(room.floor) || room.floor || 1,
-                    status: room.isAvailable === false ? 'occupied' : 'vacant',
-                    isAvailable: room.isAvailable !== false,
-                    occupiedBy: room.occupiedBy || null,
-                    tenantName: null, // Will be populated by enrichUnitsWithTenantData
-                    numberOfMembers: room.numberOfMembers || 0,
-                    maxMembers: room.maxMembers || 0,
-                    monthlyRent: room.monthlyRent || 0,
-                    numberOfBedrooms: room.numberOfBedrooms || 0,
-                    numberOfBathrooms: room.numberOfBathrooms || 0,
-                    securityDeposit: room.securityDeposit || 0,
-                    occupiedAt: room.occupiedAt || null,
-                    createdAt: room.createdAt || null,
-                    updatedAt: room.updatedAt || null,
-                    ...room // Include all original fields
-                };
-            });
-            
-            console.log(`✅ Found ${units.length} units in Firestore`);
-            
-            // Log sample units for debugging
-            if (units.length > 0) {
-                console.log('📋 Sample units:', units.slice(0, 3).map(u => ({
-                    roomNumber: u.roomNumber,
-                    floor: u.floor,
-                    status: u.status,
-                    isAvailable: u.isAvailable
-                })));
-            }
-            
+            console.log(`✅ Fetched ${units.length} units for landlord`);
             return units;
             
         } catch (error) {
@@ -6508,7 +7566,7 @@ class CasaLink {
                 </div>
             `;
             
-            const createModal = ModalManager.openModal(modalContent, {
+            const createModal = window.ModalManager.openModal(modalContent, {
                 title: 'Create New Unit',
                 onSubmit: async () => {
                     const unitData = {
@@ -6533,7 +7591,7 @@ class CasaLink {
                         console.log('✅ Unit created with ID:', docRef.id);
                         
                         ToastManager.showToast(`Unit ${unitKey} created successfully!`, 'success');
-                        ModalManager.closeModal(createModal);
+                        window.ModalManager.closeModal(createModal);
                         
                         // Refresh the unit layout
                         this.refreshUnitLayout();
@@ -6619,7 +7677,7 @@ class CasaLink {
                 </div>
             `;
             
-            const modal = ModalManager.openModal(loadingHTML, {
+            const modal = window.ModalManager.openModal(loadingHTML, {
                 title: 'Room Details',
                 width: '700px',
                 showFooter: false
@@ -6725,27 +7783,36 @@ class CasaLink {
             }
             this.currentApartmentName = apartmentDisplayName || this.currentApartmentName;
             
-            // Format dates
-            const createdDate = room.createdAt ? 
-                new Date(room.createdAt).toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                }) : 'Not set';
+            // Format dates - handle Firestore Timestamps
+            const formatDate = (dateValue) => {
+                if (!dateValue) return 'Not set';
+                try {
+                    // Handle Firestore Timestamp objects
+                    let date;
+                    if (dateValue && typeof dateValue.toDate === 'function') {
+                        date = dateValue.toDate();
+                    } else if (dateValue instanceof Date) {
+                        date = dateValue;
+                    } else {
+                        date = new Date(dateValue);
+                    }
+                    
+                    if (isNaN(date.getTime())) return 'Invalid Date';
+                    
+                    return date.toLocaleDateString('en-US', { 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                    });
+                } catch (e) {
+                    console.warn('⚠️ Date formatting error:', e);
+                    return 'Invalid Date';
+                }
+            };
             
-            const updatedDate = room.updatedAt ? 
-                new Date(room.updatedAt).toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                }) : 'Not set';
-            
-            const occupiedDate = room.occupiedAt ? 
-                new Date(room.occupiedAt).toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                }) : 'Not occupied';
+            const createdDate = formatDate(room.createdAt);
+            const updatedDate = formatDate(room.updatedAt);
+            const occupiedDate = formatDate(room.occupiedAt);
             
             // Get tenant details if occupied - fetch from active lease and tenant data
             let tenantInfo = '';
@@ -6969,11 +8036,11 @@ class CasaLink {
                     
                     <!-- Actions -->
                     <div style="margin-top: 25px; padding-top: 20px; border-top: 1px solid #f0f0f0; display: flex; gap: 10px; justify-content: flex-end;">
-                        <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                        <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                             <i class="fas fa-times"></i> Close
                         </button>
                         ${room.isAvailable === true ? `
-                        <button class="btn btn-success" onclick="ModalManager.closeModal(this.closest('.modal-overlay')); setTimeout(() => window.app.startAddTenantForUnit('${room.roomNumber || room.id}', { apartmentAddress: '${(room.apartmentAddress||room.rentalAddress||'').replace(/'/g,"\\'")}', apartmentName: '${(apartmentDisplayName||'').replace(/'/g,"\\'")}'}), 50)">
+                        <button class="btn btn-success" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay')); setTimeout(() => window.app.startAddTenantForUnit('${room.roomNumber || room.id}', { apartmentAddress: '${(room.apartmentAddress||room.rentalAddress||'').replace(/'/g,"\\'")}', apartmentName: '${(apartmentDisplayName||'').replace(/'/g,"\\'")}'}), 50)">
                             <i class="fas fa-user-plus"></i> Add Tenant
                         </button>
                         ` : ''}
@@ -6997,6 +8064,118 @@ class CasaLink {
             console.error('❌ Error in showUnitDetails:', error);
             ToastManager.showToast('Error loading unit details: ' + error.message, 'error');
         }
+    }
+
+    async editUnit(unitId) {
+        console.log('✏️ editUnit called with ID:', unitId);
+
+        if (!unitId || unitId === 'undefined') {
+            ToastManager.showToast('Cannot edit this unit. Invalid selection.', 'error');
+            return;
+        }
+
+        try {
+            let roomDoc = await firebaseDb.collection('rooms').doc(unitId).get();
+
+            if (!roomDoc.exists) {
+                const querySnapshot = await firebaseDb.collection('rooms')
+                    .where('roomNumber', '==', unitId)
+                    .limit(1)
+                    .get();
+
+                if (!querySnapshot.empty) {
+                    roomDoc = querySnapshot.docs[0];
+                }
+            }
+
+            if (!roomDoc || !roomDoc.exists) {
+                ToastManager.showToast('Unit not found for editing.', 'error');
+                return;
+            }
+
+            const room = { id: roomDoc.id, ...roomDoc.data() };
+            const modalContent = `
+                <div class="edit-unit-form">
+                    <div class="mb-3">
+                        <label class="form-label">Unit Number</label>
+                        <input type="text" class="form-control" id="editUnitNumber" value="${(room.roomNumber || room.unitNumber || '').replace(/"/g, '&quot;')}" readonly>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Floor</label>
+                            <input type="number" class="form-control" id="editFloor" value="${room.floor || ''}" min="0">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Status</label>
+                            <select class="form-control" id="editStatus">
+                                <option value="vacant" ${room.status === 'vacant' ? 'selected' : ''}>Vacant</option>
+                                <option value="occupied" ${room.status === 'occupied' ? 'selected' : ''}>Occupied</option>
+                                <option value="maintenance" ${room.status === 'maintenance' ? 'selected' : ''}>Maintenance</option>
+                                <option value="reserved" ${room.status === 'reserved' ? 'selected' : ''}>Reserved</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Monthly Rent (₱)</label>
+                        <input type="number" class="form-control" id="editMonthlyRent" value="${room.monthlyRent || 0}" min="0" step="100">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Security Deposit (₱)</label>
+                        <input type="number" class="form-control" id="editSecurityDeposit" value="${room.securityDeposit || 0}" min="0" step="100">
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Bedrooms</label>
+                            <input type="number" class="form-control" id="editBedrooms" value="${room.bedrooms || 0}" min="0">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Bathrooms</label>
+                            <input type="number" class="form-control" id="editBathrooms" value="${room.bathrooms || 0}" min="0" step="0.5">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Size (sq. ft.)</label>
+                        <input type="number" class="form-control" id="editSize" value="${room.size || 0}" min="0">
+                    </div>
+                </div>
+            `;
+
+            const modal = window.ModalManager.openModal(modalContent, {
+                title: `Edit Unit ${room.roomNumber || room.unitNumber || ''}`,
+                onSubmit: async () => {
+                    const updatedUnit = {
+                        floor: parseInt(document.getElementById('editFloor').value) || 0,
+                        status: document.getElementById('editStatus').value || 'vacant',
+                        monthlyRent: parseFloat(document.getElementById('editMonthlyRent').value) || 0,
+                        securityDeposit: parseFloat(document.getElementById('editSecurityDeposit').value) || 0,
+                        bedrooms: parseInt(document.getElementById('editBedrooms').value) || 0,
+                        bathrooms: parseFloat(document.getElementById('editBathrooms').value) || 0,
+                        size: parseInt(document.getElementById('editSize').value) || 0,
+                        type: this.getUnitType(parseInt(document.getElementById('editBedrooms').value) || 0),
+                        updatedAt: new Date().toISOString()
+                    };
+
+                    try {
+                        await firebaseDb.collection('rooms').doc(room.id).update(updatedUnit);
+                        ToastManager.showToast(`Unit ${room.roomNumber || room.unitNumber || ''} updated successfully.`, 'success');
+                        window.ModalManager.closeModal(modal);
+                        this.refreshUnitLayout();
+                    } catch (error) {
+                        console.error('❌ Error saving unit updates:', error);
+                        ToastManager.showToast('Error updating unit: ' + error.message, 'error');
+                    }
+                }
+            });
+
+            console.log('✏️ Edit unit modal opened for:', room);
+        } catch (error) {
+            console.error('❌ Error in editUnit:', error);
+            ToastManager.showToast('Error opening edit unit form: ' + error.message, 'error');
+        }
+    }
+
+    async addTenantToUnit(unitId) {
+        return this.startAddTenantForUnit(unitId);
     }
 
     generateUnitDetailsHTML(unit) {
@@ -7306,6 +8485,9 @@ class CasaLink {
             additionalMembersCount: additionalMembers.length
         });
 
+        // Store lease data for PDF generation
+        this.currentLeaseData = { lease, landlordName, occupants, primaryTenant, additionalMembers, totalOccupants, maxOccupants };
+
         // Format dates
         const leaseStart = lease.leaseStart
             ? new Date(lease.leaseStart).toLocaleDateString('en-US', { year: "numeric", month: "long", day: "numeric" })
@@ -7428,16 +8610,16 @@ class CasaLink {
             </div>
         `;
 
-        const modal = ModalManager.openModal(modalContent, {
+        const modal = window.ModalManager.openModal(modalContent, {
             title: 'Lease Agreement & Terms',
             submitText: 'Close',
             showFooter: true,
-            onSubmit: () => ModalManager.closeModal(modal),
+            onSubmit: () => window.ModalManager.closeModal(modal),
             extraButtons: [
                 {
-                    text: '<i class="fas fa-print"></i> Print',
-                    className: 'btn btn-secondary',
-                    onClick: () => this.printLeaseAgreement()
+                    text: '<i class="fas fa-download"></i> Download PDF',
+                    className: 'btn btn-primary',
+                    onClick: () => this.downloadLeaseAgreementPDF()
                 }
             ]
         });
@@ -7470,8 +8652,516 @@ class CasaLink {
         }
     }
 
+    async downloadLeaseAgreementPDF() {
+        try {
+            const { jsPDF } = window.jspdf;
+            const leaseData = this.currentLeaseData;
+            
+            if (!leaseData) {
+                this.showNotification('Lease data not available', 'error');
+                return;
+            }
+
+            const { lease, landlordName, primaryTenant, additionalMembers, totalOccupants, maxOccupants } = leaseData;
+
+            // Format dates
+            const leaseStart = lease.leaseStart
+                ? new Date(lease.leaseStart).toLocaleDateString('en-US', { year: "numeric", month: "long", day: "numeric" })
+                : 'Not specified';
+            const leaseEnd = lease.leaseEnd
+                ? new Date(lease.leaseEnd).toLocaleDateString('en-US', { year: "numeric", month: "long", day: "numeric" })
+                : 'Not specified';
+            const paymentDay = lease.paymentDueDay || 'Not specified';
+
+            // Start PDF generation
+            this.showNotification('Generating PDF... Please wait', 'info');
+            
+            const pdf = new jsPDF({
+                orientation: 'portrait',
+                unit: 'mm',
+                format: 'a4'
+            });
+
+            const pageWidth = pdf.internal.pageSize.getWidth();
+            const pageHeight = pdf.internal.pageSize.getHeight();
+            let yPosition = 10;
+            const margin = 15;
+            const contentWidth = pageWidth - 2 * margin;
+
+            // Helper function to add new page if needed
+            const checkAndAddPage = (spaceNeeded) => {
+                if (yPosition + spaceNeeded > pageHeight - 10) {
+                    pdf.addPage();
+                    yPosition = 10;
+                }
+            };
+
+            // PDF Header
+            pdf.setDrawColor(26, 115, 232);
+            pdf.setLineWidth(2);
+            pdf.line(margin, yPosition + 5, pageWidth - margin, yPosition + 5);
+            
+            pdf.setFontSize(20);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('LEASE AGREEMENT', pageWidth / 2, yPosition + 15, { align: 'center' });
+            
+            pdf.setFontSize(11);
+            pdf.setTextColor(90, 90, 90);
+            pdf.text('Property Lease Agreement & Terms', pageWidth / 2, yPosition + 22, { align: 'center' });
+            
+            yPosition += 30;
+
+            // Lease Summary
+            pdf.setFontSize(12);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('Lease Summary', margin, yPosition);
+            yPosition += 7;
+            
+            pdf.setDrawColor(200, 200, 200);
+            pdf.setLineWidth(0.5);
+            pdf.line(margin, yPosition - 1, pageWidth - margin, yPosition - 1);
+            yPosition += 3;
+
+            pdf.setFontSize(10);
+            pdf.setTextColor(0, 0, 0);
+            
+            const summaryData = [
+                [`Room/Unit:`, lease.roomNumber || 'N/A'],
+                [`Primary Tenant:`, primaryTenant],
+                [`Total Occupants:`, `${totalOccupants} of ${maxOccupants}`],
+                [`Monthly Rent:`, `₱${lease.monthlyRent ? lease.monthlyRent.toLocaleString() : '0'}`],
+                [`Lease Period:`, `${leaseStart} to ${leaseEnd}`],
+                [`Security Deposit:`, `₱${lease.securityDeposit ? lease.securityDeposit.toLocaleString() : '0'}`],
+                [`Payment Method:`, lease.paymentMethod || 'Cash'],
+                [`Payment Due:`, `Every ${paymentDay}${this.getOrdinalSuffix(parseInt(paymentDay))}`]
+            ];
+
+            summaryData.forEach(([label, value]) => {
+                pdf.setFont(undefined, 'bold');
+                pdf.text(label, margin + 5, yPosition);
+                pdf.setFont(undefined, 'normal');
+                pdf.text(String(value), margin + 60, yPosition);
+                yPosition += 6;
+            });
+
+            yPosition += 5;
+            checkAndAddPage(50);
+
+            // Additional Occupants
+            if (additionalMembers.length > 0) {
+                pdf.setFontSize(11);
+                pdf.setTextColor(26, 115, 232);
+                pdf.text('Additional Occupants:', margin, yPosition);
+                yPosition += 7;
+                
+                pdf.setFontSize(10);
+                pdf.setTextColor(0, 0, 0);
+                additionalMembers.forEach(member => {
+                    pdf.text(`• ${member}`, margin + 10, yPosition);
+                    yPosition += 5;
+                });
+                yPosition += 3;
+            }
+
+            checkAndAddPage(50);
+
+            // Parties Section
+            pdf.setFontSize(12);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('This agreement is made by and between:', margin, yPosition);
+            yPosition += 8;
+            
+            pdf.setFontSize(10);
+            pdf.setTextColor(0, 0, 0);
+            pdf.setFont(undefined, 'bold');
+            pdf.text('Landlady/Lessor:', margin + 5, yPosition);
+            pdf.setFont(undefined, 'normal');
+            pdf.text(landlordName, margin + 45, yPosition);
+            yPosition += 6;
+            
+            pdf.setFont(undefined, 'bold');
+            pdf.text('Tenant/Lessee:', margin + 5, yPosition);
+            pdf.setFont(undefined, 'normal');
+            pdf.text(primaryTenant, margin + 45, yPosition);
+            yPosition += 10;
+
+            checkAndAddPage(40);
+
+            // Agreement Terms
+            pdf.setFontSize(11);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('Terms and Conditions:', margin, yPosition);
+            yPosition += 7;
+            
+            pdf.setFontSize(9);
+            pdf.setTextColor(0, 0, 0);
+            
+            const terms = [
+                'Garbage disposal every Thursday at Purok 6',
+                'Smoking strictly prohibited inside premises',
+                'Keep appliances and noise to a minimum',
+                'Max 10 visitors; must leave before 10 PM',
+                'Tenant provides padlocks and removes when leaving',
+                'No nails on walls/hallways; keep hallways clean',
+                `Rent due every ${paymentDay}${this.getOrdinalSuffix(parseInt(paymentDay))}`,
+                'Utilities must be paid on time',
+                'Tenant replaces worn-out light bulbs',
+                'Tenant covers damages from self or guests',
+                'Tenant responsible for personal belongings',
+                '₱2,000 cleaning fee if unit not cleaned upon vacating',
+                `Occupancy limit: Max ${maxOccupants} persons; ₱2,000 per extra member`,
+                'Landlady may increase rent anytime'
+            ];
+
+            terms.forEach((term, index) => {
+                checkAndAddPage(6);
+                pdf.text(`${index + 1}. ${term}`, margin + 5, yPosition, { maxWidth: contentWidth - 10 });
+                const lines = pdf.getTextDimensions(term, { maxWidth: contentWidth - 10 }).h / 4;
+                yPosition += 5;
+            });
+
+            yPosition += 5;
+            checkAndAddPage(20);
+
+            // Acknowledgement & Signatures
+            pdf.setFontSize(11);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('Acknowledgement & Signatures', margin, yPosition);
+            yPosition += 8;
+            
+            pdf.setFontSize(9);
+            pdf.setTextColor(0, 0, 0);
+            pdf.text(`Both parties acknowledge these terms and conditions on ${leaseStart}.`, margin + 5, yPosition);
+            yPosition += 12;
+
+            // Signature lines
+            const signatureX1 = margin + 10;
+            const signatureX2 = margin + contentWidth / 2;
+
+            pdf.setDrawColor(0, 0, 0);
+            pdf.setLineWidth(0.5);
+            pdf.line(signatureX1, yPosition, signatureX1 + 30, yPosition);
+            pdf.line(signatureX2, yPosition, signatureX2 + 30, yPosition);
+            
+            pdf.setFontSize(8);
+            pdf.text(landlordName, signatureX1 + 15, yPosition + 4, { align: 'center' });
+            pdf.text(primaryTenant, signatureX2 + 15, yPosition + 4, { align: 'center' });
+            
+            pdf.setFontSize(8);
+            pdf.setTextColor(100, 100, 100);
+            pdf.text('Landlady/Lessor', signatureX1 + 15, yPosition + 8, { align: 'center' });
+            pdf.text('Tenant/Lessee', signatureX2 + 15, yPosition + 8, { align: 'center' });
+
+            // Generate filename
+            const filename = `Lease_Agreement_${primaryTenant.replace(/\s+/g, '_')}_${new Date().getFullYear()}.pdf`;
+            
+            // Save PDF
+            pdf.save(filename);
+            
+            // Create activity log entry
+            await this.createLeaseDownloadActivity();
+            
+            this.showNotification('Lease agreement PDF downloaded successfully!', 'success');
+
+        } catch (error) {
+            console.error('Error downloading PDF:', error);
+            this.showNotification('Failed to download PDF. Please try again.', 'error');
+        }
+    }
+
+    async createLeaseDownloadActivity() {
+        try {
+            const leaseData = this.currentLeaseData;
+            if (!leaseData) return;
+
+            const activityData = {
+                type: 'lease_downloaded',
+                title: 'Lease Agreement Downloaded',
+                description: `Tenant ${leaseData.primaryTenant} downloaded their lease agreement`,
+                tenantId: this.currentUser?.id || this.currentUser?.uid,
+                tenantName: leaseData.primaryTenant,
+                leaseId: leaseData.lease.id,
+                roomNumber: leaseData.lease.roomNumber,
+                createdAt: new Date().toISOString(),
+                timestamp: new Date().toISOString(),
+                isSeen: 'unseen',
+                icon: 'fas fa-download',
+                color: 'var(--success)',
+                data: {
+                    leaseId: leaseData.lease.id,
+                    tenantId: this.currentUser?.id || this.currentUser?.uid,
+                    downloadedAt: new Date().toISOString(),
+                    fileName: `Lease_Agreement_${leaseData.primaryTenant.replace(/\s+/g, '_')}_${new Date().getFullYear()}.pdf`
+                }
+            };
+
+            // Add to Firestore activities collection
+            if (typeof firebaseDb !== 'undefined') {
+                await firebaseDb.collection('activities').add(activityData);
+                console.log('✅ Lease download activity created');
+            }
+        } catch (error) {
+            console.error('Error creating activity:', error);
+            // Don't throw - activity logging shouldn't block the download
+        }
+    }
+
     printLeaseAgreement() {
         window.print();
+    }
+
+    async downloadLeaseAgreementPDF() {
+        try {
+            const { jsPDF } = window.jspdf;
+            const leaseData = this.currentLeaseData;
+            
+            if (!leaseData) {
+                this.showNotification('Lease data not available', 'error');
+                return;
+            }
+
+            const { lease, landlordName, primaryTenant, additionalMembers, totalOccupants, maxOccupants } = leaseData;
+
+            // Format dates
+            const leaseStart = lease.leaseStart
+                ? new Date(lease.leaseStart).toLocaleDateString('en-US', { year: "numeric", month: "long", day: "numeric" })
+                : 'Not specified';
+            const leaseEnd = lease.leaseEnd
+                ? new Date(lease.leaseEnd).toLocaleDateString('en-US', { year: "numeric", month: "long", day: "numeric" })
+                : 'Not specified';
+            const paymentDay = lease.paymentDueDay || 'Not specified';
+
+            // Start PDF generation
+            this.showNotification('Generating PDF... Please wait', 'info');
+            
+            const pdf = new jsPDF({
+                orientation: 'portrait',
+                unit: 'mm',
+                format: 'a4'
+            });
+
+            const pageWidth = pdf.internal.pageSize.getWidth();
+            const pageHeight = pdf.internal.pageSize.getHeight();
+            let yPosition = 10;
+            const margin = 15;
+            const contentWidth = pageWidth - 2 * margin;
+
+            // Helper function to add new page if needed
+            const checkAndAddPage = (spaceNeeded) => {
+                if (yPosition + spaceNeeded > pageHeight - 10) {
+                    pdf.addPage();
+                    yPosition = 10;
+                }
+            };
+
+            // PDF Header
+            pdf.setDrawColor(26, 115, 232);
+            pdf.setLineWidth(2);
+            pdf.line(margin, yPosition + 5, pageWidth - margin, yPosition + 5);
+            
+            pdf.setFontSize(20);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('LEASE AGREEMENT', pageWidth / 2, yPosition + 15, { align: 'center' });
+            
+            pdf.setFontSize(11);
+            pdf.setTextColor(90, 90, 90);
+            pdf.text('Property Lease Agreement & Terms', pageWidth / 2, yPosition + 22, { align: 'center' });
+            
+            yPosition += 30;
+
+            // Lease Summary
+            pdf.setFontSize(12);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('Lease Summary', margin, yPosition);
+            yPosition += 7;
+            
+            pdf.setDrawColor(200, 200, 200);
+            pdf.setLineWidth(0.5);
+            pdf.line(margin, yPosition - 1, pageWidth - margin, yPosition - 1);
+            yPosition += 3;
+
+            pdf.setFontSize(10);
+            pdf.setTextColor(0, 0, 0);
+            
+            const summaryData = [
+                [`Room/Unit:`, lease.roomNumber || 'N/A'],
+                [`Primary Tenant:`, primaryTenant],
+                [`Total Occupants:`, `${totalOccupants} of ${maxOccupants}`],
+                [`Monthly Rent:`, `₱${lease.monthlyRent ? lease.monthlyRent.toLocaleString() : '0'}`],
+                [`Lease Period:`, `${leaseStart} to ${leaseEnd}`],
+                [`Security Deposit:`, `₱${lease.securityDeposit ? lease.securityDeposit.toLocaleString() : '0'}`],
+                [`Payment Method:`, lease.paymentMethod || 'Cash'],
+                [`Payment Due:`, `Every ${paymentDay}${this.getOrdinalSuffix(parseInt(paymentDay))}`]
+            ];
+
+            summaryData.forEach(([label, value]) => {
+                pdf.setFont(undefined, 'bold');
+                pdf.text(label, margin + 5, yPosition);
+                pdf.setFont(undefined, 'normal');
+                pdf.text(String(value), margin + 60, yPosition);
+                yPosition += 6;
+            });
+
+            yPosition += 5;
+            checkAndAddPage(50);
+
+            // Additional Occupants
+            if (additionalMembers.length > 0) {
+                pdf.setFontSize(11);
+                pdf.setTextColor(26, 115, 232);
+                pdf.text('Additional Occupants:', margin, yPosition);
+                yPosition += 7;
+                
+                pdf.setFontSize(10);
+                pdf.setTextColor(0, 0, 0);
+                additionalMembers.forEach(member => {
+                    pdf.text(`• ${member}`, margin + 10, yPosition);
+                    yPosition += 5;
+                });
+                yPosition += 3;
+            }
+
+            checkAndAddPage(50);
+
+            // Parties Section
+            pdf.setFontSize(12);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('This agreement is made by and between:', margin, yPosition);
+            yPosition += 8;
+            
+            pdf.setFontSize(10);
+            pdf.setTextColor(0, 0, 0);
+            pdf.setFont(undefined, 'bold');
+            pdf.text('Landlady/Lessor:', margin + 5, yPosition);
+            pdf.setFont(undefined, 'normal');
+            pdf.text(landlordName, margin + 45, yPosition);
+            yPosition += 6;
+            
+            pdf.setFont(undefined, 'bold');
+            pdf.text('Tenant/Lessee:', margin + 5, yPosition);
+            pdf.setFont(undefined, 'normal');
+            pdf.text(primaryTenant, margin + 45, yPosition);
+            yPosition += 10;
+
+            checkAndAddPage(40);
+
+            // Agreement Terms
+            pdf.setFontSize(11);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('Terms and Conditions:', margin, yPosition);
+            yPosition += 7;
+            
+            pdf.setFontSize(9);
+            pdf.setTextColor(0, 0, 0);
+            
+            const terms = [
+                'Garbage disposal every Thursday at Purok 6',
+                'Smoking strictly prohibited inside premises',
+                'Keep appliances and noise to a minimum',
+                'Max 10 visitors; must leave before 10 PM',
+                'Tenant provides padlocks and removes when leaving',
+                'No nails on walls/hallways; keep hallways clean',
+                `Rent due every ${paymentDay}${this.getOrdinalSuffix(parseInt(paymentDay))}`,
+                'Utilities must be paid on time',
+                'Tenant replaces worn-out light bulbs',
+                'Tenant covers damages from self or guests',
+                'Tenant responsible for personal belongings',
+                '₱2,000 cleaning fee if unit not cleaned upon vacating',
+                `Occupancy limit: Max ${maxOccupants} persons; ₱2,000 per extra member`,
+                'Landlady may increase rent anytime'
+            ];
+
+            terms.forEach((term, index) => {
+                checkAndAddPage(6);
+                pdf.text(`${index + 1}. ${term}`, margin + 5, yPosition, { maxWidth: contentWidth - 10 });
+                const lines = pdf.getTextDimensions(term, { maxWidth: contentWidth - 10 }).h / 4;
+                yPosition += 5;
+            });
+
+            yPosition += 5;
+            checkAndAddPage(20);
+
+            // Acknowledgement & Signatures
+            pdf.setFontSize(11);
+            pdf.setTextColor(26, 115, 232);
+            pdf.text('Acknowledgement & Signatures', margin, yPosition);
+            yPosition += 8;
+            
+            pdf.setFontSize(9);
+            pdf.setTextColor(0, 0, 0);
+            pdf.text(`Both parties acknowledge these terms and conditions on ${leaseStart}.`, margin + 5, yPosition);
+            yPosition += 12;
+
+            // Signature lines
+            const signatureX1 = margin + 10;
+            const signatureX2 = margin + contentWidth / 2;
+
+            pdf.setDrawColor(0, 0, 0);
+            pdf.setLineWidth(0.5);
+            pdf.line(signatureX1, yPosition, signatureX1 + 30, yPosition);
+            pdf.line(signatureX2, yPosition, signatureX2 + 30, yPosition);
+            
+            pdf.setFontSize(8);
+            pdf.text(landlordName, signatureX1 + 15, yPosition + 4, { align: 'center' });
+            pdf.text(primaryTenant, signatureX2 + 15, yPosition + 4, { align: 'center' });
+            
+            pdf.setFontSize(8);
+            pdf.setTextColor(100, 100, 100);
+            pdf.text('Landlady/Lessor', signatureX1 + 15, yPosition + 8, { align: 'center' });
+            pdf.text('Tenant/Lessee', signatureX2 + 15, yPosition + 8, { align: 'center' });
+
+            // Generate filename
+            const filename = `Lease_Agreement_${primaryTenant.replace(/\s+/g, '_')}_${new Date().getFullYear()}.pdf`;
+            
+            // Save PDF
+            pdf.save(filename);
+            
+            // Create activity log entry
+            await this.createLeaseDownloadActivity();
+            
+            this.showNotification('Lease agreement PDF downloaded successfully!', 'success');
+
+        } catch (error) {
+            console.error('Error downloading PDF:', error);
+            this.showNotification('Failed to download PDF. Please try again.', 'error');
+        }
+    }
+
+    async createLeaseDownloadActivity() {
+        try {
+            const leaseData = this.currentLeaseData;
+            if (!leaseData) return;
+
+            const activityData = {
+                type: 'lease_downloaded',
+                title: 'Lease Agreement Downloaded',
+                description: `Tenant ${leaseData.primaryTenant} downloaded their lease agreement`,
+                tenantId: this.currentUser?.id || this.currentUser?.uid,
+                tenantName: leaseData.primaryTenant,
+                leaseId: leaseData.lease.id,
+                roomNumber: leaseData.lease.roomNumber,
+                createdAt: new Date().toISOString(),
+                timestamp: new Date().toISOString(),
+                isSeen: 'unseen',
+                icon: 'fas fa-download',
+                color: 'var(--success)',
+                data: {
+                    leaseId: leaseData.lease.id,
+                    tenantId: this.currentUser?.id || this.currentUser?.uid,
+                    downloadedAt: new Date().toISOString(),
+                    fileName: `Lease_Agreement_${leaseData.primaryTenant.replace(/\s+/g, '_')}_${new Date().getFullYear()}.pdf`
+                }
+            };
+
+            // Add to Firestore activities collection
+            if (typeof firebaseDb !== 'undefined') {
+                await firebaseDb.collection('activities').add(activityData);
+                console.log('✅ Lease download activity created');
+            }
+        } catch (error) {
+            console.error('Error creating activity:', error);
+            // Don't throw - activity logging shouldn't block the download
+        }
     }
 
     getTenantDashboardHTML() {
@@ -7482,9 +9172,6 @@ class CasaLink {
                     <div>
                         <button class="btn btn-secondary" id="viewLeaseBtn" onclick="casaLink.showLeaseAgreement()">
                             <i class="fas fa-file-contract"></i> View Lease Agreement
-                        </button>
-                        <button class="btn btn-primary" id="payRentBtn" onclick="casaLink.showPaymentModal()">
-                            <i class="fas fa-credit-card"></i> Pay Rent
                         </button>
                     </div>
                 </div>
@@ -7590,48 +9277,13 @@ class CasaLink {
                         <div class="card-value" id="recentUpdates">0</div>
                         <div class="card-subtitle">New notifications</div>
                     </div>
+                    
                 </div>
 
 
-                <!-- RECENT ACTIVITY (Tenant) -->
-                <div class="card-group-title">Recent Activity</div>
-                <div class="recent-activity-container">
-                    <div class="recent-activity-header">
-                        <h3>Recent Activities</h3>
-                    </div>
-
-
-                    <div id="recentActivityList" class="recent-activity-list">
-                        <div class="activity-loading">
-                            <i class="fas fa-spinner fa-spin"></i> Loading recent activity...
-                        </div>
-                    </div>
-
-
-                    <!-- Pagination Controls -->
-                    <div class="pagination-container" id="activitiesPagination" style="display: none; margin-top: auto;">
-                        <div class="pagination-info" id="activitiesPaginationInfo"></div>
-                        <div class="pagination-controls">
-                            <button class="btn btn-sm btn-secondary" id="activitiesPrevPage">
-                                <i class="fas fa-chevron-left"></i> Previous
-                            </button>
-                            <div class="pagination-numbers" id="activitiesPageNumbers"></div>
-                            <button class="btn btn-sm btn-secondary" id="activitiesNextPage">
-                                Next <i class="fas fa-chevron-right"></i>
-                            </button>
-                        </div>
-                    </div>
-
-
-                    <div class="recent-activity-footer">
-                        <button class="btn btn-secondary btn-sm" onclick="casaLink.loadMoreActivities()">
-                            <i class="fas fa-history"></i> Load Older Activities
-                        </button>
-                        <button class="btn btn-primary btn-sm" onclick="casaLink.markAllAsRead()">
-                            <i class="fas fa-check-double"></i> Mark All as Read
-                        </button>
-                    </div>
                 </div>
+
+
             </div>
         `;
     }
@@ -8058,7 +9710,8 @@ class CasaLink {
                 quickMetrics.hasData ||
                 financialReports.hasData ||
                 propertyReports.hasData ||
-                tenantReports.hasData
+                tenantReports.hasData ||
+                predictiveData.hasData
             );
 
             if (!hasAnyReportData) {
@@ -8158,21 +9811,71 @@ class CasaLink {
         container.innerHTML = ''; // clear
 
         const items = [
-            { label: 'Monthly Revenue', value: `₱${(metrics.monthlyRevenue||0).toLocaleString()}`, trend: metrics.revenueGrowth },
-            { label: 'Occupancy Rate', value: `${metrics.occupancyRate||0}%`, trend: metrics.occupancyTrend },
-            { label: 'Collection Rate', value: `${metrics.collectionRate||0}%`, trend: metrics.collectionTrend },
-            { label: 'Maintenance Cost', value: `₱${(metrics.maintenanceCost||0).toLocaleString()}`, trend: metrics.maintenanceTrend },
-            { label: 'Lease Renewal', value: `${metrics.renewalRate||0}%`, trend: metrics.renewalTrend }
+            {
+                title: 'Rent Collection',
+                value: `${metrics.collectionRate != null ? metrics.collectionRate : 0}%`,
+                subtitle: 'This month',
+                iconClass: 'collection',
+                iconHtml: '<i class="fas fa-chart-line"></i>',
+                clickable: 'collection'
+            },
+            {
+                title: 'Monthly Collection',
+                value: `₱${Number(metrics.monthlyRevenue || 0).toLocaleString()}`,
+                subtitle: 'Current month',
+                iconClass: 'revenue',
+                iconHtml: '<i class="fas fa-cash-register"></i>',
+                clickable: 'revenue'
+            },
+            {
+                title: 'Late Payments',
+                value: `${metrics.latePayments != null ? metrics.latePayments : 0}`,
+                subtitle: 'Overdue rent',
+                iconClass: 'late',
+                iconHtml: '<i class="fas fa-clock"></i>',
+                clickable: 'late'
+            },
+            {
+                title: 'Unpaid Bills',
+                value: `${metrics.unpaidBills != null ? metrics.unpaidBills : 0}`,
+                subtitle: 'Pending payments',
+                iconClass: 'unpaid',
+                iconHtml: '<i class="fas fa-money-bill-wave"></i>',
+                clickable: 'unpaid'
+            },
+            {
+                title: 'Open Maintenance',
+                value: `${metrics.openMaintenance != null ? metrics.openMaintenance : 0}`,
+                subtitle: 'New requests',
+                iconClass: 'maintenance',
+                iconHtml: '<i class="fas fa-tools"></i>',
+                clickable: 'open-maintenance'
+            },
+            {
+                title: 'Maintenance Backlog',
+                value: `${metrics.maintenanceBacklog != null ? metrics.maintenanceBacklog : 0}`,
+                subtitle: 'Pending work',
+                iconClass: 'backlog',
+                iconHtml: '<i class="fas fa-list-alt"></i>',
+                clickable: 'backlog'
+            }
         ];
 
         items.forEach(item => {
-            const trendIcon = item.trend > 0 ? '↑' : item.trend < 0 ? '↓' : '';
-            const trendClass = item.trend > 0 ? 'positive' : item.trend < 0 ? 'negative' : '';
             const card = document.createElement('div');
-            card.className = 'quick-stat-card';
+            card.className = 'card';
+            if (item.clickable) {
+                card.setAttribute('data-clickable', item.clickable);
+                card.style.cursor = 'pointer';
+                card.title = `Click to view ${item.title.toLowerCase()}`;
+            }
             card.innerHTML = `
-                <div class="quick-stat-value">${item.value} <span class="trend ${trendClass}">${trendIcon}${item.trend||''}%</span></div>
-                <div class="quick-stat-label">${item.label}</div>
+                <div class="card-header">
+                    <div class="card-title">${item.title}</div>
+                    <div class="card-icon ${item.iconClass}">${item.iconHtml}</div>
+                </div>
+                <div class="card-value">${item.value}</div>
+                <div class="card-subtitle">${item.subtitle}</div>
             `;
             container.appendChild(card);
         });
@@ -8203,7 +9906,7 @@ class CasaLink {
         // Tenant Churn Risk (store full list as data-items so pagination helper can render it)
         const churnList = data.tenantChurn || [];
         const churnWrapperHtml = churnList.length === 0
-            ? '<div>No churn data available</div>'
+            ? '<div class="prediction-empty">No churn data available yet. Record tenant payments, lease renewals, or maintenance interactions to surface churn risk.</div>'
             : `<div class="churn-list-wrapper paginated-list" data-items="${encodeURIComponent(JSON.stringify(churnList))}"></div>`;
 
         addCard('Tenant Churn Risk', 'fas fa-user-clock', churnWrapperHtml, 'Predicts tenants likely to leave so you can proactively retain them.', 'Logistic regression using payment history, maintenance frequency, lease length and engagement signals to estimate churn probability.');
@@ -8399,20 +10102,22 @@ class CasaLink {
         })();
 
         // Late Payment Risk
-        const lateRows = (data.latePaymentRisk || []).slice(0, 5).map(r => {
-            return `<div><strong>${r.tenant || r.unit}</strong>: ${r.probability}% (${r.riskLevel})</div>`;
-        }).join('');
-        addCard('Late Payment Risk', 'fas fa-exclamation-triangle', lateRows || '<div>No high risk tenants detected</div>', 'Identifies tenants at risk of late payments so you can follow up.', 'Probability score derived from recent payment timeliness, historical overdue counts, and outstanding balances.');
+        const lateRows = (data.latePaymentRisk || []).slice(0, 5);
+        const lateHtml = lateRows.length === 0
+            ? '<div class="prediction-empty">No late payment risks detected. Keep payment collections up to date to continue monitoring tenant stability.</div>'
+            : `<div class="prediction-list">${lateRows.map(r => `<div class="prediction-list-item"><div class="maintenance-triage-item-title">${r.tenant || r.unit || 'Unknown tenant'}</div><div class="maintenance-triage-item-meta"><span class="prediction-risk ${String(r.riskLevel || '').toLowerCase()}">${r.riskLevel || 'Unknown risk'}</span><span>${r.probability || 0}% risk</span></div><div class="maintenance-triage-item-note">${r.reason || 'No additional reason provided.'}</div></div>`).join('')}</div>`;
+        addCard('Late Payment Risk', 'fas fa-exclamation-triangle', lateHtml, 'Identifies tenants at risk of late payments so you can follow up.', 'Probability score derived from recent payment timeliness, historical overdue counts, and outstanding balances.');
 
         // Maintenance Triage
-        const triageRows = (data.maintenanceTriage || []).slice(0, 5).map(r => {
-            return `<div><strong>${r.title}</strong> – ${r.priority} (confidence ${r.confidence || 0}%)</div>`;
-        }).join('');
-        addCard('Maintenance Triage', 'fas fa-tools', triageRows || '<div>No maintenance requests available</div>', 'Prioritizes maintenance requests based on urgency and impact.', 'Priority ranking based on request age, reported severity, and affected units to surface high-impact issues.');
-
-        // Tenant Sentiment
-        const sentiment = data.tenantSentiment || { label: 'neutral', confidence: 0, score: 0 };
-        addCard('Tenant Sentiment', 'fas fa-smile', `<div>${sentiment.label.toUpperCase()} (${sentiment.confidence}% confidence)</div><div>Score: ${sentiment.score}</div>`, 'Summarizes tenant feedback sentiment to surface issues and satisfaction.', 'Aggregated from tenant messages, reviews, and survey responses using simple sentiment scoring.');
+        const triageItems = (data.maintenanceTriage || []).slice(0, 5);
+        const triageHtml = triageItems.length === 0
+            ? '<div class="prediction-empty">No maintenance requests available. Record completed maintenance and urgency so the system can prioritize repairs for you.</div>'
+            : `<div class="prediction-list">${triageItems.map(r => {
+                const confidenceLabel = r.confidence ? `<span class="prediction-label">${r.confidence}% confidence</span>` : '';
+                const responseLabel = r.responseTime ? `<span class="prediction-label">${r.responseTime}</span>` : '';
+                return `<div class="maintenance-triage-item"><div class="maintenance-triage-item-title">${r.title || 'Maintenance request'}</div><div class="maintenance-triage-item-meta"><span class="prediction-risk ${String(r.priority || '').toLowerCase()}">${r.priority || 'Unknown priority'}</span>${responseLabel}${confidenceLabel}</div><div class="maintenance-triage-item-note">${r.notes || r.description || r.reason || 'No additional details provided.'}</div></div>`;
+            }).join('')}</div>`;
+        addCard('Maintenance Triage', 'fas fa-tools', triageHtml, 'Prioritizes maintenance requests based on urgency and impact.', 'Priority ranking based on request age, reported severity, and affected units to surface high-impact issues.');
 
         // Initialize paginated lists inside predictions
         try { if (typeof this.initPaginatedLists === 'function') this.initPaginatedLists(); } catch (e) { console.warn('Pagination init failed', e); }
@@ -8447,59 +10152,74 @@ class CasaLink {
         };
 
         const revenue = data.revenueForecast || {};
+        const revenueAvailable = Array.isArray(revenue.predictions) && revenue.predictions.length > 0;
+        const revenueValue = revenueAvailable
+            ? `₱${(revenue.nextMonthPrediction || 0).toLocaleString()}`
+            : 'Insufficient historical revenue data';
+        const revenueNote = revenueAvailable
+            ? `Confidence: ${Math.round((revenue.confidence || 0) * 100)}%`
+            : 'Collect completed payments to generate a revenue forecast.';
+
         addCard(
             'Revenue Forecast',
             'Next month estimate',
-            `₱${(revenue.nextMonthPrediction || 0).toLocaleString()}`,
-            `Confidence: ${Math.round((revenue.confidence || 0) * 100)}%`,
-            'Weighted Moving Average',
+            revenueValue,
+            revenueNote,
+            revenueAvailable ? 'Weighted Moving Average' : 'Data insufficient',
             'Estimated next-month revenue based on historical collections and seasonality.',
             'Weighted moving average of recent monthly revenues with seasonal weighting and trend smoothing.'
         );
         // append a mini forecast canvas into the revenue forecast card for a compact sparkline
-        try {
-            const revCard = Array.from(container.querySelectorAll('.forecast-card')).find(c => c.querySelector('h4') && c.querySelector('h4').textContent.trim() === 'Revenue Forecast');
-            if (revCard && !revCard.querySelector('#revenueForecastMiniChart')) {
-                const miniWrap = document.createElement('div');
-                miniWrap.style.marginTop = '8px';
-                miniWrap.innerHTML = `<div style="height:48px; width:160px;"><canvas id="revenueForecastMiniChart" width="160" height="48"></canvas></div>`;
-                revCard.querySelector('.forecast-content').appendChild(miniWrap);
+        if (revenueAvailable) {
+            try {
+                const revCard = Array.from(container.querySelectorAll('.forecast-card')).find(c => c.querySelector('h4') && c.querySelector('h4').textContent.trim() === 'Revenue Forecast');
+                if (revCard && !revCard.querySelector('#revenueForecastMiniChart')) {
+                    const miniWrap = document.createElement('div');
+                    miniWrap.style.marginTop = '8px';
+                    miniWrap.innerHTML = `<div style="height:48px; width:160px;"><canvas id="revenueForecastMiniChart" width="160" height="48"></canvas></div>`;
+                    revCard.querySelector('.forecast-content').appendChild(miniWrap);
+                }
+            } catch (e) {
+                console.warn('Failed to inject revenue forecast mini chart canvas', e);
             }
-        } catch (e) {
-            console.warn('Failed to inject revenue forecast mini chart canvas', e);
         }
 
         const occupancy = data.occupancyForecast || data.occupancyTrend || {};
+        const occupancyAvailable = Array.isArray(occupancy.predictions) && occupancy.predictions.length > 0;
+        const occupancyValue = occupancyAvailable
+            ? `${occupancy.predictions[0]}%`
+            : 'Insufficient lease data';
+        const occupancyNote = occupancyAvailable
+            ? `At-risk units: ${occupancy.atRiskUnits || 0}`
+            : 'Add active leases or occupancy history to generate a forecast.';
+
         addCard(
             'Occupancy Forecast',
             'Projected occupancy',
-            `${(occupancy.predictions ? occupancy.predictions[0] : occupancy.currentOccupancy || 0)}%`,
-            `At-risk units: ${occupancy.atRiskUnits || 0}`,
-            'Lease expiry counting',
+            occupancyValue,
+            occupancyNote,
+            occupancyAvailable ? 'Lease expiry counting' : 'Data insufficient',
             'Projected occupancy rate using upcoming lease expirations and booking trends.',
             'Counts upcoming lease expirations and recent leasing velocity to estimate future occupancy.'
         );
 
         const maintenance = data.maintenanceForecast || data.maintenanceCosts || {};
+        const maintenanceAvailable = Array.isArray(maintenance.monthlyPredictions) && maintenance.monthlyPredictions.length > 0;
+        const maintenanceValue = maintenanceAvailable
+            ? `₱${(maintenance.nextMonthPrediction || maintenance.monthlyPredictions[0] || 0).toLocaleString()}`
+            : 'Insufficient maintenance history';
+        const maintenanceNote = maintenanceAvailable
+            ? `Confidence: ${Math.round((maintenance.confidence || 0) * 100)}%`
+            : 'Complete maintenance requests to generate a forecast.';
+
         addCard(
             'Maintenance Forecast',
             'Next month estimate',
-            `₱${(maintenance.nextMonthPrediction || (maintenance.monthlyPredictions ? maintenance.monthlyPredictions[0] : 0)).toLocaleString()}`,
-            `Confidence: ${Math.round((maintenance.confidence || 0) * 100)}%`,
-            'Seasonal average + trend',
+            maintenanceValue,
+            maintenanceNote,
+            maintenanceAvailable ? 'Seasonal average + trend' : 'Data insufficient',
             'Estimated maintenance spending to help you budget for upcoming repairs.',
             'Monthly maintenance cost forecast based on historical spend, seasonality, and detected trends.'
-        );
-
-        const anomalies = (data.anomalies || []).slice(0, 3).join('<br>') || 'No anomalies detected';
-        addCard(
-            'Anomaly Detection',
-            'Unusual patterns in payments/maintenance',
-            anomalies,
-            '',
-            'Z-score outlier detection',
-            'Highlights unusual events or outliers that may need investigation.',
-            'Uses z-score and recent-window comparisons to flag statistical outliers in metrics.'
         );
 
         // Attach hover descriptions
@@ -8864,6 +10584,11 @@ class CasaLink {
         cont.innerHTML = '<div class="section-title">Recommendations</div>\n<div class="recommendations-list" id="recommendationsList"></div>';
         const listEl = cont.querySelector('#recommendationsList');
         listEl.innerHTML = '';
+        list = list.filter(rec => {
+            const text = (rec.text || '').toString().toLowerCase();
+            const explanation = (rec.explanation || '').toString().toLowerCase();
+            return !(/sentiment|tenant feedback|tenant sentiment/.test(text + ' ' + explanation));
+        });
         list.forEach(rec => {
             const item = document.createElement('div');
             item.className = 'recommendation-item';
@@ -9012,8 +10737,10 @@ class CasaLink {
             // Generate a reports-specific printable report (captures analytics view)
             const reportHTML = this.generateReportsPrintableReport(tenants, leases, rooms, bills, maintenance, apartments);
             window.currentReportHTML = reportHTML;
+            window.currentReportFilename = 'CasaLink-ReportsAndAnalytics';
+            window.currentReportType = 'Reports & Analytics';
 
-            const modal = ModalManager.openModal(reportHTML, {
+            const modal = window.ModalManager.openModal(reportHTML, {
                 title: 'Reports - Print Preview',
                 showFooter: true,
                 width: '95%',
@@ -9043,6 +10770,8 @@ class CasaLink {
                         const pc = document.getElementById('printReportContainer');
                         if (pc) pc.remove();
                         window.currentReportHTML = null;
+                        window.currentReportFilename = null;
+                        window.currentReportType = null;
                         clearInterval(checkClosed);
                     }
                 }, 500);
@@ -9115,6 +10844,16 @@ class CasaLink {
                     this.loadRecentActivities();
                 }, 5000);
                 console.log('✅ Started activity auto-refresh (5s interval)');
+                break;
+
+            case 'tenantActivityLog':
+                await this.loadRecentActivities();
+                // Start auto-refresh every 5 seconds
+                this.activityAutoRefreshInterval = setInterval(() => {
+                    console.log('🔄 Auto-refreshing tenant activities...');
+                    this.loadRecentActivities();
+                }, 5000);
+                console.log('✅ Started tenant activity auto-refresh (5s interval)');
                 break;
             case 'properties':
                 // special case: ensure the landlord properties controller
@@ -9628,18 +11367,6 @@ class CasaLink {
 
         return `
             <div class="lease-information-modal" style="max-height: 70vh; overflow-y: auto;">
-                <!-- Tenant Header -->
-                <div style="background: linear-gradient(135deg, var(--royal-blue), #101b4a); color: white; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-                    <div style="display: flex; align-items: center; gap: 15px;">
-                        <div class="tenant-avatar" style="width: 60px; height: 60px; font-size: 1.5rem;">${tenant.name.charAt(0).toUpperCase()}</div>
-                        <div>
-                            <h3 style="margin: 0 0 5px 0;">${tenant.name}</h3>
-                            <p style="margin: 0; opacity: 0.9;">${tenant.email} • ${tenant.phone || 'No phone'}</p>
-                            <p style="margin: 5px 0 0 0; opacity: 0.8;">${tenant.occupation || 'No occupation specified'}</p>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Lease Summary -->
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 25px;">
                     <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid var(--success);">
@@ -9670,10 +11397,6 @@ class CasaLink {
                         <div>
                             <strong>Lease Period:</strong><br>
                             ${leaseStart} to ${leaseEnd}
-                        </div>
-                        <div>
-                            <strong>Payment Method:</strong><br>
-                            ${lease.paymentMethod || 'Cash'}
                         </div>
                         <div>
                             <strong>Payment Due Day:</strong><br>
@@ -9771,7 +11494,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Tenant Information',
                 showFooter: false
             });
@@ -9787,7 +11510,7 @@ class CasaLink {
             ]);
 
             if (!tenantDoc.exists) {
-                ModalManager.closeModal(modal);
+                window.ModalManager.closeModal(modal);
                 this.showNotification('Tenant not found', 'error');
                 return;
             }
@@ -9835,12 +11558,6 @@ class CasaLink {
                     ${tenantHeader}
 
                     <div style="display:grid; grid-template-columns: 1fr; gap:12px;">
-                        <div style="background: #fff; padding: 12px; border-radius:8px;">
-                            <div style="font-size:0.95rem; color:var(--dark-gray); margin-bottom:6px;"><strong>Room / Unit:</strong> ${tenant.roomNumber || 'N/A'}</div>
-                            <div style="font-size:0.95rem; color:var(--dark-gray); margin-bottom:6px;"><strong>Status:</strong> ${tenant.status || (tenant.isActive ? 'active' : 'inactive') || 'N/A'}</div>
-                            <div style="font-size:0.95rem; color:var(--dark-gray);"><strong>Landlord ID:</strong> ${tenant.landlordId || 'Not assigned'}</div>
-                        </div>
-
                         ${scannedIdHtml}
 
                         <div style="background: transparent;">
@@ -9860,7 +11577,7 @@ class CasaLink {
                     img.style.cursor = 'pointer';
                     img.addEventListener('click', function () {
                         const content = `<div style="text-align:center; padding:12px;"><img src="${this.src}" style="max-width:100%; max-height:80vh; border-radius:6px;" /></div>`;
-                        ModalManager.openModal(content, { title: 'Scanned ID', width: '80vw', maxWidth: '900px', showFooter: false });
+                        window.ModalManager.openModal(content, { title: 'Scanned ID', width: '80vw', maxWidth: '900px', showFooter: false });
                     });
                 });
             }
@@ -9871,7 +11588,7 @@ class CasaLink {
                 const footer = document.createElement('div');
                 footer.className = 'modal-footer';
                 footer.innerHTML = `
-                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                    <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                         Close
                     </button>
                 `;
@@ -10078,7 +11795,7 @@ class CasaLink {
             </div>
         `;
 
-        const modal = ModalManager.openModal(content, {
+        const modal = window.ModalManager.openModal(content, {
             title: 'Create Maintenance Request',
             submitText: 'Create Request',
             cancelText: 'Cancel',
@@ -10187,7 +11904,7 @@ class CasaLink {
                     const createdId = await DataManager.createMaintenanceRequest(requestData);
 
                     // Close creation modal first (don't reload yet)
-                    ModalManager.closeModal(modal);
+                    window.ModalManager.closeModal(modal);
 
                     // If we're not already viewing tenantMaintenance, navigate there
                     if (this.currentPage !== 'tenantMaintenance') {
@@ -10433,7 +12150,7 @@ class CasaLink {
 
             await DataManager.createMaintenanceRequest(requestData);
             
-            ModalManager.closeModal(document.querySelector('.modal-overlay'));
+            window.ModalManager.closeModal(document.querySelector('.modal-overlay'));
             this.showNotification('Maintenance request submitted successfully!', 'success');
 
             // ensure we're on the maintenance page to load fresh data
@@ -10667,15 +12384,19 @@ class CasaLink {
     }
 
     getStatusBadge(status) {
+        const normalizedStatus = (status || 'open').toString().toLowerCase().replace(/ /g, '-').replace(/_/g, '-');
         const statusConfig = {
             open: { class: 'warning', text: 'Open' },
+            assigned: { class: 'info', text: 'Assigned' },
+            pending: { class: 'warning', text: 'Pending' },
             'in-progress': { class: 'info', text: 'In Progress' },
-            pending_parts: { class: 'warning', text: 'Pending Parts' },
+            'pending-parts': { class: 'warning', text: 'Pending Parts' },
             completed: { class: 'active', text: 'Completed' },
+            resolved: { class: 'active', text: 'Resolved' },
             cancelled: { class: 'inactive', text: 'Cancelled' }
         };
         
-        const config = statusConfig[status] || statusConfig.open;
+        const config = statusConfig[normalizedStatus] || statusConfig.open;
         return `<span class="status-badge maintenance-badge ${config.class}">${config.text}</span>`;
     }
 
@@ -10805,7 +12526,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Create Maintenance Request',
                 submitText: 'Create Request',
                 onSubmit: () => this.createMaintenanceRequest()
@@ -10964,7 +12685,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Update Maintenance Request',
                 submitText: 'Update Request',
                 onSubmit: () => this.processMaintenanceUpdate(requestId)
@@ -10990,7 +12711,7 @@ class CasaLink {
             };
 
             // For now, just show a success message
-            ModalManager.closeModal(this.maintenanceSettingsModal);
+            window.ModalManager.closeModal(this.maintenanceSettingsModal);
             this.showNotification('Maintenance settings saved successfully!', 'success');
 
         } catch (error) {
@@ -11050,7 +12771,7 @@ class CasaLink {
             </div>
         `;
 
-        const modal = ModalManager.openModal(modalContent, {
+        const modal = window.ModalManager.openModal(modalContent, {
             title: 'Maintenance Settings',
             submitText: 'Save Settings',
             onSubmit: () => this.saveMaintenanceSettings()
@@ -11069,8 +12790,10 @@ class CasaLink {
 
             const reportHTML = this.generateMaintenancePrintableReport(maintenanceRequests);
             window.currentReportHTML = reportHTML;
+            window.currentReportFilename = 'CasaLink-MaintenanceReport';
+            window.currentReportType = 'Maintenance Report';
 
-            const modal = ModalManager.openModal(reportHTML, {
+            const modal = window.ModalManager.openModal(reportHTML, {
                 title: 'Maintenance Report - Print Preview',
                 showFooter: true,
                 width: '95%',
@@ -11100,6 +12823,8 @@ class CasaLink {
                         const pc = document.getElementById('printReportContainer');
                         if (pc) pc.remove();
                         window.currentReportHTML = null;
+                        window.currentReportFilename = null;
+                        window.currentReportType = null;
                         clearInterval(checkClosed);
                     }
                 }, 500);
@@ -11124,6 +12849,8 @@ class CasaLink {
                 return dateA - dateB;
             });
 
+            console.debug('Maintenance schedule statuses:', scheduledRequests.map(r => ({ id: r.id, status: r.status })));
+
             let scheduleContent = '';
 
             if (scheduledRequests.length === 0) {
@@ -11137,7 +12864,7 @@ class CasaLink {
             } else {
                 scheduleContent = `
                     <div style="max-height: 500px; overflow-y: auto;">
-                        <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                        <table style="width: 100%; min-width: unset; border-collapse: collapse; font-size: 0.9rem;">
                             <thead>
                                 <tr style="background-color: #f8f9fa;">
                                     <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Date</th>
@@ -11154,6 +12881,9 @@ class CasaLink {
                                     const today = new Date();
                                     const isToday = scheduleDate.toDateString() === today.toDateString();
                                     const isPast = scheduleDate < today && !isToday;
+                                    const rawStatusValue = request.status ? request.status.toString().trim() : 'Open';
+                                    const normalizedStatusValue = rawStatusValue.toLowerCase().replace(/ /g, '-').replace(/_/g, '-');
+                                    const readableStatus = rawStatusValue.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                                     
                                     return `
                                         <tr style="border-bottom: 1px solid #e9ecef; ${isPast ? 'background: rgba(234, 67, 53, 0.05);' : ''}">
@@ -11172,13 +12902,14 @@ class CasaLink {
                                                 <strong>${request.title}</strong>
                                             </td>
                                             <td style="padding: 12px; text-transform: capitalize;">
-                                                ${request.type.replace('_', ' ')}
+                                                ${request.type ? request.type.replace(/_/g, ' ') : 'Other'}
                                             </td>
                                             <td style="padding: 12px;">
                                                 ${request.assignedName || 'Not assigned'}
                                             </td>
-                                            <td style="padding: 12px;">
-                                                ${this.getStatusBadge(request.status)}
+                                            <td style="padding: 12px; white-space: nowrap;">
+                                                ${this.getStatusBadge(normalizedStatusValue)}
+                                                <span style="margin-left: 8px; font-size: 0.85rem; color: var(--text-dark);">${readableStatus}</span>
                                             </td>
                                         </tr>
                                     `;
@@ -11200,10 +12931,12 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Maintenance Schedule',
+                width: '90vw',
+                maxWidth: '1100px',
                 submitText: 'Close',
-                onSubmit: () => ModalManager.closeModal(modal)
+                onSubmit: () => window.ModalManager.closeModal(modal)
             });
 
         } catch (error) {
@@ -11226,21 +12959,20 @@ class CasaLink {
             const assignmentNotes = document.getElementById('assignmentNotes').value;
             const estimatedCompletion = document.getElementById('estimatedCompletion').value;
 
-            if (!staffId) {
+            if (!staffId || staffId === "") {
                 this.showAssignMaintenanceError('Please select a staff member');
                 return;
             }
 
-            // Get staff name from the selected option
-            const staffSelect = document.getElementById('assignStaff');
-            const selectedStaff = staffSelect.options[staffSelect.selectedIndex].text.split(' - ')[0];
+            // staffId is now the staff name
+            const selectedStaffName = staffId;
 
             const estCostVal = document.getElementById('estimatedCost') ? document.getElementById('estimatedCost').value : '';
             const estimatedCost = estCostVal !== '' ? parseFloat(estCostVal) : null;
 
             const updates = {
-                assignedTo: staffId,
-                assignedName: selectedStaff,
+                assignedTo: selectedStaffName,
+                assignedName: selectedStaffName,
                 assignmentNotes: assignmentNotes,
                 estimatedCompletion: estimatedCompletion,
                 estimatedCost: estimatedCost,
@@ -11257,10 +12989,49 @@ class CasaLink {
 
             await DataManager.updateMaintenanceRequest(requestId, updates);
             
+            // Create activity for landlord
+            try {
+                const request = await DataManager.getMaintenanceRequest(requestId);
+                if (request && request.landlordId) {
+                    const activityData = {
+                        type: 'maintenance_assigned',
+                        title: 'Maintenance Request Assigned',
+                        message: `Maintenance request assigned to ${selectedStaffName}`,
+                        landlordId: request.landlordId,
+                        tenantId: request.tenantId,
+                        apartmentId: request.apartmentId,
+                        maintenanceId: requestId,
+                        createdAt: new Date().toISOString(),
+                        timestamp: new Date().toISOString(),
+                        isSeen: 'unseen',
+                        icon: 'fas fa-user-check',
+                        color: 'var(--success)',
+                        data: {
+                            id: requestId,
+                            maintenanceId: requestId,
+                            tenantName: request.tenantName,
+                            title: request.title,
+                            assignedName: selectedStaffName,
+                            apartmentName: request.apartmentName
+                        }
+                    };
+
+                    if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                        await DataManager.addActivity(activityData);
+                    } else if (typeof firebaseDb !== 'undefined') {
+                        await firebaseDb.collection('activities').add(activityData);
+                    }
+                    
+                    console.log('✅ Activity created for maintenance assignment');
+                }
+            } catch (actErr) {
+                console.warn('⚠️ Could not create activity for maintenance assignment:', actErr);
+            }
+            
             // close the assignment modal first
-            ModalManager.closeModal(this.assignMaintenanceModal);
+            window.ModalManager.closeModal(this.assignMaintenanceModal);
             // if the details modal remains open underneath, close it as well
-            ModalManager.closeModal(document.querySelector('.modal-overlay'));
+            window.ModalManager.closeModal(document.querySelector('.modal-overlay'));
 
             this.showNotification('Maintenance request assigned successfully!', 'success');
 
@@ -11290,16 +13061,52 @@ class CasaLink {
                 return;
             }
 
-            // In a real app, you'd fetch staff members from your database
-            const staffMembers = [
-                { id: 'staff1', name: 'Juan Dela Cruz', role: 'Maintenance Technician' },
-                { id: 'staff2', name: 'Maria Santos', role: 'Plumbing Specialist' },
-                { id: 'staff3', name: 'Roberto Garcia', role: 'Electrician' },
-                { id: 'staff4', name: 'Anna Reyes', role: 'General Maintenance' }
-            ];
+            // Fetch actual staff members from the current user's document
+            const userId = this.currentUser?.id || this.currentUser?.uid;
+            if (!userId) {
+                this.showNotification('User not authenticated', 'error');
+                return;
+            }
 
-            const staffOptions = staffMembers.map(staff => `
-                <option value="${staff.id}">${staff.name} - ${staff.role}</option>
+            const userDoc = await firebaseDb.collection('users').doc(userId).get();
+            if (!userDoc.exists) {
+                this.showNotification('User data not found', 'error');
+                return;
+            }
+
+            const userData = userDoc.data();
+            const staffMembers = userData.maintenanceStaff || [];
+
+            // If no staff members found, show a message
+            if (!staffMembers || staffMembers.length === 0) {
+                const modalContent = `
+                    <div class="assign-maintenance-modal">
+                        <div style="text-align: center; margin-bottom: 20px;">
+                            <i class="fas fa-user-times" style="font-size: 3rem; color: var(--warning); margin-bottom: 15px;"></i>
+                            <h3 style="margin-bottom: 10px;">No Staff Available</h3>
+                            <p>You haven't added any maintenance staff yet.</p>
+                        </div>
+                        <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                            <p style="margin: 0; color: #666;">To assign maintenance staff, you need to add staff members first.</p>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-primary" onclick="casaLink.showPage('settings')">Add Staff</button>
+                            <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                        </div>
+                    </div>
+                `;
+
+                const modal = window.ModalManager.openModal(modalContent, {
+                    title: 'Assign Maintenance Staff',
+                    submitText: 'Close',
+                    onSubmit: () => window.ModalManager.closeModal(modal)
+                });
+
+                return;
+            }
+
+            const staffOptions = staffMembers.map((staff, index) => `
+                <option value="${staff.name}">${staff.name}${staff.specialization ? ` - ${staff.specialization}` : ''}</option>
             `).join('');
 
             const modalContent = `
@@ -11377,7 +13184,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Assign Maintenance Staff',
                 submitText: 'Assign Staff',
                 onSubmit: () => this.processStaffAssignment(requestId)
@@ -11430,7 +13237,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Maintenance Completion',
                 submitText: 'Submit',
                 onSubmit: async () => {
@@ -11479,12 +13286,53 @@ class CasaLink {
 
                     try {
                         await DataManager.updateMaintenanceRequest(requestId, updates);
+                        
+                        // Create activity for landlord
+                        try {
+                            const request = await DataManager.getMaintenanceRequest(requestId);
+                            if (request && request.landlordId) {
+                                const activityData = {
+                                    type: 'maintenance_completed',
+                                    title: 'Maintenance Request Completed',
+                                    message: `Maintenance request completed for ${request.tenantName}`,
+                                    landlordId: request.landlordId,
+                                    tenantId: request.tenantId,
+                                    apartmentId: request.apartmentId,
+                                    maintenanceId: requestId,
+                                    createdAt: new Date().toISOString(),
+                                    timestamp: new Date().toISOString(),
+                                    isSeen: 'unseen',
+                                    icon: 'fas fa-check-circle',
+                                    color: 'var(--success)',
+                                    data: {
+                                        id: requestId,
+                                        maintenanceId: requestId,
+                                        tenantName: request.tenantName,
+                                        title: request.title,
+                                        actualCost: costVal,
+                                        assignedName: request.assignedName,
+                                        apartmentName: request.apartmentName
+                                    }
+                                };
+
+                                if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                                    await DataManager.addActivity(activityData);
+                                } else if (typeof firebaseDb !== 'undefined') {
+                                    await firebaseDb.collection('activities').add(activityData);
+                                }
+                                
+                                console.log('✅ Activity created for maintenance completion');
+                            }
+                        } catch (actErr) {
+                            console.warn('⚠️ Could not create activity for maintenance completion:', actErr);
+                        }
+                        
                         this.showNotification('Maintenance request marked as complete', 'success');
 
                         // close the completion modal
-                        ModalManager.closeModal(modal);
+                        window.ModalManager.closeModal(modal);
                         // also close underlying details modal if still open
-                        ModalManager.closeModal(document.querySelector('.modal-overlay'));
+                        window.ModalManager.closeModal(document.querySelector('.modal-overlay'));
                         setTimeout(() => {
                             this.loadMaintenanceData();
                             this.loadMaintenanceStats();
@@ -11527,7 +13375,7 @@ class CasaLink {
 
             await DataManager.updateMaintenanceRequest(requestId, updates);
             
-            ModalManager.closeModal(this.updateMaintenanceModal);
+            window.ModalManager.closeModal(this.updateMaintenanceModal);
             this.showNotification('Maintenance request updated successfully!', 'success');
 
             // Refresh maintenance data
@@ -11560,7 +13408,7 @@ class CasaLink {
             this.showNotification('Maintenance request closed', 'success');
 
             // close modal if open
-            ModalManager.closeModal(document.querySelector('.modal-overlay'));
+            window.ModalManager.closeModal(document.querySelector('.modal-overlay'));
 
             setTimeout(() => {
                 this.loadMaintenanceData();
@@ -11829,10 +13677,24 @@ class CasaLink {
                             <p style="margin: 10px 0; line-height: 1.6; background: #f8f9fa; padding: 10px; border-radius: 6px;">${request.assignmentNotes}</p>
                         </div>
                     ` : ''}
-                ${request.remarks ? `
+                    ${request.remarks ? `
                         <div style="margin-top: 15px;">
                             <strong>Completion Remarks:</strong><br>
                             <p style="margin: 10px 0; line-height: 1.6; background: #eef7e9; padding: 10px; border-radius: 6px;">${request.remarks}</p>
+                        </div>
+                    ` : ''}
+                    ${request.completionPhotos && request.completionPhotos.length > 0 ? `
+                        <div style="margin-top: 15px; padding-top: 15px; border-top: 2px solid var(--royal-blue);">
+                            <strong style="color: var(--royal-blue); display: block; margin-bottom: 12px;">
+                                <i class="fas fa-images"></i> Completion Photo Evidence (${request.completionPhotos.length})
+                            </strong>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px;">
+                                ${request.completionPhotos.map(photoURL => `
+                                    <div style="border-radius: 6px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.08); cursor: pointer;" onclick='window.openFullSizeImage(${JSON.stringify(photoURL)})'>
+                                        <img src="${photoURL}" alt="Completion evidence" style="width: 100%; height: 120px; object-fit: cover; display: block;" />
+                                    </div>
+                                `).join('')}
+                            </div>
                         </div>
                     ` : ''}
                 </div>
@@ -11917,7 +13779,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Maintenance Request Details',
                 showFooter: false
             });
@@ -11926,7 +13788,7 @@ class CasaLink {
             const request = await DataManager.getMaintenanceRequest(requestId);
             
             if (!request) {
-                ModalManager.closeModal(modal);
+                window.ModalManager.closeModal(modal);
                 this.showNotification('Maintenance request not found', 'error');
                 return;
             }
@@ -12033,7 +13895,7 @@ class CasaLink {
                 } else {
                     // for completed/cancelled requests just allow closing the modal
                     buttonsHtml = `
-                        <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                        <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                             Close
                         </button>
                     `;
@@ -12125,7 +13987,7 @@ class CasaLink {
 
             await DataManager.createMaintenanceRequest(requestData);
             
-            ModalManager.closeModal(this.createMaintenanceModal);
+            window.ModalManager.closeModal(this.createMaintenanceModal);
             this.showNotification('Maintenance request created successfully!', 'success');
 
             // Refresh maintenance data
@@ -12461,9 +14323,11 @@ class CasaLink {
             
             // Store report HTML in window for access during printing (don't add to DOM yet)
             window.currentReportHTML = reportHTML;
+            window.currentReportFilename = 'CasaLink-PropertyReport';
+            window.currentReportType = 'Comprehensive Report';
             
             // Show in modal
-            const modal = ModalManager.openModal(reportHTML, {
+            const modal = window.ModalManager.openModal(reportHTML, {
                 title: 'Comprehensive Report - Print Preview',
                 showFooter: true,
                 width: '95%',
@@ -12510,7 +14374,9 @@ class CasaLink {
     downloadReportAsPDF() {
         // Alternative method: Direct PDF download without print dialog
         const currentDate = new Date();
-        const filename = `CasaLink-PropertyReport-${currentDate.getFullYear()}${String(currentDate.getMonth() + 1).padStart(2, '0')}${String(currentDate.getDate()).padStart(2, '0')}-${String(currentDate.getHours()).padStart(2, '0')}${String(currentDate.getMinutes()).padStart(2, '0')}`;
+        const defaultFilename = `CasaLink-PropertyReport-${currentDate.getFullYear()}${String(currentDate.getMonth() + 1).padStart(2, '0')}${String(currentDate.getDate()).padStart(2, '0')}-${String(currentDate.getHours()).padStart(2, '0')}${String(currentDate.getMinutes()).padStart(2, '0')}`;
+        const filename = window.currentReportFilename || defaultFilename;
+        const reportType = window.currentReportType || 'Comprehensive Report';
         
         const reportHTML = window.currentReportHTML || '';
         
@@ -12533,7 +14399,7 @@ class CasaLink {
         };
         
         // Generate PDF
-        html2pdf().set(opt).from(element).save().then(() => {
+        html2pdf().set(opt).from(element).save().then(async () => {
             // Show success notification
             const dateString = currentDate.toLocaleDateString('en-PH');
             const timeString = currentDate.toLocaleTimeString('en-US');
@@ -12544,6 +14410,35 @@ class CasaLink {
 <small style="opacity: 0.8; margin-top: 8px; display: block;">📁 Check your Downloads folder</small>
             `;
             this.showToastNotification(toastDetails, 'success', 10000);
+
+            try {
+                const landlordId = this.currentUser?.uid || this.currentUser?.id || null;
+                if (!landlordId) return;
+
+                const activityData = {
+                    type: 'report_downloaded',
+                    landlordId,
+                    title: `${reportType} Downloaded`,
+                    message: `Downloaded ${reportType.toLowerCase()} as PDF (${filename}.pdf)`,
+                    createdAt: new Date().toISOString(),
+                    timestamp: new Date().toISOString(),
+                    isSeen: 'unseen',
+                    icon: 'fas fa-file-pdf',
+                    color: 'var(--info)',
+                    data: {
+                        filename: `${filename}.pdf`,
+                        reportType
+                    }
+                };
+
+                if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                    await DataManager.addActivity(activityData);
+                } else if (typeof firebaseDb !== 'undefined') {
+                    await firebaseDb.collection('activities').add(activityData);
+                }
+            } catch (actErr) {
+                console.warn('Could not create report download activity:', actErr);
+            }
         }).catch(error => {
             console.error('Error generating PDF:', error);
             this.showNotification('Failed to generate PDF', 'error');
@@ -12571,7 +14466,19 @@ class CasaLink {
         const occupiedUnits = leases.filter(l => l.isActive).length;
         const vacantUnits = totalUnits - occupiedUnits;
         const occupancyRate = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
-        const totalRevenue = leases.filter(l => l.isActive).reduce((sum, lease) => sum + (lease.monthlyRent || 0), 0);
+        
+        // Calculate actual collected revenue for current month (same as modal)
+        const currentMonth = today.getMonth();
+        const currentYear = today.getFullYear();
+        const totalRevenue = bills
+            .filter(bill => {
+                if (bill.status !== 'paid') return false;
+                const billDate = new Date(bill.paidDate || bill.dueDate);
+                return billDate.getMonth() === currentMonth && 
+                    billDate.getFullYear() === currentYear;
+            })
+            .reduce((total, bill) => total + (bill.totalAmount || 0), 0);
+        
         const totalPaidBills = bills.filter(b => b.status === 'paid').length;
         const totalUnpaidBills = bills.filter(b => b.status === 'pending' || b.status === 'overdue').length;
         const totalMaintenanceOpen = maintenance.filter(m => m.status !== 'completed').length;
@@ -12637,9 +14544,9 @@ class CasaLink {
                             <p style="margin: 5px 0 0 0; font-size: 12px; color: #64748b; font-weight: 500;">${occupiedUnits} of ${totalUnits} Units</p>
                         </div>
                         
-                        <!-- Monthly Revenue Card -->
+                        <!-- Monthly Collection Card -->
                         <div style="background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%); padding: 20px; border-radius: 8px; border: 1px solid #fbcfe8; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-                            <p style="margin: 0; font-size: 11px; color: #475569; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Monthly Revenue</p>
+                            <p style="margin: 0; font-size: 11px; color: #475569; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Monthly Collection</p>
                             <p style="margin: 8px 0 0 0; font-size: 28px; font-weight: 900; color: #be185d;">₱${totalRevenue.toLocaleString('en-PH')}</p>
                             <p style="margin: 5px 0 0 0; font-size: 12px; color: #64748b; font-weight: 500;">Expected Income</p>
                         </div>
@@ -13880,17 +15787,17 @@ class CasaLink {
                 </div>
                 
                 <div style="display: flex; gap: 12px; justify-content: center;">
-                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay')); document.getElementById('apartmentSelector')?.focus();" style="min-width: 180px;">
+                    <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay')); document.getElementById('apartmentSelector')?.focus();" style="min-width: 180px;">
                         <i class="fas fa-chevron-up" style="margin-right: 8px;"></i> Go to Viewing Dropdown
                     </button>
-                    <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                    <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                         Close
                     </button>
                 </div>
             </div>
         `;
         
-        ModalManager.openModal(modalContent, {
+        window.ModalManager.openModal(modalContent, {
             title: '⚠️ Select an Apartment First',
             showFooter: false,
             width: '550px'
@@ -13931,7 +15838,7 @@ class CasaLink {
                 `Unit Occupancy Overview - ${apartmentName}` : 
                 'Unit Occupancy Overview';
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: modalTitle,
                 showFooter: false,
                 width: '95%',
@@ -14035,7 +15942,7 @@ class CasaLink {
                 const footer = document.createElement('div');
                 footer.className = 'modal-footer';
                 footer.innerHTML = `
-                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                    <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                         Close
                     </button>
                 `;
@@ -14507,6 +16414,7 @@ class CasaLink {
                     <tbody>
                         ${payments.map(payment => {
                             const paymentDate = new Date(payment.paymentDate || payment.createdAt);
+                            const paymentStatus = (payment.status || '').toLowerCase();
                             return `
                                 <tr class="payment-row" data-payment-id="${payment.id}" style="cursor: pointer;">
                                     <td>
@@ -14539,6 +16447,11 @@ class CasaLink {
                                             <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.showPaymentDetailsModal('${payment.id}')">
                                                 <i class="fas fa-eye"></i>
                                             </button>
+                                            ${(paymentStatus === 'waiting_verification' || paymentStatus === 'pending_verification') ? `
+                                                <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); casaLink.showPaymentDetailsForVerification('${payment.id}')">
+                                                    <i class="fas fa-check-circle"></i> Verify Payment
+                                                </button>
+                                            ` : ''}
                                         </div>
                                     </td>
                                 </tr>
@@ -14747,7 +16660,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Payment Details',
                 showFooter: false
             });
@@ -14756,7 +16669,7 @@ class CasaLink {
             const paymentDoc = await firebaseDb.collection('payments').doc(paymentId).get();
             
             if (!paymentDoc.exists) {
-                ModalManager.closeModal(modal);
+                window.ModalManager.closeModal(modal);
                 this.showNotification('Payment not found', 'error');
                 return;
             }
@@ -14779,7 +16692,7 @@ class CasaLink {
                 footer.className = 'modal-footer';
                 
                 let actionButtons = `
-                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                    <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                         Close
                     </button>
                     <button class="btn btn-warning" onclick="casaLink.showRefundModal('${payment.id}')">
@@ -14790,7 +16703,7 @@ class CasaLink {
                 // Add Verify button if payment is waiting verification
                 if (payment.status === 'waiting_verification' || payment.status === 'pending_verification') {
                     actionButtons = `
-                        <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                        <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                             Close
                         </button>
                         <button class="btn btn-info" onclick="casaLink.showPaymentDetailsForVerification('${payment.id}')">
@@ -14839,6 +16752,9 @@ class CasaLink {
             'bank_transfer': 'Bank Transfer',
             'check': 'Check'
         };
+        if (!method || typeof method !== 'string') {
+            return 'N/A';
+        }
         return methodMap[method] || method.charAt(0).toUpperCase() + method.slice(1);
     }
 
@@ -15048,12 +16964,49 @@ class CasaLink {
                 }
             }
 
+            // Create activity for bill payment verification
+            try {
+                const ts = new Date().toISOString();
+                const activityData = {
+                    type: 'bill_paid',
+                    paymentId: paymentId,
+                    billId: payment.billId,
+                    tenantId: payment.tenantId,
+                    landlordId: payment.landlordId,
+                    amount: payment.amount,
+                    title: 'Bill Payment Verified',
+                    message: `Payment of ₱${(payment.amount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})} has been verified and bill marked as paid`,
+                    createdAt: ts,
+                    timestamp: ts,
+                    isSeen: 'unseen',
+                    icon: 'fas fa-check-circle',
+                    color: 'var(--success)',
+                    data: {
+                        id: paymentId,
+                        billId: payment.billId,
+                        tenantName: payment.tenantName,
+                        amount: payment.amount,
+                        paymentDate: payment.paymentDate
+                    }
+                };
+
+                if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                    await DataManager.addActivity(activityData);
+                } else if (typeof firebaseDb !== 'undefined') {
+                    await firebaseDb.collection('activities').add(activityData);
+                }
+
+                console.log('✅ Activity created for bill payment verification');
+            } catch (actErr) {
+                console.warn('Could not create activity for bill payment verification:', actErr);
+            }
+
             // Show success message
             this.showNotification('Payment verified successfully! Bill has been marked as paid.', 'success');
 
             // Close modals
             const modals = document.querySelectorAll('.modal-overlay');
-            modals.forEach(modal => ModalManager.closeModal(modal));
+            modals.forEach(modal => window.ModalManager.closeModal(modal));
 
             // Refresh data
             setTimeout(() => {
@@ -15168,7 +17121,7 @@ class CasaLink {
             `;
 
             // Show modal with read-only payment details
-            const detailsModal = ModalManager.openModal(detailsHTML, {
+            const detailsModal = window.ModalManager.openModal(detailsHTML, {
                 title: 'Review Payment for Verification',
                 width: '600px',
                 maxWidth: '100%',
@@ -15184,7 +17137,7 @@ class CasaLink {
                     thumb.addEventListener('click', (e) => {
                         const src = thumb.dataset.full || thumb.src;
                         const imgHTML = `<div style="text-align:center;"><img src="${src}" alt="Payment Evidence Full" style="max-width:100%; max-height:90vh; border-radius:6px;"></div>`;
-                        ModalManager.openModal(imgHTML, {
+                        window.ModalManager.openModal(imgHTML, {
                             title: 'Payment Evidence',
                             width: '90%',
                             maxWidth: '900px',
@@ -15465,7 +17418,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Vacant Units Available',
                 showFooter: false,
                 width: '90%',
@@ -15544,7 +17497,7 @@ class CasaLink {
                 const footer = document.createElement('div');
                 footer.className = 'modal-footer';
                 footer.innerHTML = `
-                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                    <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                         Close
                     </button>
                 `;
@@ -15729,7 +17682,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Occupant Details - All Units',
                 showFooter: false,
                 width: '95%',
@@ -15815,7 +17768,7 @@ class CasaLink {
                 const footer = document.createElement('div');
                 footer.className = 'modal-footer';
                 footer.innerHTML = `
-                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                    <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                         Close
                     </button>
                 `;
@@ -15957,7 +17910,7 @@ class CasaLink {
             const footer = document.createElement('div');
             footer.className = 'modal-footer';
             footer.innerHTML = `
-                <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                     Close
                 </button>
             `;
@@ -16267,56 +18220,20 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Unpaid Bills & Invoices',
                 showFooter: false,
                 width: '95%',
                 maxWidth: '1200px'
             });
 
-            // When possible, perform a server‑side filter by apartment name to ensure
-            // the card and modal are working from the same data set. We still keep the
-            // address-based room filtering as a secondary guard.
+            // Get all bills for the landlord (no apartment filtering)
             const landlordId = this.currentUser?.id || this.currentUser?.uid;
-            const [bills, rooms] = await Promise.all([
-                DataManager.getBillsForApartment(landlordId, this.currentApartmentName),
-                this.getAllRooms()
-            ]);
+            const bills = await DataManager.getBills(landlordId);
 
-            // determine the rooms that belong to the selected apartment (using id/address)
-            let apartmentUnits = [];
-            if (this.currentApartmentId) {
-                apartmentUnits = rooms.filter(r => r.apartmentId === this.currentApartmentId);
-            } else if (this.currentApartmentAddress) {
-                apartmentUnits = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-            }
-            const filteredRoomNumbers = apartmentUnits.map(u => u.roomNumber);
-            const filteredRoomIds = apartmentUnits.map(u => u.id);
+            console.log(`🏢 Unpaid bills for all properties`);
 
-            // now apply the comprehensive filter to the bills list
-            let filteredBills = bills.filter(b => {
-                if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
-                if (this.currentApartmentId && b.apartmentId === this.currentApartmentId) return true;
-                if (!this.currentApartmentId && this.currentApartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
-                if (this.currentApartmentName && ((b.apartment && b.apartment === this.currentApartmentName) ||
-                                                 (b.apartmentName && b.apartmentName === this.currentApartmentName) ||
-                                                 (b.propertyName && b.propertyName === this.currentApartmentName))) {
-                    return true;
-                }
-                if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
-                    if (this.currentApartmentId) {
-                        if (b.apartmentId && b.apartmentId !== this.currentApartmentId) return false;
-                        return true;
-                    } else if (this.currentApartmentAddress) {
-                        if (b.apartmentAddress && b.apartmentAddress !== this.currentApartmentAddress) return false;
-                        return true;
-                    }
-                }
-                return false;
-            });
-            console.log(`🏢 ${filteredBills.length} bills remain after apartment filter (modal)`);
-
-            const unpaidBills = this.getUnpaidBills(filteredBills);
+            const unpaidBills = this.getUnpaidBills(bills);
             const unpaidBillsTable = this.generateUnpaidBillsTable(unpaidBills);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -16345,7 +18262,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Late Payments Overview',
                 showFooter: false,
                 width: '95%',
@@ -16357,39 +18274,9 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
-            // filter using the same comprehensive rules as the unpaid modal/stat loader
-            let apartmentUnits = [];
-            if (this.currentApartmentId) {
-                apartmentUnits = rooms.filter(r => r.apartmentId === this.currentApartmentId);
-            } else if (this.currentApartmentAddress) {
-                apartmentUnits = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-            }
-            const filteredRoomNumbers = apartmentUnits.map(u => u.roomNumber);
-            const filteredRoomIds = apartmentUnits.map(u => u.id);
+            console.log(`🏢 Late payments for all properties`);
 
-            let filteredBills = bills.filter(b => {
-                if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
-                if (this.currentApartmentId && b.apartmentId === this.currentApartmentId) return true;
-                if (!this.currentApartmentId && this.currentApartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
-                if (this.currentApartmentName && ((b.apartment && b.apartment === this.currentApartmentName) ||
-                                                 (b.apartmentName && b.apartmentName === this.currentApartmentName) ||
-                                                 (b.propertyName && b.propertyName === this.currentApartmentName))) {
-                    return true;
-                }
-                if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
-                    if (this.currentApartmentId) {
-                        if (b.apartmentId && b.apartmentId !== this.currentApartmentId) return false;
-                        return true;
-                    } else if (this.currentApartmentAddress) {
-                        if (b.apartmentAddress && b.apartmentAddress !== this.currentApartmentAddress) return false;
-                        return true;
-                    }
-                }
-                return false;
-            });
-            console.log(`🏢 ${filteredBills.length} late-payment bills remain after apartment filter`);
-
-            const latePayments = this.getLatePayments(filteredBills);
+            const latePayments = this.getLatePayments(bills);
             const latePaymentsTable = this.generateLatePaymentsTable(latePayments);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -16420,7 +18307,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Monthly Revenue Breakdown',
                 showFooter: false,
                 width: '95%',
@@ -16435,56 +18322,9 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
-            // comprehensive apartment filter (same logic as unpaid modal)
-            let apartmentUnits = [];
-            if (this.currentApartmentId) {
-                apartmentUnits = rooms.filter(r => r.apartmentId === this.currentApartmentId);
-            } else if (this.currentApartmentAddress) {
-                apartmentUnits = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-            }
-            const filteredRoomNumbers = apartmentUnits.map(u => u.roomNumber);
-            const filteredRoomIds = apartmentUnits.map(u => u.id);
+            console.log(`🏢 Revenue details for all properties`);
 
-            let filteredBills = bills.filter(b => {
-                if (b.roomId && filteredRoomIds.includes(b.roomId)) return true;
-                if (this.currentApartmentId && b.apartmentId === this.currentApartmentId) return true;
-                if (!this.currentApartmentId && this.currentApartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
-                if (this.currentApartmentName && ((b.apartment && b.apartment === this.currentApartmentName) ||
-                                                 (b.apartmentName && b.apartmentName === this.currentApartmentName) ||
-                                                 (b.propertyName && b.propertyName === this.currentApartmentName))) {
-                    return true;
-                }
-                if (b.roomNumber && filteredRoomNumbers.includes(b.roomNumber)) {
-                    if (this.currentApartmentId) {
-                        if (b.apartmentId && b.apartmentId !== this.currentApartmentId) return false;
-                        return true;
-                    } else if (this.currentApartmentAddress) {
-                        if (b.apartmentAddress && b.apartmentAddress !== this.currentApartmentAddress) return false;
-                        return true;
-                    }
-                }
-                return false;
-            });
-
-            let filteredLeases = leases.filter(l => {
-                if (l.roomId && filteredRoomIds.includes(l.roomId)) return true;
-                if (this.currentApartmentId && l.apartmentId === this.currentApartmentId) return true;
-                if (!this.currentApartmentId && this.currentApartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
-                if (this.currentApartmentName && ((l.apartment && l.apartment === this.currentApartmentName) ||
-                                                  (l.apartmentName && l.apartmentName === this.currentApartmentName) ||
-                                                  (l.propertyName && l.propertyName === this.currentApartmentName))) {
-                    return true;
-                }
-                if (l.roomNumber && filteredRoomNumbers.includes(l.roomNumber)) {
-                    if (l.apartmentAddress && this.currentApartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
-                    return true;
-                }
-                return false;
-            });
-
-            console.log(`🏢 ${filteredBills.length} revenue bills and ${filteredLeases.length} leases remain after apartment filter`);
-
-            const revenueData = this.calculateRevenueBreakdown(filteredBills, filteredLeases);
+            const revenueData = this.calculateRevenueBreakdown(bills, leases);
             const revenueTable = this.generateRevenueTable(revenueData);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -16514,7 +18354,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Rent Collection Details',
                 showFooter: false,
                 width: '95%',
@@ -16530,37 +18370,9 @@ class CasaLink {
                 this.getAllRooms()
             ]);
 
-            // FILTER by selected apartment using 3-tier matching
-            let filteredLeases = leases;
-            let filteredBills = bills;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering rent collection by apartment: ${this.currentApartmentAddress}`);
-                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
-                const roomIds = apartmentRooms.map(r => r.id);
-                
-                filteredLeases = leases.filter(l => {
-                    if (l.roomId && roomIds.includes(l.roomId)) return true;
-                    if (l.apartmentAddress && l.apartmentAddress === this.currentApartmentAddress) return true;
-                    if (l.roomNumber && roomNumbers.includes(l.roomNumber)) {
-                        // If lease has apartmentAddress, it must match selected apartment
-                        if (l.apartmentAddress && l.apartmentAddress !== this.currentApartmentAddress) return false;
-                        return true;
-                    }
-                    return false;
-                });
-                
-                filteredBills = bills.filter(b => {
-                    if (b.roomId && roomIds.includes(b.roomId)) return true;
-                    if (b.apartmentAddress && b.apartmentAddress === this.currentApartmentAddress) return true;
-                    if (b.roomNumber && roomNumbers.includes(b.roomNumber)) return true;
-                    return false;
-                });
-            }
-
-            // Calculate collection statistics (using filtered data)
-            const stats = this.calculateRentCollectionStats(tenants, filteredLeases, filteredBills);
-            const collectionTable = this.generateRentCollectionTable(stats, filteredBills);
+            // Calculate collection statistics (using all data - no apartment filtering)
+            const stats = this.calculateRentCollectionStats(tenants, leases, bills);
+            const collectionTable = this.generateRentCollectionTable(stats, bills);
             
             // Update modal content
             const modalBody = modal.querySelector('.modal-body');
@@ -16595,6 +18407,7 @@ class CasaLink {
                                 <thead>
                                     <tr style="background-color: #f8f9fa;">
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Tenant</th>
+                                        <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Apartment</th>
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Room</th>
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Type</th>
                                         <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e9ecef;">Title</th>
@@ -16614,6 +18427,7 @@ class CasaLink {
                                         return `
                                             <tr style="border-bottom: 1px solid #e9ecef;">
                                                 <td style="padding: 12px;">${request.tenantName || 'N/A'}</td>
+                                                <td style="padding: 12px;">${request.apartmentAddress || request.apartmentName || request.propertyName || 'N/A'}</td>
                                                 <td style="padding: 12px;">${request.roomNumber || 'N/A'}</td>
                                                 <td style="padding: 12px; text-transform: capitalize;">${request.type || 'General'}</td>
                                                 <td style="padding: 12px;">
@@ -16867,28 +18681,18 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Maintenance Backlog',
                 showFooter: false,
                 width: '95%',
                 maxWidth: '1200px'
             });
 
-            const [maintenanceRequests, rooms] = await Promise.all([
-                DataManager.getMaintenanceRequests(this.currentUser.uid),
-                this.getAllRooms()
-            ]);
+            const maintenanceRequests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
 
-            // FILTER by selected apartment
-            let filteredMaintenance = maintenanceRequests;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering maintenance backlog by apartment: ${this.currentApartmentAddress}`);
-                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
-                filteredMaintenance = maintenanceRequests.filter(m => roomNumbers.includes(m.roomNumber));
-            }
+            console.log(`🏢 Maintenance backlog for all properties`);
 
-            const backlogData = this.getMaintenanceBacklog(filteredMaintenance);
+            const backlogData = this.getMaintenanceBacklog(maintenanceRequests);
             const backlogTable = this.generateMaintenanceBacklogTable(backlogData);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -16917,28 +18721,18 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Open Maintenance Requests',
                 showFooter: false,
                 width: '95%',
                 maxWidth: '1200px'
             });
 
-            const [maintenanceRequests, rooms] = await Promise.all([
-                DataManager.getMaintenanceRequests(this.currentUser.uid),
-                this.getAllRooms()
-            ]);
+            const maintenanceRequests = await DataManager.getMaintenanceRequests(this.currentUser.uid);
 
-            // FILTER by selected apartment
-            let filteredMaintenance = maintenanceRequests;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering open maintenance by apartment: ${this.currentApartmentAddress}`);
-                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
-                filteredMaintenance = maintenanceRequests.filter(m => roomNumbers.includes(m.roomNumber));
-            }
+            console.log(`🏢 Open maintenance for all properties`);
 
-            const openRequests = this.getOpenMaintenanceRequests(filteredMaintenance);
+            const openRequests = this.getOpenMaintenanceRequests(maintenanceRequests);
             const openRequestsTable = this.generateOpenMaintenanceTable(openRequests);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -16967,28 +18761,18 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Lease Renewals - Next 30 Days',
                 showFooter: false,
                 width: '95%',
                 maxWidth: '1200px'
             });
 
-            const [leases, rooms] = await Promise.all([
-                DataManager.getLandlordLeases(this.currentUser.uid),
-                this.getAllRooms()
-            ]);
+            const leases = await DataManager.getLandlordLeases(this.currentUser.uid);
 
-            // FILTER by selected apartment
-            let filteredLeases = leases;
-            if (this.currentApartmentAddress) {
-                console.log(`🏢 Filtering lease renewals by apartment: ${this.currentApartmentAddress}`);
-                const apartmentRooms = rooms.filter(r => r.apartmentAddress === this.currentApartmentAddress);
-                const roomNumbers = apartmentRooms.map(r => r.roomNumber);
-                filteredLeases = leases.filter(l => roomNumbers.includes(l.roomNumber));
-            }
+            console.log(`🏢 Lease renewals for all properties`);
 
-            const renewalsData = this.getUpcomingRenewals(filteredLeases);
+            const renewalsData = this.getUpcomingRenewals(leases);
             const renewalsTable = this.generateLeaseRenewalsTable(renewalsData);
             
             const modalBody = modal.querySelector('.modal-body');
@@ -17019,12 +18803,29 @@ class CasaLink {
     setupNavigationEvents() {
         // This will handle navigation between pages
         document.addEventListener('click', (e) => {
+            // Handle sidebar toggle for mobile
+            if (e.target.matches('.sidebar-toggle-btn') || e.target.closest('.sidebar-toggle-btn')) {
+                e.preventDefault();
+                this.toggleSidebar();
+                return;
+            }
+
+            // Handle sidebar overlay click (close sidebar)
+            if (e.target.matches('.sidebar-overlay')) {
+                e.preventDefault();
+                this.closeSidebar();
+                return;
+            }
+
             // Handle navigation links
             if (e.target.matches('[data-page]') || e.target.closest('[data-page]')) {
                 e.preventDefault();
                 const page = e.target.getAttribute('data-page') || 
                         e.target.closest('[data-page]').getAttribute('data-page');
                 console.log('🧭 Navigation to:', page);
+                
+                // Close sidebar on mobile after navigation
+                this.closeSidebar();
                 
                 // If navigating to dashboard, it will clear the stored page
                 this.showPage(page);
@@ -17038,24 +18839,71 @@ class CasaLink {
         });
     }
 
+    toggleSidebar() {
+        const sidebar = document.querySelector('.app-sidebar');
+        const overlay = document.querySelector('.sidebar-overlay');
+        const body = document.body;
+        
+        if (!sidebar || !overlay) return;
+        
+        const isOpen = sidebar.classList.contains('sidebar-open');
+        
+        if (isOpen) {
+            this.closeSidebar();
+        } else {
+            this.openSidebar();
+        }
+    }
+
+    openSidebar() {
+        const sidebar = document.querySelector('.app-sidebar');
+        const overlay = document.querySelector('.sidebar-overlay');
+        const body = document.body;
+        
+        if (!sidebar || !overlay) return;
+        
+        sidebar.classList.add('sidebar-open');
+        overlay.classList.add('sidebar-overlay-visible');
+        body.classList.add('sidebar-open');
+        
+        // Update ARIA attributes
+        overlay.setAttribute('aria-hidden', 'false');
+    }
+
+    closeSidebar() {
+        const sidebar = document.querySelector('.app-sidebar');
+        const overlay = document.querySelector('.sidebar-overlay');
+        const body = document.body;
+        
+        if (!sidebar || !overlay) return;
+        
+        sidebar.classList.remove('sidebar-open');
+        overlay.classList.remove('sidebar-overlay-visible');
+        body.classList.remove('sidebar-open');
+        
+        // Update ARIA attributes
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+
     updateActiveNavState(activePage) {
-        // Update header nav
-        const headerNavLinks = document.querySelectorAll('.nav-links a');
-        headerNavLinks.forEach(link => {
+        // Only update the main app navigation state by scoping to the app sidebar and header.
+        document.querySelectorAll('.app-sidebar .nav-link.active').forEach(link => {
             link.classList.remove('active');
-            if (link.getAttribute('data-page') === activePage) {
-                link.classList.add('active');
-            }
         });
 
-        // Update sidebar nav
-        const sidebarLinks = document.querySelectorAll('.sidebar-menu a');
-        sidebarLinks.forEach(link => {
+        document.querySelectorAll('.nav-links a.active').forEach(link => {
             link.classList.remove('active');
-            if (link.getAttribute('data-page') === activePage) {
-                link.classList.add('active');
-            }
         });
+
+        const sidebarLink = document.querySelector(`.app-sidebar .nav-link[data-page="${activePage}"]`);
+        if (sidebarLink) {
+            sidebarLink.classList.add('active');
+        }
+
+        const headerLink = document.querySelector(`.nav-links a[data-page="${activePage}"]`);
+        if (headerLink) {
+            headerLink.classList.add('active');
+        }
     }
 
     // Update URL hash with current page
@@ -17359,9 +19207,11 @@ class CasaLink {
                 this.currentUser = user;
                 this.currentRole = user.role;
                 
-                // Set up real-time activity listener for landlords immediately after login
-                if (this.currentRole === 'landlord') {
+                // Set up real-time activity listener for landlords and tenants immediately after login
+                if (this.currentRole === 'landlord' || this.currentRole === 'tenant') {
                     this.setupActivityRealtimeListener();
+                    // Ensure tenant sees badge immediately
+                    if (this.currentRole === 'tenant') this.loadActivityBadgeCount();
                 }
                 
                 console.log('🔄 Restoring session for:', user.email);
@@ -17432,8 +19282,12 @@ class CasaLink {
                     });
                     
                     // Small delay to ensure DOM is ready
-                    setTimeout(() => {
-                        this.showPage(targetPage);
+                    setTimeout(async () => {
+                        await this.showPage(targetPage);
+                        // Warm up activity log for tenants so badge is populated
+                        if (this.currentRole === 'tenant') {
+                            try { await this.warmupActivityLogForTenant(); } catch (e) { console.warn(e); }
+                        }
                     }, 300);
                 }
             } else {
@@ -17659,6 +19513,11 @@ class CasaLink {
                 // final catch: if the bill has a normalized apartmentName that exactly matches
                 // our current apartmentName, we allow it as well. this covers any edge cases
                 if (b.apartmentName && b.apartmentName === this.currentApartmentName) return true;
+                return false;
+            });
+
+            // Filter maintenance requests by apartment
+            const filteredMaintenance = maintenance.filter(m => {
                 if (m.roomId && filteredRoomIds.includes(m.roomId)) return true;
                 // generic field match
                 if (m.apartment) {
@@ -18015,7 +19874,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Billing Settings',
                 submitText: 'Save Settings',
                 onSubmit: () => this.saveBillingSettings()
@@ -18052,7 +19911,7 @@ class CasaLink {
             }
 
             await DataManager.updateBillingSettings(settings);
-            ModalManager.closeModal(this.billingSettingsModal);
+            window.ModalManager.closeModal(this.billingSettingsModal);
             this.showNotification('Billing settings saved successfully!', 'success');
 
             // Reload billing status
@@ -18179,7 +20038,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Create Custom Bill',
                 submitText: 'Create Bill',
                 onSubmit: () => this.createCustomBill()
@@ -18358,9 +20217,35 @@ class CasaLink {
                 submitBtn.disabled = true;
             }
 
-            await DataManager.createCustomBill(billData);
+            const billId = await DataManager.createCustomBill(billData);
             
-            ModalManager.closeModal(this.createBillModal);
+            // Create activity for bill creation
+            try {
+                const ts = new Date().toISOString();
+                const activityData = {
+                    type: 'bill_created',
+                    billId: billId,
+                    tenantId: billData.tenantId,
+                    landlordId: billData.landlordId,
+                    amount: billData.totalAmount,
+                    title: 'Bill Created',
+                    message: `Custom bill created for ${billData.tenantName} — ${billData.description} (₱${(billData.totalAmount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})})`,
+                    createdAt: ts,
+                    timestamp: ts,
+                    isSeen: 'unseen',
+                    icon: 'fas fa-file-invoice',
+                    color: 'var(--info)'
+                };
+                
+                if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                    await DataManager.addActivity(activityData);
+                    console.log('✅ Activity created for bill:', billId);
+                }
+            } catch (actErr) {
+                console.warn('Could not create activity for bill creation:', actErr);
+            }
+            
+            window.ModalManager.closeModal(this.createBillModal);
             this.showNotification('Custom bill created successfully!', 'success');
 
             // Update activity badge count for landlord
@@ -18599,9 +20484,11 @@ class CasaLink {
 
             // Keep report HTML globally for PDF generation function
             window.currentReportHTML = reportHTML;
+            window.currentReportFilename = 'CasaLink-BillingAndPayments';
+            window.currentReportType = 'Billing and Payments Report';
 
             // Show in modal
-            const modal = ModalManager.openModal(reportHTML, {
+            const modal = window.ModalManager.openModal(reportHTML, {
                 title: 'Billing and Payments - Print Preview',
                 showFooter: true,
                 width: '95%',
@@ -18637,13 +20524,278 @@ class CasaLink {
     }
 
     editBill(billId) {
-        this.showNotification('Edit bill feature coming soon!', 'info');
+        this.showEditBillModal(billId);
+    }
+
+    async showEditBillModal(billId) {
+        try {
+            if (!billId) return;
+
+            const billDoc = await firebaseDb.collection('bills').doc(billId).get();
+            if (!billDoc.exists) {
+                this.showNotification('Bill not found', 'error');
+                return;
+            }
+
+            const bill = { id: billDoc.id, ...DataManager.normalizeBill(billDoc.data()) };
+            const [tenants] = await Promise.all([
+                DataManager.getTenants(this.currentUser.uid)
+            ]);
+
+            const enrichedTenants = await this.enrichTenantsWithApartment(tenants);
+            const tenantOptions = enrichedTenants.map(tenant => `
+                <option value="${tenant.id}" data-room="${tenant.roomNumber}" data-apartment="${tenant.apartment || 'N/A'}" ${tenant.id === bill.tenantId ? 'selected' : ''}>
+                    ${this.escapeHtml(tenant.name)} - ${this.escapeHtml(tenant.roomNumber || 'N/A')} - ${this.escapeHtml(tenant.apartment || 'N/A')}
+                </option>
+            `).join('');
+
+            const dueDateValue = bill.dueDate ? new Date(bill.dueDate).toISOString().slice(0, 10) : '';
+            const totalAmountValue = bill.totalAmount || bill.amount || 0;
+            const billType = bill.type || 'rent';
+            const billItems = bill.items && bill.items.length > 0 ? bill.items : [{ description: bill.description || '', amount: totalAmountValue || 0 }];
+
+            const billItemsHtml = billItems.map(item => `
+                <div class="bill-item" style="display: flex; gap: 10px; margin-bottom: 10px;">
+                    <input type="text" class="form-input item-description" placeholder="Item description" style="flex: 2;" value="${this.escapeHtml(item.description || '')}">
+                    <input type="number" class="form-input item-amount" placeholder="Amount" min="0" step="0.01" style="flex: 1;" value="${parseFloat(item.amount || 0).toFixed(2)}">
+                    <button type="button" class="btn btn-danger btn-sm" onclick="this.parentElement.remove(); casaLink.calculateBillTotal(); casaLink.validateBillForm();">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `).join('');
+
+            const modalContent = `
+                <div class="create-bill-modal">
+                    <div style="text-align: center; margin-bottom: 20px;">
+                        <i class="fas fa-edit" style="font-size: 3rem; color: var(--warning); margin-bottom: 15px;"></i>
+                        <h3 style="margin-bottom: 10px;">Edit Bill</h3>
+                        <p>Update the bill details below.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Tenant *</label>
+                        <select id="billTenant" class="form-input" required>
+                            <option value="">Select a tenant</option>
+                            ${tenantOptions}
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Bill Type *</label>
+                        <select id="billType" class="form-input" required>
+                            <option value="rent" ${billType === 'rent' ? 'selected' : ''}>Monthly Rent</option>
+                            <option value="utility" ${billType === 'utility' ? 'selected' : ''}>Utility Bill</option>
+                            <option value="maintenance" ${billType === 'maintenance' ? 'selected' : ''}>Maintenance Fee</option>
+                            <option value="penalty" ${billType === 'penalty' ? 'selected' : ''}>Penalty Fee</option>
+                            <option value="other" ${billType === 'other' ? 'selected' : ''}>Other</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Description *</label>
+                        <input type="text" id="billDescription" class="form-input" value="${this.escapeHtml(bill.description || '')}" placeholder="e.g., Rent - November 2024" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Due Date *</label>
+                        <input type="date" id="billDueDate" class="form-input" value="${dueDateValue}" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Bill Items *</label>
+                        <div id="billItemsContainer">
+                            ${billItemsHtml}
+                        </div>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="casaLink.addBillItem()">
+                            <i class="fas fa-plus"></i> Add Item
+                        </button>
+                        <div style="margin-top: 10px;">
+                            <strong>Total: ₱<span id="billTotal">${parseFloat(totalAmountValue).toFixed(2)}</span></strong>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Notes (Optional)</label>
+                        <textarea id="billNotes" class="form-input" placeholder="Additional notes about this bill" rows="3">${this.escapeHtml(bill.notes || '')}</textarea>
+                    </div>
+
+                    <div id="editBillError" style="color: var(--danger); display: none; margin-bottom: 15px;"></div>
+                </div>
+            `;
+
+            const modal = window.ModalManager.openModal(modalContent, {
+                title: 'Edit Bill',
+                submitText: 'Save Changes',
+                onSubmit: () => this.submitEditBill(billId)
+            });
+
+            this.editBillModal = modal;
+
+            document.getElementById('billTenant')?.addEventListener('change', () => this.validateBillForm());
+            document.getElementById('billType')?.addEventListener('change', () => this.validateBillForm());
+            document.getElementById('billDescription')?.addEventListener('input', () => this.validateBillForm());
+            document.getElementById('billDueDate')?.addEventListener('change', () => this.validateBillForm());
+
+            const billItemsEl = document.querySelectorAll('.bill-item');
+            billItemsEl.forEach(item => {
+                item.querySelector('.item-description')?.addEventListener('input', () => this.validateBillForm());
+                item.querySelector('.item-amount')?.addEventListener('input', () => {
+                    this.calculateBillTotal();
+                    this.validateBillForm();
+                });
+            });
+
+            this.validateBillForm();
+        } catch (error) {
+            console.error('Error showing edit bill modal:', error);
+            this.showNotification('Failed to open bill editor', 'error');
+        }
+    }
+
+    async submitEditBill(billId) {
+        try {
+            const tenantSelect = document.getElementById('billTenant');
+            const selectedOption = tenantSelect?.options[tenantSelect.selectedIndex];
+            const billType = document.getElementById('billType')?.value;
+            const description = document.getElementById('billDescription')?.value?.trim();
+            const dueDate = document.getElementById('billDueDate')?.value;
+            const notes = document.getElementById('billNotes')?.value?.trim();
+            const errorElement = document.getElementById('editBillError');
+
+            if (errorElement) {
+                errorElement.style.display = 'none';
+                errorElement.textContent = '';
+            }
+
+            if (!tenantSelect?.value) {
+                if (errorElement) {
+                    errorElement.textContent = 'Please select a tenant';
+                    errorElement.style.display = 'block';
+                }
+                return;
+            }
+
+            if (!billType) {
+                if (errorElement) {
+                    errorElement.textContent = 'Please select a bill type';
+                    errorElement.style.display = 'block';
+                }
+                return;
+            }
+
+            if (!description) {
+                if (errorElement) {
+                    errorElement.textContent = 'Please enter a description';
+                    errorElement.style.display = 'block';
+                }
+                return;
+            }
+
+            if (!dueDate) {
+                if (errorElement) {
+                    errorElement.textContent = 'Please select a due date';
+                    errorElement.style.display = 'block';
+                }
+                return;
+            }
+
+            const items = [];
+            const itemElements = document.querySelectorAll('.bill-item');
+            itemElements.forEach(item => {
+                const itemDescription = item.querySelector('.item-description')?.value?.trim();
+                const itemAmount = parseFloat(item.querySelector('.item-amount')?.value) || 0;
+                if (itemDescription && itemAmount > 0) {
+                    items.push({ description: itemDescription, amount: itemAmount, type: 'custom' });
+                }
+            });
+
+            if (items.length === 0) {
+                if (errorElement) {
+                    errorElement.textContent = 'Please add at least one bill item with a description and amount';
+                    errorElement.style.display = 'block';
+                }
+                return;
+            }
+
+            const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
+            if (totalAmount <= 0) {
+                if (errorElement) {
+                    errorElement.textContent = 'Total bill amount must be greater than 0';
+                    errorElement.style.display = 'block';
+                }
+                return;
+            }
+
+            const updates = {
+                tenantId: tenantSelect.value,
+                tenantName: selectedOption?.text.split(' - ')[0] || '',
+                roomNumber: selectedOption?.getAttribute('data-room') || '',
+                apartment: selectedOption?.getAttribute('data-apartment') || '',
+                type: billType,
+                description,
+                dueDate,
+                notes,
+                totalAmount,
+                items,
+                updatedAt: new Date().toISOString()
+            };
+
+            const submitBtn = document.querySelector('#modalSubmit');
+            if (submitBtn) {
+                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+                submitBtn.disabled = true;
+            }
+
+            await DataManager.updateBill(billId, updates);
+
+            const landlordId = this.currentUser?.uid || this.currentUser?.id || updates.landlordId;
+            if (landlordId) {
+                await DataManager.logActivity(landlordId, {
+                    type: 'bill_edited',
+                    title: 'Bill edited',
+                    description: `Bill ${billId} updated: ${description}`,
+                    icon: 'fas fa-edit',
+                    color: 'var(--info)',
+                    data: {
+                        billId,
+                        tenantId: updates.tenantId,
+                        amount: totalAmount,
+                        description
+                    }
+                });
+            }
+
+            if (this.editBillModal) {
+                window.ModalManager.closeModal(this.editBillModal);
+            }
+
+            this.showNotification('Bill updated successfully!', 'success');
+
+            if (typeof this.loadBillsData === 'function') {
+                this.loadBillsData();
+            }
+
+            if (this.currentRole === 'landlord') {
+                setTimeout(() => {
+                    this.loadActivityBadgeCount();
+                }, 500);
+            }
+        } catch (error) {
+            console.error('Error saving edited bill:', error);
+            this.showNotification('Failed to save bill changes', 'error');
+        } finally {
+            const submitBtn = document.querySelector('#modalSubmit');
+            if (submitBtn) {
+                submitBtn.innerHTML = 'Save Changes';
+                submitBtn.disabled = false;
+            }
+        }
     }
 
     async deleteBill(billId) {
         try {
             if (!billId) return;
-            const confirmed = window.confirm('Are you sure you want to delete this bill? This action cannot be undone.');
+            const confirmed = window.confirm('Are you sure you want to delete this bill? It will be moved to Archive and can be restored later.');
             if (!confirmed) return;
 
             if (window.setBillingLoading) window.setBillingLoading(true);
@@ -18962,74 +21114,111 @@ class CasaLink {
         const userAvatar = this.currentUser?.avatar || 'U';
         
         return `
-        <div class="app-container">
-            <header>
-                <div class="container">
-                    <div class="header-content">
-                        <div class="logo">
-                            <i class="fas fa-home"></i>
-                            <span>CasaLink</span>
-                        </div>
-                        
-                        <div class="header-center">
-                            ${isLandlord ? `
-                                <div class="header-slogan">
-                                    <div>Smart Property Management Made Simple</div>
-                                    <div>Streamline your rental properties, tenants, and maintenance from one powerful dashboard</div>
-                                </div>
-                            ` : `
-                                <div class="header-slogan">
-                                    <div>Tenant Portal at Your Fingertips</div>
-                                    <div>Pay bills, request maintenance, and manage your profile all in one place</div>
-                                </div>
-                            `}
-                        </div>
-                        
-                        <div class="header-actions">
-                            <div class="user-profile" id="userProfile" data-page="${isLandlord ? 'landlordProfile' : 'tenantProfile'}" style="cursor: pointer;">
-                                <div class="avatar">${userAvatar}</div>
-                                <div>
-                                    <div style="font-weight: 500;">${userName}</div>
-                                    <div style="font-size: 0.8rem; color: var(--dark-gray);">
-                                        ${isLandlord ? 'Landlord' : 'Tenant'}
-                                    </div>
-                                </div>
-                            </div>
+        <!-- Screen reader announcer -->
+        <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+
+        <!-- Mobile-Responsive Main Layout Container -->
+        <div class="app-layout">
+            
+            <!-- APP HEADER -->
+            <header class="app-header">
+                <!-- Sidebar Toggle Button (Mobile Only) -->
+                <button class="sidebar-toggle-btn" aria-label="Toggle navigation menu" title="Menu">
+                    <i class="fas fa-bars"></i>
+                </button>
+
+                <!-- Header Logo/Title -->
+                <div style="flex: 1; display: flex; align-items: center; gap: 12px;">
+                    <i class="fas fa-home" style="font-size: 20px; color: var(--royal-blue);"></i>
+                    <h1 style="margin: 0; font-size: 18px; white-space: nowrap; color: var(--text-dark);">CasaLink</h1>
+                </div>
+
+                <!-- Header Right (User Profile) -->
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <div class="user-profile" id="userProfile" data-page="${isLandlord ? 'landlordProfile' : 'tenantProfile'}" style="cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 6px; transition: background 0.2s;">
+                        <div class="avatar" style="width: 32px; height: 32px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;">${userAvatar}</div>
+                        <div style="display: none; font-size: 13px;">
+                            <div style="font-weight: 500; color: var(--text-dark);">${userName}</div>
+                            <div style="color: var(--dark-gray);">${isLandlord ? 'Landlord' : 'Tenant'}</div>
                         </div>
                     </div>
                 </div>
             </header>
 
-            <div class="main-content">
-                <aside class="sidebar">
-                    <ul class="sidebar-menu ${isLandlord ? 'landlord-nav' : 'tenant-nav'}">
+            <!-- SIDEBAR OVERLAY (Mobile Background Click Area) -->
+            <div class="sidebar-overlay" aria-hidden="true"></div>
+
+            <!-- APP SIDEBAR NAVIGATION -->
+            <aside class="app-sidebar" role="navigation" aria-label="Main navigation">
+                <nav>
+                    <ul class="nav-list" style="list-style: none; margin: 0; padding: 0;">
                         ${isLandlord ? `
-                            <li><a href="#" class="active" data-page="dashboard"><i class="fas fa-th-large"></i> <span>Dashboard</span></a></li>
-                            <li><a href="#" data-page="properties"><i class="fas fa-building"></i> <span>Properties</span></a></li>
-                            <li><a href="#" data-page="billing"><i class="fas fa-file-invoice-dollar"></i> <span>Billing & Payments</span></a></li>
-                            <li><a href="#" data-page="maintenance"><i class="fas fa-tools"></i> <span>Maintenance</span></a></li>
-                            <li><a href="#" data-page="tenants"><i class="fas fa-users"></i> <span>Tenant Management</span></a></li>
-                            <li><a href="#" data-page="lease-management"><i class="fas fa-file-contract"></i> <span>Lease Management</span></a></li>
-                            <li><a href="#" data-page="archive"><i class="fas fa-archive"></i> <span>Archive</span></a></li>
-                            <li><a href="#" data-page="reports"><i class="fas fa-chart-pie"></i> <span>Reports</span></a></li>
-                            <li><a href="#" data-page="activity-log"><i class="fas fa-history"></i> <span>Activity Log</span><span id="activity-log-count" class="menu-badge" style="display: none;">0</span></a></li>
-                            <li><a href="#" data-page="landlordProfile"><i class="fas fa-user"></i> <span>My Profile</span></a></li>
-                            <li><a href="#" id="logoutBtn"><i class="fas fa-sign-out-alt"></i> <span>Logout</span></a></li>
+                            <!-- Landlord Navigation -->
+                            <li class="nav-item">
+                                <a href="#" class="nav-link active" data-page="dashboard"><i class="fas fa-th-large"></i> <span class="nav-text">Dashboard</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="properties"><i class="fas fa-building"></i> <span class="nav-text">Properties</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="billing"><i class="fas fa-file-invoice-dollar"></i> <span class="nav-text">Billing & Payments</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="maintenance"><i class="fas fa-tools"></i> <span class="nav-text">Maintenance</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="tenants"><i class="fas fa-users"></i> <span class="nav-text">Tenant Management</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="lease-management"><i class="fas fa-file-contract"></i> <span class="nav-text">Lease Management</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="archive"><i class="fas fa-archive"></i> <span class="nav-text">Archive</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="reports"><i class="fas fa-chart-pie"></i> <span class="nav-text">Reports</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="activity-log"><i class="fas fa-history"></i> <span class="nav-text">Activity Log</span><span class="activity-log-count menu-badge" style="display: none; background: var(--danger); color: white; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; margin-left: auto;">0</span></a>
+                            </li>
+                            <li class="nav-item" style="margin-top: auto; border-top: 1px solid #e0e0e0; padding-top: 8px;">
+                                <a href="#" class="nav-link" data-page="landlordProfile"><i class="fas fa-user"></i> <span class="nav-text">My Profile</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" id="logoutBtn"><i class="fas fa-sign-out-alt"></i> <span class="nav-text">Logout</span></a>
+                            </li>
                         ` : `
-                            <li><a href="#" class="active" data-page="dashboard"><i class="fas fa-th-large"></i> <span>Dashboard</span></a></li>
-                            <li><a href="#" data-page="tenantBilling"><i class="fas fa-file-invoice-dollar"></i> <span>Billing & Payments</span></a></li>
-                            <li><a href="#" data-page="tenantMaintenance"><i class="fas fa-tools"></i> <span>Maintenance</span></a></li>
-                            <li><a href="#" data-page="tenantUnit"><i class="fas fa-door-open"></i> <span>Unit Management</span></a></li>
-                            <li><a href="#" data-page="tenantProfile"><i class="fas fa-user"></i> <span>My Profile</span></a></li>
-                            <li><a href="#" id="logoutBtn"><i class="fas fa-sign-out-alt"></i> <span>Logout</span></a></li>
+                            <!-- Tenant Navigation -->
+                            <li class="nav-item">
+                                <a href="#" class="nav-link active" data-page="dashboard"><i class="fas fa-th-large"></i> <span class="nav-text">Dashboard</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="tenantBilling"><i class="fas fa-file-invoice-dollar"></i> <span class="nav-text">Billing & Payments</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="tenantMaintenance"><i class="fas fa-tools"></i> <span class="nav-text">Maintenance</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="tenantUnit"><i class="fas fa-door-open"></i> <span class="nav-text">Unit Management</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" data-page="tenantActivityLog"><i class="fas fa-history"></i> <span class="nav-text">Activity Log</span><span class="activity-log-count menu-badge" style="display: none; background: var(--danger); color: white; border-radius: 50%; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; margin-left: auto;">0</span></a>
+                            </li>
+                            <li class="nav-item" style="margin-top: auto; border-top: 1px solid #e0e0e0; padding-top: 8px;">
+                                <a href="#" class="nav-link" data-page="tenantProfile"><i class="fas fa-user"></i> <span class="nav-text">My Profile</span></a>
+                            </li>
+                            <li class="nav-item">
+                                <a href="#" class="nav-link" id="logoutBtn"><i class="fas fa-sign-out-alt"></i> <span class="nav-text">Logout</span></a>
+                            </li>
                         `}
                     </ul>
-                </aside>
+                </nav>
+            </aside>
 
-                <main class="content-area" id="contentArea">
-                    ${this.getDashboardContentHTML()}
-                </main>
-            </div>
+            <!-- APP MAIN CONTENT AREA -->
+            <main class="app-main" role="main" id="contentArea">
+                ${this.getDashboardContentHTML()}
+            </main>
         </div>
         `;
     }
@@ -19288,9 +21477,10 @@ class CasaLink {
                 this.currentUser = user;
                 this.currentRole = user.role;
 
-                // Set up real-time activity listener for landlords immediately after login
-                if (this.currentRole === 'landlord') {
+                // Set up real-time activity listener for landlords and tenants immediately after manual login
+                if (this.currentRole === 'landlord' || this.currentRole === 'tenant') {
                     this.setupActivityRealtimeListener();
+                    if (this.currentRole === 'tenant') this.loadActivityBadgeCount();
                 }
 
                 // Auto-init ReportsManager for landlord users so Reports page works immediately
@@ -19332,6 +21522,10 @@ class CasaLink {
                     console.log('🔄 No password change required - showing dashboard');
                     setTimeout(() => {
                         this.showDashboard();
+                        // For tenants, warm up activity log immediately after dashboard renders
+                        if (this.currentRole === 'tenant') {
+                            try { this.warmupActivityLogForTenant(); } catch (e) { console.warn(e); }
+                        }
                     }, 500);
                 }
                 
@@ -19545,7 +21739,7 @@ class CasaLink {
         };
 
         // Close current modal and show maintenance staff setup
-        ModalManager.closeModal(modal);
+        window.ModalManager.closeModal(modal);
         this.showMaintenanceStaffSetupModal();
     }
 
@@ -19739,7 +21933,7 @@ class CasaLink {
             }
 
             this.showNotification('Landlord account created successfully! Redirecting...', 'success');
-            ModalManager.closeModal(modal);
+            window.ModalManager.closeModal(modal);
 
             setTimeout(() => {
                 this.showDashboard();
@@ -19869,7 +22063,7 @@ class CasaLink {
             </div>
         `;
 
-        const modal = ModalManager.openModal(modalContent, {
+        const modal = window.ModalManager.openModal(modalContent, {
             title: 'Landlord Sign Up',
             width: '520px',
             submitText: 'Next: Maintenance Staff',
@@ -20032,7 +22226,7 @@ class CasaLink {
             </div>
         `;
 
-        const modal = ModalManager.openModal(modalContent, {
+        const modal = window.ModalManager.openModal(modalContent, {
             title: 'Maintenance Staff Setup',
             width: '520px',
             submitText: 'Complete Setup',
@@ -20212,7 +22406,7 @@ class CasaLink {
 
         if (!this.tempLandlordData) {
             this.showNotification('Setup data not found. Please start over.', 'error');
-            ModalManager.closeModal(modal);
+            window.ModalManager.closeModal(modal);
             return;
         }
 
@@ -20241,7 +22435,7 @@ class CasaLink {
             }
 
             this.showNotification('Landlord account and maintenance staff setup completed successfully!', 'success');
-            ModalManager.closeModal(modal);
+            window.ModalManager.closeModal(modal);
 
             setTimeout(() => {
                 this.showDashboard();
@@ -20286,7 +22480,7 @@ class CasaLink {
                     <p>Loading maintenance request details...</p>
                 </div>
             `;
-            const modal = ModalManager.openModal(loadingContent, {
+            const modal = window.ModalManager.openModal(loadingContent, {
                 title: 'Maintenance Request',
                 showFooter: false
             });
@@ -20309,7 +22503,7 @@ class CasaLink {
             }
 
             if (!docData) {
-                ModalManager.closeModal(modal);
+                window.ModalManager.closeModal(modal);
                 this.showNotification('Maintenance request not found', 'error');
                 return;
             }
@@ -20363,7 +22557,7 @@ class CasaLink {
             const footer = document.createElement('div');
             footer.className = 'modal-footer';
             footer.innerHTML = `
-                <button class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                     Close
                 </button>
             `;
@@ -20371,7 +22565,7 @@ class CasaLink {
 
         } catch (error) {
             console.error('Error viewing tenant maintenance request:', error);
-            ModalManager.openModal(`<div style="padding:20px;"><p>Unable to show request details.</p></div>`, { title: 'Request Details', submitText: 'Close' });
+            window.ModalManager.openModal(`<div style="padding:20px;"><p>Unable to show request details.</p></div>`, { title: 'Request Details', submitText: 'Close' });
         }
     }
 
@@ -20686,26 +22880,80 @@ class CasaLink {
     }
 
     setupActivityRealtimeListener() {
-        if (this.currentRole !== 'landlord') return;
+        // Support both landlords and tenants, not just landlords
+        if (this.currentRole !== 'landlord' && this.currentRole !== 'tenant') return;
         if (this.activityListener) return; // already listening
 
-        const landlordId = this.currentUser?.id || this.currentUser?.uid;
-        if (!landlordId) return;
+        const userId = this.currentUser?.id || this.currentUser?.uid;
+        if (!userId) return;
 
-        console.log('👂 Setting up Activity Log real-time listener (PERSISTENT)...');
+        console.log(`👂 Setting up Activity Log real-time listener (PERSISTENT) for ${this.currentRole}...`);
 
-        this.activityListener = firebaseDb.collection('activities')
-            .where('landlordId', '==', landlordId)
-            .onSnapshot((snapshot) => {
-                console.log('📝 Activity snapshot received:', snapshot.size);
+        // Build query based on role
+        let baseQuery = firebaseDb.collection('activities');
+        if (this.currentRole === 'landlord') {
+            baseQuery = baseQuery.where('landlordId', '==', userId);
+        } else if (this.currentRole === 'tenant') {
+            baseQuery = baseQuery.where('tenantId', '==', userId);
+        }
+
+        this.activityListener = baseQuery.onSnapshot((snapshot) => {
+                console.log(`📝 Activity snapshot received for ${this.currentRole}:`, snapshot.size);
+
+                // Only notify for new items after the first snapshot completes
+                const isInitialSnapshot = !this.activityRealtimeInitialized;
+                snapshot.docChanges().forEach((change) => {
+                    if (!isInitialSnapshot && change.type === 'added') {
+                        const activity = change.doc.data();
+                        if (activity && ['maintenance_request', 'payment_submitted', 'bill_paid'].includes(activity.type)) {
+                            let title = activity.title || 'New Activity';
+                            let body = activity.message || '';
+                            let action = 'view_activity';
+
+                            if (activity.type === 'maintenance_request') {
+                                title = activity.title || 'New Maintenance Request';
+                                body = activity.message || `New maintenance request from ${activity.data?.tenantName || 'a tenant'}`;
+                                action = 'view_maintenance';
+                            } else if (activity.type === 'payment_submitted') {
+                                title = activity.title || 'Payment Submitted';
+                                body = activity.message || `A tenant submitted a payment for review`;
+                                action = 'view_payment';
+                            } else if (activity.type === 'bill_paid') {
+                                title = activity.title || 'Bill Paid';
+                                body = activity.message || `A bill has been marked as paid`;
+                                action = 'view_bill';
+                            }
+
+                            if (window.NotificationManager && typeof window.NotificationManager.showNotification === 'function') {
+                                window.NotificationManager.showNotification(title, {
+                                    body,
+                                    tag: `${activity.type}-${change.doc.id}`,
+                                    icon: '/icons/icon-192x192.png',
+                                    badge: '/icons/icon-72x72.png',
+                                    data: {
+                                        url: window.location.href,
+                                        action
+                                    }
+                                });
+                            }
+                        }
+                    }
+                });
+
+                this.activityRealtimeInitialized = true;
+
                 // Update the badge count in real-time, regardless of current page
                 this.loadActivityBadgeCount();
                 // Only reload recent activities if on activity-log page
-                if (this.currentPage === 'activity-log') {
+                if (this.currentPage === 'activity-log' || this.currentPage === 'tenantActivityLog') {
                     this.loadRecentActivities();
                 }
+                // Also update dashboard activities if on dashboard
+                if (this.currentPage === 'dashboard' && window.dashboardController) {
+                    window.dashboardController.loadRecentActivity();
+                }
             }, (error) => {
-                console.error('❌ Activity realtime listener failed:', error);
+                console.error(`❌ Activity realtime listener failed for ${this.currentRole}:`, error);
             });
         
         // Initial load
@@ -20721,6 +22969,31 @@ class CasaLink {
                 console.warn('⚠️ Error cleaning up activity listener:', err);
             }
             this.activityListener = null;
+        }
+    }
+
+    // Warm up the tenant activity log by briefly opening it and returning
+    // This forces the activity loader to run and ensures the badge count is populated
+    async warmupActivityLogForTenant() {
+        try {
+            if (this.currentRole !== 'tenant') return;
+
+            // Avoid repeating warmup during the same session for same user
+            const warmedKey = `tenantActivityWarmup_${this.currentUser?.id || this.currentUser?.uid}`;
+            if (sessionStorage.getItem(warmedKey)) return;
+            sessionStorage.setItem(warmedKey, '1');
+
+            const previousPage = this.currentPage || 'dashboard';
+            if (previousPage === 'tenantActivityLog') return;
+
+            // Briefly navigate to activity log so its loaders run, then return
+            await this.showPage('tenantActivityLog');
+            // allow some time for loaders/listeners to run
+            await new Promise(r => setTimeout(r, 700));
+            await this.showPage(previousPage);
+            console.log('✅ Tenant activity log warmup completed');
+        } catch (err) {
+            console.warn('⚠️ Tenant activity warmup failed:', err);
         }
     }
 
@@ -20936,6 +23209,10 @@ class CasaLink {
             }));
             // DataManager orders by paymentDate desc but ensure fallback sort
             payments = payments.sort((a, b) => new Date(b.paymentDate || b.updatedAt || b.createdAt || 0) - new Date(a.paymentDate || a.updatedAt || a.createdAt || 0));
+
+            // Enrich payments with apartment info before filtering and dropdown population
+            payments = await this.enrichPaymentsWithApartment(payments);
+
             this.paymentsAllData = payments;
             this.paymentsFilteredData = [...payments];
             this.paymentsCurrentPage = 1;
@@ -21122,7 +23399,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Bill Details',
                 showFooter: false
             });
@@ -21131,7 +23408,7 @@ class CasaLink {
             const billDoc = await firebaseDb.collection('bills').doc(billId).get();
             
             if (!billDoc.exists) {
-                ModalManager.closeModal(modal);
+                window.ModalManager.closeModal(modal);
                 this.showNotification('Bill not found', 'error');
                 return;
             }
@@ -21153,7 +23430,7 @@ class CasaLink {
                 const footer = document.createElement('div');
                 footer.className = 'modal-footer';
                 footer.innerHTML = `
-                    <button class="btn btn-primary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">
+                    <button class="btn btn-primary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">
                         Close
                     </button>
                 `;
@@ -21516,23 +23793,34 @@ class CasaLink {
                                     </td>
                                     <td>
                                         <div class="action-buttons">
-                                            ${bill.status !== 'paid' && bill.status !== 'pending' ? `
-                                                <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); casaLink.verifyPaymentForBill('${bill.id}')">
-                                                    <i class="fas fa-check-circle"></i> Verify
+                                            ${bill.status === 'paid' ? `
+                                                <button class="btn btn-sm btn-info" onclick="event.stopPropagation(); casaLink.showBillDetailsModal('${bill.id}')">
+                                                    <i class="fas fa-eye"></i> View
                                                 </button>
-                                            ` : (bill.status === 'pending' ? `
-                                                <button class="btn btn-sm btn-success" disabled title="Cannot verify pending bills">
-                                                    <i class="fas fa-check-circle"></i> Verify
+                                            ` : `
+                                                <button class="btn btn-sm btn-info" onclick="event.stopPropagation(); casaLink.showBillDetailsModal('${bill.id}')">
+                                                    <i class="fas fa-eye"></i> View
                                                 </button>
-                                            ` : '')}
-                                            ${bill.status !== 'paid' ? `
-                                                <button class="btn btn-sm btn-warning" onclick="event.stopPropagation(); casaLink.editBill('${bill.id}')">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                            ` : ''}
-                                            <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); casaLink.deleteBill('${bill.id}')">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
+                                                ${bill.status !== 'pending' ? `
+                                                    <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); casaLink.verifyPaymentForBill('${bill.id}')">
+                                                        <i class="fas fa-check-circle"></i> Verify
+                                                    </button>
+                                                ` : `
+                                                    <button class="btn btn-sm btn-success" disabled title="Cannot verify pending bills">
+                                                        <i class="fas fa-check-circle"></i> Verify
+                                                    </button>
+                                                `}
+                                                ${bill.status !== 'payment_pending' && bill.status !== 'pending_verification' ? `
+                                                    <button class="btn btn-sm btn-warning" onclick="event.stopPropagation(); casaLink.editBill('${bill.id}')">
+                                                        <i class="fas fa-edit"></i>
+                                                    </button>
+                                                ` : ''}
+                                                ${bill.status !== 'payment_pending' && bill.status !== 'pending_verification' ? `
+                                                    <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); casaLink.deleteBill('${bill.id}')">
+                                                        <i class="fas fa-trash"></i>
+                                                    </button>
+                                                ` : ''}
+                                            `}
                                         </div>
                                     </td>
                                 </tr>
@@ -21806,6 +24094,11 @@ class CasaLink {
                     period: bill.period || ''
                 }
             };
+
+            const tenantId = bill.tenantId || userId || null;
+            const landlordId = bill.landlordId || bill.createdBy || bill.ownerId || paymentData.landlordId || null;
+            paymentData.tenantId = tenantId;
+            paymentData.landlordId = landlordId;
             
             // Handle payment based on user type
             if (isTenant) {
@@ -21829,14 +24122,23 @@ class CasaLink {
                         type: 'payment_submitted',
                         paymentId: paymentId,
                         billId: billId,
-                        tenantId: paymentData.tenantId || null,
-                        landlordId: paymentData.landlordId || null,
+                        tenantId: tenantId,
+                        landlordId: landlordId,
                         amount: paymentAmount,
                         title: 'Payment Submitted',
-                        message: `Tenant submitted a payment for bill ${billId}`,
+                        message: `${paymentData.tenantName || 'Tenant'} submitted ₱${(paymentAmount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})} for approval`,
                         createdAt: ts,
                         timestamp: ts,
-                        isSeen: 'unseen'
+                        isSeen: 'unseen',
+                        icon: 'fas fa-credit-card',
+                        color: 'var(--success)',
+                        data: {
+                            paymentId,
+                            billId,
+                            tenantName: paymentData.tenantName,
+                            roomNumber: paymentData.roomNumber,
+                            amount: paymentAmount
+                        }
                     });
                 } catch (actErr) {
                     console.warn('Could not create activity for payment submission:', actErr);
@@ -21873,14 +24175,14 @@ class CasaLink {
                     try {
                         const ts = new Date().toISOString();
                         await DataManager.addActivity({
-                            type: 'payment_verified',
+                            type: 'payment_received',
                             paymentId: existingPaymentId,
                             billId: billId,
                             landlordId: userId,
                             tenantId: paymentData.tenantId || bill.tenantId || null,
                             amount: paymentAmount,
-                            title: 'Payment Verified',
-                            message: `Landlord verified payment for bill ${billId}`,
+                            title: 'Payment Received',
+                            message: `Payment received and verified for bill ${billId}`,
                             createdAt: ts,
                             timestamp: ts,
                             isSeen: 'unseen'
@@ -21896,14 +24198,14 @@ class CasaLink {
                     try {
                         const ts = new Date().toISOString();
                         await DataManager.addActivity({
-                            type: 'payment_verified',
+                            type: 'payment_received',
                             paymentId: paymentId,
                             billId: billId,
                             landlordId: userId,
                             tenantId: paymentData.tenantId || bill.tenantId || null,
                             amount: paymentAmount,
-                            title: 'Payment Verified',
-                            message: `Landlord recorded and verified payment for bill ${billId}`,
+                            title: 'Payment Received',
+                            message: `Payment received and verified for bill ${billId}`,
                             createdAt: ts,
                             timestamp: ts,
                             isSeen: 'unseen'
@@ -21928,9 +24230,9 @@ class CasaLink {
                 // Close any open modal overlays (be resilient to different modal implementations)
                 try {
                     const overlays = Array.from(document.querySelectorAll('.modal-overlay, .modal-overlay.active, .modal'));
-                    overlays.forEach(o => ModalManager.closeModal(o));
+                    overlays.forEach(o => window.ModalManager.closeModal(o));
                 } catch (closeErr) {
-                    try { ModalManager.closeModal(document.querySelector('.modal-overlay')); } catch(e){}
+                    try { window.ModalManager.closeModal(document.querySelector('.modal-overlay')); } catch(e){}
                 }
 
                 // Record activity for bill paid
@@ -22087,7 +24389,7 @@ class CasaLink {
                 </div>
             `;
             
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Record Payment',
                 submitText: 'Record Payment',
                 width: '600px',
@@ -22162,14 +24464,16 @@ class CasaLink {
             }
 
             // Save payment record
+            let paymentId = null;
             if (typeof DataManager !== 'undefined' && DataManager.recordPayment) {
-                await DataManager.recordPayment(formData);
+                paymentId = await DataManager.recordPayment(formData);
             } else if (typeof firebaseDb !== 'undefined') {
-                await firebaseDb.collection('payments').add({
+                const paymentRef = await firebaseDb.collection('payments').add({
                     ...formData,
                     photoEvidenceURL: formData.photoEvidenceURL || null,
                     processedAt: new Date().toISOString()
                 });
+                paymentId = paymentRef.id;
             }
 
             // Update bill status
@@ -22187,11 +24491,49 @@ class CasaLink {
                 console.warn('Could not update bill status:', e);
             }
 
+            // Create activity for payment submission
+            try {
+                const ts = new Date().toISOString();
+                const activityLandlordId = bill.landlordId || bill.createdBy || bill.ownerId || null;
+                const activityData = {
+                    type: 'payment_submitted',
+                    paymentId: paymentId,
+                    billId: billId,
+                    tenantId: bill.tenantId || null,
+                    landlordId: activityLandlordId,
+                    amount: formData.amount,
+                    title: 'Payment Awaiting Approval',
+                    message: `${bill.tenantName || 'Tenant'} submitted ₱${(formData.amount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})} for approval`,
+                    createdAt: ts,
+                    timestamp: ts,
+                    isSeen: 'unseen',
+                    icon: 'fas fa-credit-card',
+                    color: 'var(--success)',
+                    data: {
+                        paymentId,
+                        billId,
+                        tenantName: bill.tenantName,
+                        roomNumber: bill.roomNumber,
+                        amount: formData.amount
+                    }
+                };
+                
+                if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                    await DataManager.addActivity(activityData);
+                } else if (typeof firebaseDb !== 'undefined') {
+                    await firebaseDb.collection('activities').add(activityData);
+                }
+                
+                console.log('✅ Activity created for payment submission:', billId);
+            } catch (actErr) {
+                console.warn('Could not create activity for payment submission:', actErr);
+            }
+
             // Show success message
             this.showNotification('Payment submitted successfully! Your landlord will verify it shortly.', 'success');
 
             // Close modal
-            ModalManager.closeModal(modal);
+            window.ModalManager.closeModal(modal);
 
             // Refresh bills
             if (window.billingController) {
@@ -23220,7 +25562,7 @@ class CasaLink {
             const modalContent = `
                 <div class="modal-header">
                     <h3>Create New Lease Agreement</h3>
-                    <button class="modal-close" onclick="ModalManager.closeModal()">
+                    <button class="modal-close" onclick="window.ModalManager.closeModal()">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -23275,7 +25617,7 @@ class CasaLink {
                         </div>
                         
                         <div class="form-actions">
-                            <button type="button" class="btn btn-secondary" onclick="ModalManager.closeModal()">Cancel</button>
+                            <button type="button" class="btn btn-secondary" onclick="window.ModalManager.closeModal()">Cancel</button>
                             <button type="submit" class="btn btn-primary">
                                 <i class="fas fa-save"></i> Create Lease
                             </button>
@@ -23284,7 +25626,7 @@ class CasaLink {
                 </div>
             `;
             
-            ModalManager.showModal(modalContent);
+            window.ModalManager.showModal(modalContent);
             
             // Set default dates
             const today = new Date();
@@ -23342,8 +25684,70 @@ class CasaLink {
         }
 
         try {
+            // Fetch tenant details before archiving for activity creation
+            let tenantDetails = null;
+            try {
+                const tenantDoc = await firebaseDb.collection('users').doc(tenantId).get();
+                if (tenantDoc.exists) {
+                    tenantDetails = { id: tenantDoc.id, ...tenantDoc.data() };
+                }
+            } catch (fetchErr) {
+                console.warn('Could not fetch tenant details for activity:', fetchErr);
+            }
+
+            // Get room information from lease if available
+            let roomNumber = 'N/A';
+            let apartmentName = 'N/A';
+            if (tenantDetails && tenantDetails.leaseId) {
+                try {
+                    const leaseDoc = await firebaseDb.collection('leases').doc(tenantDetails.leaseId).get();
+                    if (leaseDoc.exists) {
+                        const leaseData = leaseDoc.data();
+                        roomNumber = leaseData.roomNumber || 'N/A';
+                        apartmentName = leaseData.apartmentName || leaseData.rentalAddress || 'N/A';
+                    }
+                } catch (leaseErr) {
+                    console.warn('Could not fetch lease details for activity:', leaseErr);
+                }
+            }
+
             // Archive tenant record + related leases (will also free up the room)
             await DataManager.archiveTenant(tenantId, { reason: 'deleted by landlord' });
+
+            // Create activity for landlord
+            try {
+                const activityData = {
+                    type: 'tenant_removed',
+                    title: 'Tenant Removed',
+                    message: `Tenant ${tenantDetails?.name || 'Unknown'} has been removed from room ${roomNumber}`,
+                    landlordId: this.currentUser?.id || this.currentUser?.uid,
+                    tenantId: tenantId,
+                    apartmentId: tenantDetails?.apartmentId || tenantDetails?.propertyId,
+                    createdAt: new Date().toISOString(),
+                    timestamp: new Date().toISOString(),
+                    isSeen: 'unseen',
+                    icon: 'fas fa-user-times',
+                    color: 'var(--danger)',
+                    data: {
+                        id: tenantId,
+                        tenantId: tenantId,
+                        tenantName: tenantDetails?.name || 'Unknown Tenant',
+                        roomNumber: roomNumber,
+                        apartmentName: apartmentName,
+                        removedAt: new Date().toISOString()
+                    }
+                };
+
+                if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                    await DataManager.addActivity(activityData);
+                } else if (typeof firebaseDb !== 'undefined') {
+                    await firebaseDb.collection('activities').add(activityData);
+                }
+
+                console.log('✅ Activity created for tenant removal');
+            } catch (actErr) {
+                console.warn('⚠️ Could not create activity for tenant removal:', actErr);
+            }
 
             showNotification('Tenant removed and lease archived successfully', 'success');
             if (this.currentPage === 'tenants') {
@@ -23420,7 +25824,7 @@ class CasaLink {
             }
 
             const leaseModalContent = this.generateLeaseInformationContent(tenantInfo, lease);
-            ModalManager.openModal(leaseModalContent, { title: 'Lease Details', showFooter: true });
+            window.ModalManager.openModal(leaseModalContent, { title: 'Lease Details', showFooter: true });
 
         } catch (error) {
             console.error('Error viewing lease:', error);
@@ -23458,7 +25862,7 @@ class CasaLink {
             }
             
             await DataManager.createLease(leaseData);
-            ModalManager.closeModal();
+            window.ModalManager.closeModal();
             showNotification('Lease created successfully!', 'success');
             
             // Refresh the leases display
@@ -24157,7 +26561,7 @@ class CasaLink {
             </div>
         `;
 
-        const modal = ModalManager.openModal(modalContent, {
+        const modal = window.ModalManager.openModal(modalContent, {
             title: 'Add New Tenant - Step 1 of 3',
             submitText: availableRooms.length === 0 ? 'No Available Rooms' : 'Next: Review Agreement',
             onSubmit: availableRooms.length === 0 ? () => {} : () => this.validateTenantForm()
@@ -24738,7 +27142,7 @@ class CasaLink {
 
             // Close modal and proceed
             if (this.memberInfoModal) {
-                ModalManager.closeModal(this.memberInfoModal);
+                window.ModalManager.closeModal(this.memberInfoModal);
             }
             
             // Add delay for Firestore commit
@@ -24790,7 +27194,7 @@ class CasaLink {
             
             // Close modal if it exists
             if (this.memberInfoModal) {
-                ModalManager.closeModal(this.memberInfoModal);
+                window.ModalManager.closeModal(this.memberInfoModal);
             }
             
             // Show success message
@@ -24893,7 +27297,7 @@ class CasaLink {
                 </div>
             `;
 
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Member Information - Step 1 of 2',
                 submitText: 'Next: Review Lease Agreement',
                 onSubmit: () => this.saveMemberInformation(lease, maxMembers),
@@ -24991,7 +27395,7 @@ class CasaLink {
         });
 
         // Close the first modal and show lease agreement
-        ModalManager.closeModal(this.addTenantModal);
+        window.ModalManager.closeModal(this.addTenantModal);
         await this.showLeaseAgreementModal(null, this.pendingTenantData);
     }
 
@@ -25137,7 +27541,7 @@ class CasaLink {
             </div>
         `;
 
-        const agreementModal = ModalManager.openModal(modalContent, {
+        const agreementModal = window.ModalManager.openModal(modalContent, {
             title: 'Lease Agreement - Step 2 of 3',
             submitText: 'Next: Confirm Creation',
             extraButtons: [
@@ -25147,7 +27551,7 @@ class CasaLink {
                     onClick: () => {
                         try {
                             // Close the lease agreement modal then reopen Add Tenant form
-                            ModalManager.closeModal(this.leaseAgreementModal || agreementModal);
+                            window.ModalManager.closeModal(this.leaseAgreementModal || agreementModal);
                         } catch (e) { /* ignore */ }
 
                         // Small delay to allow modal removal animation/DOM cleanup
@@ -25216,10 +27620,10 @@ class CasaLink {
         `;
 
         // Close the lease agreement modal
-        ModalManager.closeModal(this.leaseAgreementModal);
+        window.ModalManager.closeModal(this.leaseAgreementModal);
 
         // Open password confirmation modal with a Back button to return to the lease agreement
-        const passwordModal = ModalManager.openModal(modalContent, {
+        const passwordModal = window.ModalManager.openModal(modalContent, {
             title: 'Confirm Your Identity - Step 3 of 3',
             submitText: 'Create Tenant Account',
             extraButtons: [
@@ -25228,7 +27632,7 @@ class CasaLink {
                     text: 'Back',
                     onClick: () => {
                         try {
-                            ModalManager.closeModal(this.passwordConfirmationModal);
+                            window.ModalManager.closeModal(this.passwordConfirmationModal);
                         } catch (e) { /* ignore */ }
 
                         // Re-open the Lease Agreement modal after a short delay
@@ -25308,7 +27712,7 @@ class CasaLink {
                 }
                 
                 // Close modal and show success
-                ModalManager.closeModal(this.passwordConfirmationModal);
+                window.ModalManager.closeModal(this.passwordConfirmationModal);
                 this.showNotification('Tenant account and lease created successfully!', 'success');
 
                 // Create activity for new tenant registration
@@ -26337,8 +28741,8 @@ class CasaLink {
                     billType: 'rental',
                     title: 'Auto-generated Rental Bill',
                     message: `Rental bill created for ${tenantData.name}`,
-                    icon: 'fas fa-receipt',
-                    color: 'var(--warning)',
+                    icon: 'fas fa-file-invoice',
+                    color: 'var(--info)',
                     createdAt: new Date().toISOString(),
                     timestamp: new Date().toISOString(),
                     isSeen: 'unseen'
@@ -26399,8 +28803,8 @@ class CasaLink {
                             billType: 'security_deposit',
                             title: 'Auto-generated Security Deposit Bill',
                             message: `Security deposit bill created for ${tenantData.name}`,
-                            icon: 'fas fa-receipt',
-                            color: 'var(--danger)',
+                            icon: 'fas fa-file-invoice',
+                            color: 'var(--info)',
                             createdAt: new Date().toISOString(),
                             timestamp: new Date().toISOString(),
                             isSeen: 'unseen'
@@ -26781,13 +29185,13 @@ class CasaLink {
                 </div>
             `;
             
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Payment Details',
                 showFooter: true,
                 submitText: 'Close',
                 cancelText: null,
                 onSubmit: () => {
-                    ModalManager.closeModal(modal);
+                    window.ModalManager.closeModal(modal);
                 }
             });
             
@@ -27073,17 +29477,17 @@ class CasaLink {
                 </div>
             `;
             
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Bill Details',
                 showFooter: true,
                 submitText: billData.status === 'pending' ? 'Pay Now' : 'Close',
                 cancelText: 'Back',
                 onSubmit: () => {
                     if (billData.status === 'pending') {
-                        ModalManager.closeModal(modal);
+                        window.ModalManager.closeModal(modal);
                         this.showTenantPaymentModal(billId);
                     } else {
-                        ModalManager.closeModal(modal);
+                        window.ModalManager.closeModal(modal);
                     }
                 }
             });
@@ -27172,7 +29576,7 @@ class CasaLink {
                 </div>
             `;
             
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Record Payment',
                 submitText: 'Record Payment',
                 width: '600px',
@@ -27247,14 +29651,16 @@ class CasaLink {
             }
 
             // Save payment record
+            let paymentId = null;
             if (typeof DataManager !== 'undefined' && DataManager.recordPayment) {
-                await DataManager.recordPayment(formData);
+                paymentId = await DataManager.recordPayment(formData);
             } else if (typeof firebaseDb !== 'undefined') {
-                await firebaseDb.collection('payments').add({
+                const paymentRef = await firebaseDb.collection('payments').add({
                     ...formData,
                     photoEvidenceURL: formData.photoEvidenceURL || null,
                     processedAt: new Date().toISOString()
                 });
+                paymentId = paymentRef.id;
             }
 
             // Update bill status
@@ -27272,11 +29678,46 @@ class CasaLink {
                 console.warn('Could not update bill status:', e);
             }
 
+            // Create activity for payment submission
+            try {
+                const ts = new Date().toISOString();
+                const activityLandlordId = formData.landlordId || bill.landlordId || bill.createdBy || bill.ownerId || null;
+                const activityData = {
+                    type: 'payment_submitted',
+                    paymentId: paymentId,
+                    billId: billId,
+                    tenantId: formData.tenantId || bill.tenantId || null,
+                    landlordId: activityLandlordId,
+                    amount: formData.amount,
+                    title: 'Payment Submitted',
+                    message: `${formData.tenantName || 'Tenant'} submitted ₱${(formData.amount || 0).toLocaleString('en-PH', {minimumFractionDigits: 2})} for approval`,
+                    createdAt: ts,
+                    timestamp: ts,
+                    isSeen: 'unseen',
+                    icon: 'fas fa-credit-card',
+                    color: 'var(--success)',
+                    data: {
+                        paymentId,
+                        billId,
+                        tenantName: formData.tenantName,
+                        roomNumber: formData.roomNumber,
+                        amount: formData.amount
+                    }
+                };
+                if (typeof DataManager !== 'undefined' && DataManager.addActivity) {
+                    await DataManager.addActivity(activityData);
+                } else if (typeof firebaseDb !== 'undefined') {
+                    await firebaseDb.collection('activities').add(activityData);
+                }
+            } catch (actErr) {
+                console.warn('Could not create activity for payment submission:', actErr);
+            }
+
             // Show success message
             this.showNotification('Payment submitted successfully! Your landlord will verify it shortly.', 'success');
 
             // Close modal
-            ModalManager.closeModal(modal);
+            window.ModalManager.closeModal(modal);
 
             // Refresh billing page with a slight delay for better UX
             setTimeout(() => {
@@ -27484,7 +29925,7 @@ class CasaLink {
             </div>
         `;
 
-        const modal = ModalManager.openModal(modalContent, {
+        const modal = window.ModalManager.openModal(modalContent, {
             title: 'Change Your Password',
             submitText: 'Update Password & Continue',
             showFooter: true,
@@ -27563,7 +30004,7 @@ class CasaLink {
             });
             
             // Close password change modal
-            ModalManager.closeModal(this.passwordChangeModal);
+            window.ModalManager.closeModal(this.passwordChangeModal);
             
             // Update current user data
             this.currentUser.hasTemporaryPassword = false;
@@ -27801,7 +30242,7 @@ class CasaLink {
             `;
 
             // Open modal
-            const modal = ModalManager.openModal(modalContent, {
+            const modal = window.ModalManager.openModal(modalContent, {
                 title: 'Lease Agreement & Verification - Step 2 of 2',
                 submitText: 'Agree & Submit Verification',
                 onSubmit: () => this.submitLeaseVerification(lease.id)
@@ -27874,7 +30315,7 @@ class CasaLink {
             this.currentUser.requiresPasswordChange = false;
 
             // Close modal
-            ModalManager.closeModal(this.leaseVerificationModal);
+            window.ModalManager.closeModal(this.leaseVerificationModal);
             
             // Show success message
             this.showNotification('Verification submitted successfully! Welcome to CasaLink!', 'success');
@@ -28009,7 +30450,7 @@ window.testAppBinding = function() {
                     <img src="${imageSrc}" style="max-width:100%; max-height:80vh; border-radius:6px;" />
                 </div>
             `;
-            ModalManager.openModal(content, {
+            window.ModalManager.openModal(content, {
                 title: title || 'Image Preview',
                 width: '80vw',
                 maxWidth: '900px',

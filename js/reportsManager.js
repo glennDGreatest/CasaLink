@@ -94,16 +94,24 @@ class ReportsManager {
 
         // anomaly detection
         let anomalies = [];
+        const hasFinancialData = financialReports && financialReports.monthlyRevenue && Array.isArray(financialReports.monthlyRevenue.currentYear) && financialReports.monthlyRevenue.currentYear.length > 0;
+        const hasMaintenanceData = maintenanceReports && Array.isArray(maintenanceReports.total) && maintenanceReports.total.length > 0;
+
         if (this.predictiveAnalytics && typeof this.predictiveAnalytics.detectAnomalies === 'function') {
             anomalies = await this.predictiveAnalytics.detectAnomalies(financialReports, (maintenanceReports && maintenanceReports.maintenance) || {});
         }
         if (!anomalies || !anomalies.length) {
-            anomalies = ['None detected'];
+            anomalies = hasFinancialData || hasMaintenanceData
+                ? ['None detected']
+                : ['Insufficient historical data to detect anomalies.'];
         }
 
         const hasData = !!(
             (financialReports && financialReports.hasData) ||
-            (maintenanceReports && maintenanceReports.hasData)
+            (maintenanceReports && maintenanceReports.hasData) ||
+            (revenueForecast && Array.isArray(revenueForecast.predictions) && revenueForecast.predictions.length > 0) ||
+            (occupancyForecast && Array.isArray(occupancyForecast.predictions) && occupancyForecast.predictions.length > 0) ||
+            (maintenanceForecast && Array.isArray(maintenanceForecast.monthlyPredictions) && maintenanceForecast.monthlyPredictions.length > 0)
         );
 
         // Build actionable recommendations based on ML outputs
@@ -193,10 +201,6 @@ class ReportsManager {
             recommendations.push({ text: 'Address emergency maintenance request(s) immediately.', priority: 'high', explanation: 'One or more maintenance requests flagged as EMERGENCY based on reported severity and age.' });
         }
 
-        if (tenantSentiment.label === 'negative') {
-            recommendations.push({ text: 'Follow up with tenants showing negative sentiment to prevent churn.', priority: 'high', explanation: 'Aggregated tenant feedback shows negative sentiment which correlates with higher churn risk.' });
-        }
-
         if (recommendations.length === 0) {
             if (!hasData) {
                 recommendations.push({ text: 'Not enough data available to generate recommendations.', priority: 'low', explanation: 'Collect more rent, payment, and maintenance history so the system can analyze trends and identify issues.' });
@@ -215,8 +219,8 @@ class ReportsManager {
             maintenanceTriage,
             tenantSentiment,
             anomalies,
-            recommendations
-            ,hasData
+            recommendations,
+            hasData
         };
     }
 
@@ -238,7 +242,19 @@ class ReportsManager {
                 const revenueByUnit = {};
                 let paidCount = 0;
 
-                bills.forEach(b => {
+                // Filter only rent bills for collection rate calculation
+                const rentBills = bills.filter(bill => {
+                    const isRentPayment =
+                        bill.type === 'rent' ||
+                        (bill.description && (
+                            bill.description.toLowerCase().includes('rent') ||
+                            bill.description.toLowerCase().includes('monthly rent') ||
+                            bill.description.toLowerCase().includes('lease payment')
+                        ));
+                    return isRentPayment;
+                });
+
+                rentBills.forEach(b => {
                     const status = b.status || '';
                     if (status.toLowerCase() === 'paid') {
                         paidCount++;
@@ -262,7 +278,7 @@ class ReportsManager {
                     }
                 });
 
-                const collectionRate = bills.length ? Math.round((paidCount / bills.length) * 100) : 0;
+                const collectionRate = rentBills.length ? Math.round((paidCount / rentBills.length) * 100) : 0;
 
                 return {
                     monthlyRevenue: { labels, currentYear, previousYear: currentYear.slice() },
@@ -400,8 +416,51 @@ class ReportsManager {
                 const priorMaintenance = maintenanceSeries.slice(-2, -1)[0] || lastMaintenance;
                 const maintenanceTrend = priorMaintenance ? ((lastMaintenance - priorMaintenance) / priorMaintenance) * 100 : 0;
 
+                const [bills, maintenanceRequests, leases] = await Promise.all([
+                    typeof this.dataManager.getBills === 'function' ? this.dataManager.getBills(landlordId) : Promise.resolve([]),
+                    typeof this.dataManager.getMaintenanceRequests === 'function' ? this.dataManager.getMaintenanceRequests(landlordId) : Promise.resolve([]),
+                    typeof this.dataManager.getLandlordLeases === 'function' ? this.dataManager.getLandlordLeases(landlordId) : Promise.resolve([])
+                ]);
+
+                // Calculate current month revenue (same as modal)
+                const today = new Date();
+                const currentMonth = today.getMonth();
+                const currentYear = today.getFullYear();
+                const currentMonthRevenue = Array.isArray(bills) ? bills
+                    .filter(bill => {
+                        if (bill.status !== 'paid') return false;
+                        const billDate = new Date(bill.paidDate || bill.dueDate);
+                        return billDate.getMonth() === currentMonth && 
+                            billDate.getFullYear() === currentYear;
+                    })
+                    .reduce((total, bill) => total + (bill.totalAmount || 0), 0) : 0;
+
+                const unpaidBills = Array.isArray(bills) ? bills.filter(b => String(b.status || '').toLowerCase() === 'pending').length : 0;
+                const latePayments = Array.isArray(bills)
+                    ? bills.filter(bill => String(bill.status || '').toLowerCase() === 'pending' && bill.dueDate && new Date(bill.dueDate) < new Date()).length
+                    : 0;
+                const openMaintenance = Array.isArray(maintenanceRequests)
+                    ? maintenanceRequests.filter(req => !req.status || String(req.status).toLowerCase() === 'open').length
+                    : 0;
+                const maintenanceBacklog = Array.isArray(maintenanceRequests)
+                    ? maintenanceRequests.filter(req => {
+                        const status = String(req.status || '').toLowerCase();
+                        return status === 'open' || status === 'in-progress' || status === 'pending';
+                    }).length
+                    : 0;
+                const upcomingRenewals = Array.isArray(leases)
+                    ? leases.filter(lease => {
+                        if (!lease.leaseEnd || lease.isActive === false) return false;
+                        const leaseEnd = new Date(lease.leaseEnd);
+                        const today = new Date();
+                        const threshold = new Date();
+                        threshold.setDate(today.getDate() + 30);
+                        return leaseEnd >= today && leaseEnd <= threshold;
+                    }).length
+                    : 0;
+
                 return {
-                    monthlyRevenue: revenueSeries.reduce((a, b) => a + b, 0),
+                    monthlyRevenue: currentMonthRevenue,
                     revenueGrowth: Math.round(revenueGrowth * 10) / 10,
                     occupancyRate: pr.occupancy && (pr.occupancy.occupied + pr.occupancy.vacant) ? Math.round((pr.occupancy.occupied / (pr.occupancy.occupied + pr.occupancy.vacant)) * 100) : 0,
                     occupancyTrend: 0,
@@ -413,7 +472,12 @@ class ReportsManager {
                     renewalTrend: 0,
                     vacantUnits: pr.occupancy ? pr.occupancy.vacant : 0,
                     totalUnits: pr.occupancy ? (pr.occupancy.occupied + pr.occupancy.vacant) : 0,
-                    hasData: !!(fr.hasData || pr.hasData || tr.hasData)
+                    unpaidBills: unpaidBills,
+                    latePayments: latePayments,
+                    openMaintenance: openMaintenance,
+                    maintenanceBacklog: maintenanceBacklog,
+                    upcomingRenewals: upcomingRenewals,
+                    hasData: !!(fr.hasData || pr.hasData || tr.hasData || bills.length || maintenanceRequests.length || leases.length)
                 };
             } catch(err) {
                 console.warn('quick metrics live failure', err);
@@ -577,13 +641,19 @@ class ReportsManager {
         console.log('📤 Exporting report to PDF:', reportType);
         
         try {
-            // Note: This is a placeholder. In a real implementation, you would use a library like jsPDF or pdfkit
-            // For now, we'll trigger the browser's print-to-PDF functionality
+            // Determine a friendly filename for Reports & Analytics exports
+            const reportNames = {
+                landlord_report: 'CasaLink-ReportsAndAnalytics'
+            };
+            const filenameBase = reportNames[reportType] || `CasaLink-${reportType.replace(/_/g, '')}`;
             const currentDate = new Date();
-            const filename = `CasaLink-${reportType}-${currentDate.getFullYear()}${String(currentDate.getMonth() + 1).padStart(2, '0')}${String(currentDate.getDate()).padStart(2, '0')}.pdf`;
+            const filename = `${filenameBase}-${currentDate.getFullYear()}${String(currentDate.getMonth() + 1).padStart(2, '0')}${String(currentDate.getDate()).padStart(2, '0')}.pdf`;
             
-            // This would be implemented with a PDF library
+            // Use the browser print dialog and set the document title so print-to-PDF defaults to the friendly filename
+            const originalTitle = document.title;
+            document.title = filenameBase;
             window.print();
+            setTimeout(() => { document.title = originalTitle; }, 1000);
             
             return { success: true, filename, format: 'PDF' };
         } catch (error) {

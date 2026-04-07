@@ -176,39 +176,137 @@ class DashboardController {
         try {
             window.setDashboardLoading('activity', true);
 
-            // Aggregate activity from various sources
-            const [properties, bills, maintenance] = await Promise.all([
-                this.service.getProperties(),
-                this.service.getBills(),
-                this.service.getMaintenanceRequests()
-            ]);
+            // Load activities from the activities collection (same as activity log)
+            const activities = [];
+            const now = new Date();
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(now.getDate() - 30);
 
-            const activity = [
-                ...properties.map(p => ({
-                    type: 'property',
-                    message: `New property: ${p.name}`,
-                    date: p.createdDate
-                })),
-                ...bills.map(b => ({
-                    type: 'bill',
-                    message: `Bill created for ${b.tenantName}`,
-                    date: b.createdDate
-                })),
-                ...maintenance.map(m => ({
-                    type: 'maintenance',
-                    message: `Maintenance request: ${m.title}`,
-                    date: m.createdDate
-                }))
-            ]
-                .sort((a, b) => new Date(b.date) - new Date(a.date))
-                .slice(0, 10);
+            const userId = this.currentUser?.id || this.currentUser?.uid || null;
+            const isTenant = this.currentUser?.role === 'tenant';
 
-            // Display would go here (not implemented in current views)
+            if (!userId) {
+                console.warn('No user ID available for loading activities');
+                return;
+            }
+
+            try {
+                // Query activities collection for recent activities
+                let activitiesQuery = window.firebaseDb.collection('activities')
+                    .orderBy('timestamp', 'desc')
+                    .limit(10);
+
+                if (!isTenant) {
+                    // Landlord: fetch activities where landlordId matches
+                    activitiesQuery = activitiesQuery.where('landlordId', '==', userId);
+                } else {
+                    // Tenant: fetch activities where tenantId matches
+                    activitiesQuery = activitiesQuery.where('tenantId', '==', userId);
+                }
+
+                const snapshot = await activitiesQuery.get();
+                snapshot.forEach(doc => {
+                    const act = doc.data();
+                    const actDate = new Date(act.timestamp);
+                    if (actDate >= thirtyDaysAgo && actDate <= now) {
+                        activities.push({
+                            type: act.type || 'custom',
+                            title: act.title || 'Activity',
+                            description: act.message || act.description || '',
+                            timestamp: act.timestamp,
+                            icon: act.icon || 'fas fa-info-circle',
+                            color: act.color || 'var(--info)',
+                            data: act,
+                            source: 'activities',
+                            isSeen: act.isSeen === 'seen' ? 'seen' : 'unseen',
+                            activityId: doc.id
+                        });
+                    }
+                });
+            } catch (error) {
+                console.error('Error fetching activities for dashboard:', error);
+            }
+
+            // Display activities in dashboard
+            this.displayDashboardActivities(activities);
         } catch (error) {
             console.error('Error loading recent activity:', error);
         } finally {
             window.setDashboardLoading('activity', false);
         }
+    }
+
+    /**
+     * Display activities in the dashboard
+     */
+    displayDashboardActivities(activities) {
+        const activityList = document.getElementById('activityList');
+        if (!activityList) {
+            console.warn('Dashboard activity list element not found');
+            return;
+        }
+
+        if (!activities || activities.length === 0) {
+            activityList.innerHTML = `
+                <div class="empty-state">
+                    <p>No recent activity</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Sort by timestamp (newest first)
+        activities.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+        // Take only the first 5 for dashboard
+        const recentActivities = activities.slice(0, 5);
+
+        const activitiesHTML = recentActivities.map(activity => {
+            const entityId = (activity.data && (activity.data.apartmentId || activity.data.propertyId || activity.data.id)) || '';
+            const entityPayload = encodeURIComponent(JSON.stringify(activity.data || {}));
+            const statusClass = activity.source === 'activities' ? (activity.isSeen === 'unseen' ? 'unseen-activity' : 'seen-activity') : '';
+
+            return `
+                <div class="activity-item ${statusClass}" 
+                    data-activity-type="${activity.type}" 
+                    data-activity-id="${entityId}"
+                    onclick="window.casaLink?.handleActivityClick && window.casaLink.handleActivityClick(0, '${activity.type}', '${entityId}', '${entityPayload}')">
+                    <div class="activity-icon" style="background: ${activity.color}20; color: ${activity.color};">
+                        <i class="${activity.icon}"></i>
+                    </div>
+                    <div class="activity-content">
+                        <div class="activity-title">
+                            ${activity.title}
+                            ${activity.source === 'activities' && activity.isSeen === 'unseen' ? '<span class="activity-badge unseen-badge">New</span>' : ''}
+                        </div>
+                        <div class="activity-description">${activity.description}</div>
+                        <div class="activity-time">${this.formatActivityTime(activity.timestamp)}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        activityList.innerHTML = activitiesHTML;
+    }
+
+    /**
+     * Format activity timestamp for display
+     */
+    formatActivityTime(timestamp) {
+        const now = new Date();
+        const activityTime = new Date(timestamp);
+        const diffMs = now - activityTime;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHours = Math.floor(diffMs / 3600000);
+        const diffDays = Math.floor(diffMs / 86400000);
+
+        if (diffMins < 1) return 'Just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        if (diffHours < 24) return `${diffHours}h ago`;
+        if (diffDays === 1) return 'Yesterday';
+        if (diffDays < 7) return `${diffDays}d ago`;
+        
+        return activityTime.toLocaleDateString();
     }
 
     /**

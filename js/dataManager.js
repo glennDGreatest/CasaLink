@@ -52,7 +52,7 @@ class DataManager {
                                     floor,
                                     apartmentId: room.apartmentId || null,
                                     apartmentAddress: room.apartmentAddress || '',
-                                    status: room.isAvailable === false ? 'occupied' : 'vacant',
+                                    status: room.status || (room.isAvailable === false ? 'occupied' : 'vacant'),
                                     tenantName: room.occupiedBy ? 'Occupied' : 'Vacant',
                                     numberOfMembers: room.numberOfMembers || 0,
                                     maxMembers: room.maxMembers || 0,
@@ -84,7 +84,7 @@ class DataManager {
                     floor,
                     apartmentId: room.apartmentId || null,
                     apartmentAddress: room.apartmentAddress || '',
-                    status: room.isAvailable === false ? 'occupied' : 'vacant',
+                    status: room.status || (room.isAvailable === false ? 'occupied' : 'vacant'),
                     tenantName: room.occupiedBy ? 'Occupied' : 'Vacant',
                     numberOfMembers: room.numberOfMembers || 0,
                     maxMembers: room.maxMembers || 0,
@@ -717,6 +717,28 @@ class DataManager {
             if (appliedCount > 0) {
                 await batch.commit();
                 console.log(`✅ Applied late fees to ${appliedCount} bills`);
+                
+                // Log activity for late fee application
+                try {
+                    // Get landlord ID from one of the bills
+                    const sampleBill = overdueBills.docs[0].data();
+                    const landlordId = sampleBill.landlordId;
+                    
+                    await this.logActivity(landlordId, {
+                        type: 'late_fees_applied',
+                        title: 'Late Fees Applied',
+                        description: `Applied late fees to ${appliedCount} overdue bills`,
+                        icon: 'fas fa-exclamation-triangle',
+                        color: 'var(--warning)',
+                        data: {
+                            appliedCount,
+                            lateFeeAmount: settings.lateFeeAmount,
+                            lateFeeAfterDays: settings.lateFeeAfterDays
+                        }
+                    });
+                } catch (activityError) {
+                    console.warn('Failed to log late fees activity:', activityError);
+                }
             }
 
             return { applied: appliedCount };
@@ -961,11 +983,31 @@ class DataManager {
                 console.warn('Error resolving apartmentId for maintenance request:', resolveErr);
             }
 
+            // Resolve landlordId from apartment document
+            let landlordId = null;
+            if (normalized.apartmentId) {
+                try {
+                    const aptDoc = await firebaseDb.collection('apartments').doc(normalized.apartmentId).get();
+                    if (aptDoc.exists) {
+                        const apt = aptDoc.data();
+                        landlordId = apt.landlordId;
+                    }
+                } catch (e) {
+                    console.warn('Could not resolve landlordId from apartment:', e);
+                }
+            }
+
+            // Fallback: try to get landlordId from current user if available
+            if (!landlordId && current && current.landlordId) {
+                landlordId = current.landlordId;
+            }
+
             // Ensure required apartment linkage fields exist (even if empty)
             normalized.apartmentId = normalized.apartmentId || '';
             normalized.propertyId = normalized.propertyId || '';
             normalized.apartmentName = normalized.apartmentName || '';
             normalized.apartmentAddress = normalized.apartmentAddress || '';
+            normalized.landlordId = landlordId || '';
 
             // Remove any undefined values (Firestore rejects them)
             Object.keys(normalized).forEach(key => {
@@ -982,6 +1024,42 @@ class DataManager {
             const requestRef = await firebaseDb.collection('maintenance').add(normalized);
 
             console.log('✅ Maintenance request created:', requestRef.id);
+
+            // Create activity for landlord
+            try {
+                if (landlordId) {
+                    const activityData = {
+                        type: 'maintenance_request',
+                        title: 'New Maintenance Request',
+                        message: `New Maintenance Request From ${normalized.createdByName || 'Tenant'}`,
+                        landlordId: landlordId,
+                        tenantId: normalized.tenantId,
+                        apartmentId: normalized.apartmentId,
+                        maintenanceId: requestRef.id,
+                        createdAt: new Date().toISOString(),
+                        timestamp: new Date().toISOString(),
+                        isSeen: 'unseen',
+                        icon: 'fas fa-tools',
+                        color: 'var(--warning)',
+                        data: {
+                            id: requestRef.id,
+                            maintenanceId: requestRef.id,
+                            tenantName: normalized.createdByName,
+                            title: normalized.title,
+                            priority: normalized.priority,
+                            apartmentName: normalized.apartmentName
+                        }
+                    };
+
+                    await this.addActivity(activityData);
+                    console.log('✅ Activity created for maintenance request');
+                } else {
+                    console.warn('⚠️ Could not determine landlordId for maintenance request activity');
+                }
+            } catch (actErr) {
+                console.warn('⚠️ Could not create activity for maintenance request:', actErr);
+            }
+
             return requestRef.id;
         } catch (error) {
             console.error('❌ Error creating maintenance request:', error);
@@ -1252,9 +1330,11 @@ class DataManager {
                 .orderBy('dueDate', 'desc')
                 .get();
                 
-            const bills = billsSnapshot.docs.map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data() || {}) }));
+            const bills = billsSnapshot.docs
+                .map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data() || {}) }))
+                .filter(bill => !bill.archived);
 
-            console.log(`✅ Found ${bills.length} bills for landlord`);
+            console.log(`✅ Found ${bills.length} non-archived bills for landlord`);
             return bills;
             
         } catch (error) {
@@ -1458,6 +1538,9 @@ class DataManager {
                     console.log(`🔎 Checking existing bills for tenant ${lease.tenantName || lease.tenantId} (${lease.tenantId}) - found ${tenantBillsSnap.size} bills`);
                     tenantBillsSnap.forEach(doc => {
                         const b = doc.data() || {};
+                        // Skip archived bills
+                        if (b.archived) return;
+                        
                         const billType = (b.type || b.billType || '').toLowerCase();
                         const dateField = b.dueDate || b.due || b.due_date || b.dueAt || null;
                         let billDate = null;
@@ -1530,11 +1613,38 @@ class DataManager {
                             .limit(1)
                             .get();
                         
-                        if (finalCheckSnap.empty) {
+                        // Filter out archived bills
+                        const activeBills = finalCheckSnap.docs.filter(doc => {
+                            const data = doc.data() || {};
+                            return !data.archived;
+                        });
+                        
+                        if (activeBills.length === 0) {
                             // Safe to create the bill now
-                            await firebaseDb.collection('bills').add(billData);
+                            const billRef = await firebaseDb.collection('bills').add(billData);
                             generatedCount++;
                             console.log(`✅ Generated bill for ${lease.tenantName} (Due: ${paymentDay}${this.getOrdinalSuffix(paymentDay)}) for ${targetYear}-${targetMonth + 1}`);
+                            
+                            // Log activity for bill creation
+                            try {
+                                await this.logActivity(lease.landlordId, {
+                                    type: 'bill_created',
+                                    title: 'Monthly Rent Bill Generated',
+                                    description: `Auto-generated rent bill for ${lease.tenantName} - ${billData.description}`,
+                                    icon: 'fas fa-file-invoice-dollar',
+                                    color: 'var(--success)',
+                                    data: {
+                                        billId: billRef.id,
+                                        tenantId: lease.tenantId,
+                                        tenantName: lease.tenantName,
+                                        amount: billData.totalAmount,
+                                        dueDate: billData.dueDate,
+                                        type: 'auto_generated'
+                                    }
+                                });
+                            } catch (activityError) {
+                                console.warn('Failed to log bill creation activity:', activityError);
+                            }
                         } else {
                             skippedCount++;
                             console.log(`⏭️ Bill was created by another process before we could create it for ${lease.tenantName} - duplicate prevented`);
@@ -2495,7 +2605,7 @@ class DataManager {
                                         try { raw[field] = raw[field].toDate().toISOString(); } catch(e) { console.warn('❗Could not normalize timestamp for', field, e); }
                                     }
                                 });
-                                const normalized = { priority: (raw.priority || 'medium').toString().toLowerCase(), status: (raw.status || 'open').toString().toLowerCase() };
+                                const normalized = { priority: (raw.priority || 'medium').toString().toLowerCase(), status: (raw.status || 'open').toString().toLowerCase().replace(/ /g, '-').replace(/_/g, '-') };
                                 return { id: doc.id, ...raw, ...normalized };
                             });
                         }
@@ -2521,7 +2631,7 @@ class DataManager {
                 // ensure priority/status exist and are normalized
                 const normalized = {
                     priority: (raw.priority || 'medium').toString().toLowerCase(),
-                    status: (raw.status || 'open').toString().toLowerCase(),
+                    status: (raw.status || 'open').toString().toLowerCase().replace(/ /g, '-').replace(/_/g, '-'),
                 };
                 return { id: doc.id, ...raw, ...normalized };
             });
@@ -2537,15 +2647,20 @@ class DataManager {
                 .where('landlordId', '==', landlordId)
                 .get();
             
-            // If no bills found under the expected field, try common alternate landlord fields
-            if (!querySnapshot.size) {
+            const bills = querySnapshot.docs
+                .map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data()) }))
+                .filter(bill => !bill.archived);
+
+            if (!bills.length) {
                 const altFields = ['ownerId', 'createdBy', 'landlord', 'landlord_uid'];
                 for (const f of altFields) {
                     try {
                         const snap = await firebaseDb.collection('bills').where(f, '==', landlordId).get();
                         if (snap && snap.size) {
                             console.warn(`⚠️ getBills: falling back to bills.${f}`);
-                            return snap.docs.map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data()) }));
+                            return snap.docs
+                                .map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data()) }))
+                                .filter(bill => !bill.archived);
                         }
                     } catch (e) {
                         console.warn('getBills fallback query failed for', f, e);
@@ -2553,10 +2668,7 @@ class DataManager {
                 }
             }
 
-            return querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...this.normalizeBill(doc.data())
-            }));
+            return bills;
         } catch (error) {
             console.error('Error getting bills:', error);
             return [];
@@ -2777,23 +2889,8 @@ class DataManager {
             // 2. Setting isPaymentVerified flag appropriately
             // 3. Recording paidAmount and paidDate
             
-            // Create an activity entry for this payment
-            try {
-                await this.addActivity({
-                    type: 'payment_recorded',
-                    paymentId: paymentRef.id,
-                    billId: toSave.billId || null,
-                    tenantId: toSave.tenantId || null,
-                    landlordId: toSave.landlordId || null,
-                    amount: toSave.amount || toSave.paymentAmount || null,
-                    status: toSave.status,
-                    title: 'Payment Recorded',
-                    message: `Payment recorded (status: ${toSave.status})`,
-                    createdAt: new Date().toISOString()
-                });
-            } catch (actErr) {
-                console.warn('Could not create activity for payment:', actErr);
-            }
+            // Payment activities are now created in the payment verification flow
+            // Removed automatic payment_recorded activity creation to avoid duplicates
 
             return paymentRef.id;
             
@@ -2872,7 +2969,9 @@ class DataManager {
             .where('landlordId', '==', landlordId)
             .orderBy('dueDate', 'desc')
             .onSnapshot((snapshot) => {
-                const bills = snapshot.docs.map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data()) }));
+                const bills = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data()) }))
+                    .filter(bill => !bill.archived);
                 callback(bills);
             });
     }
@@ -2882,7 +2981,9 @@ class DataManager {
             .where('tenantId', '==', tenantId)
             .orderBy('dueDate', 'desc')
             .onSnapshot((snapshot) => {
-                const bills = snapshot.docs.map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data()) }));
+                const bills = snapshot.docs
+                    .map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data()) }))
+                    .filter(bill => !bill.archived);
                 callback(bills);
             });
     }
@@ -3647,35 +3748,40 @@ class DataManager {
             const docRef = firebaseDb.doc(`bills/${billId}`);
             const doc = await docRef.get();
             if (!doc.exists) {
-                console.warn('❗ Attempted to delete non-existing bill:', billId);
+                console.warn('❗ Attempted to archive non-existing bill:', billId);
                 return { deleted: false, reason: 'not_found' };
             }
             const docData = doc.data() || {};
-            console.log('🗑️ Deleting bill:', billId, docData);
-            await docRef.delete();
-            console.log('✅ Deleted bill:', billId);
+            console.log('🗑️ Archiving bill:', billId, docData);
 
-            // Log activity for landlord if available
+            const archiveResult = await this.archiveDocument('bills', billId, 'bill', { reason: 'deleted by landlord' });
+            console.log('✅ Archived bill:', billId, archiveResult.id);
+
             try {
-                const landlordId = docData && docData.landlordId ? docData.landlordId : null;
+                const landlordId = docData.landlordId || null;
                 if (landlordId) {
                     const amountVal = docData?.totalAmount ?? docData?.amount ?? 0;
                     await this.logActivity(landlordId, {
                         type: 'bill_deleted',
                         title: 'Bill deleted',
-                        description: `Bill ${doc.id} deleted (${docData?.description || docData?.billNumber || ''})`,
+                        description: `Bill ${billId} deleted (${docData?.description || docData?.billNumber || 'No description'})`,
                         icon: 'fas fa-trash',
                         color: 'var(--danger)',
-                        data: { billId: doc.id, tenantId: docData?.tenantId, amount: amountVal }
+                        data: {
+                            billId,
+                            tenantId: docData?.tenantId,
+                            amount: amountVal,
+                            description: docData?.description || docData?.billNumber || ''
+                        }
                     });
                 }
             } catch (e) {
                 console.warn('Failed to log activity for deleted bill:', e);
             }
 
-            return { deleted: true };
+            return { deleted: true, archived: true, archiveId: archiveResult.id };
         } catch (error) {
-            console.error('❌ Error deleting bill:', error);
+            console.error('❌ Error archiving bill:', error);
             throw error;
         }
     }
@@ -3709,10 +3815,9 @@ class DataManager {
                 .orderBy('dueDate', 'desc')
                 .get();
             
-            const bills = querySnapshot.docs.map(doc => ({
-                id: doc.id,
-                ...this.normalizeBill(doc.data())
-            }));
+            const bills = querySnapshot.docs
+                .map(doc => ({ id: doc.id, ...this.normalizeBill(doc.data()) }))
+                .filter(bill => !bill.archived);
             
             console.log('✅ Fetched', bills.length, 'bills for tenant');
             return bills;

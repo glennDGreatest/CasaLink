@@ -240,15 +240,17 @@ class PropertiesController {
     _roomFormHTML(unit = {}) {
         return `
             <div class="room-form" data-unit-id="${unit.id || ''}" style="border:1px solid #ddd;padding:15px;margin-bottom:10px;position:relative;">
-                <button type="button" class="btn btn-sm btn-danger remove-room-btn" style="position:absolute;top:5px;right:5px;">&times;</button>
+                <button type="button" class="btn btn-sm btn-danger remove-room-btn" style="position:absolute;top:8px;right:8px;padding:2px 5px;font-size:14px;line-height:1;">&times;</button>
                 <div class="form-row" style="gap:10px;flex-wrap:wrap;display:flex;">
                     <div class="form-group" style="flex:1; min-width:150px;">
                         <label class="form-label">Room Number *</label>
                         <input type="text" class="room-number form-input" value="${unit.roomNumber || ''}" required />
+                        <p class="room-number-error" style="color: red; font-size: 12px; margin-top: 3px; display: none;"></p>
                     </div>
                     <div class="form-group" style="flex:1; min-width:120px;">
                         <label class="form-label">Floor *</label>
-                        <input type="number" class="room-floor form-input" min="1" value="${unit.floor || ''}" required />
+                        <input type="number" class="room-floor form-input" min="1" max="${this._editPropertyData?.numberOfFloors || 1}" value="${unit.floor || ''}" required />
+                        <p class="room-floor-error" style="color: red; font-size: 12px; margin-top: 3px; display: none;"></p>
                     </div>
                     <div class="form-group" style="flex:1; min-width:120px;">
                         <label class="form-label">Monthly Rent ₱</label>
@@ -275,7 +277,7 @@ class PropertiesController {
         `;
     }
 
-    _attachRoomFormListeners(formElem) {
+    _attachRoomFormListeners(formElem, onRemoveCallback, existingRoomNumbers = []) {
         const removeBtn = formElem.querySelector('.remove-room-btn');
         if (removeBtn) {
             removeBtn.addEventListener('click', () => {
@@ -285,11 +287,80 @@ class PropertiesController {
                     this._roomsToDelete.push(uid);
                 }
                 formElem.remove();
+                if (typeof onRemoveCallback === 'function') {
+                    onRemoveCallback();
+                }
             });
+        }
+
+        // Validate room number (no duplicates)
+        const roomNumberInput = formElem.querySelector('.room-number');
+        const roomNumberError = formElem.querySelector('.room-number-error');
+        if (roomNumberInput && roomNumberError) {
+            const validateRoomNumber = () => {
+                const roomNumber = roomNumberInput.value.trim();
+                const currentUnitId = formElem.getAttribute('data-unit-id');
+                
+                // ✅ FIX: Dynamically get all other room numbers from the DOM instead of using static snapshot
+                // This ensures we always check against the current state, including newly added rooms
+                const container = formElem.closest('[id*="Container"]') || formElem.parentElement?.parentElement;
+                const otherRoomNumbers = [];
+                if (container) {
+                    const allForms = container.querySelectorAll('.room-form');
+                    allForms.forEach(form => {
+                        if (form !== formElem) {  // Don't check against self
+                            const otherNumber = form.querySelector('.room-number')?.value.trim() || '';
+                            if (otherNumber) {
+                                otherRoomNumbers.push(otherNumber);
+                            }
+                        }
+                    });
+                }
+                
+                const isDuplicate = roomNumber && otherRoomNumbers.includes(roomNumber);
+                
+                if (isDuplicate) {
+                    roomNumberInput.style.borderColor = 'red';
+                    roomNumberInput.style.backgroundColor = '#ffe6e6';
+                    roomNumberError.textContent = 'This room number already exists. Please use a different one.';
+                    roomNumberError.style.display = 'block';
+                } else {
+                    roomNumberInput.style.borderColor = '';
+                    roomNumberInput.style.backgroundColor = '';
+                    roomNumberError.style.display = 'none';
+                }
+            };
+            roomNumberInput.addEventListener('input', validateRoomNumber);
+            roomNumberInput.addEventListener('change', validateRoomNumber);
+            roomNumberInput.addEventListener('blur', validateRoomNumber);
+        }
+
+        // Validate floor (not exceeding max floors)
+        const floorInput = formElem.querySelector('.room-floor');
+        const floorError = formElem.querySelector('.room-floor-error');
+        if (floorInput && floorError) {
+            const validateFloor = () => {
+                const floorValue = parseInt(floorInput.value, 10);
+                const maxFloors = this._editPropertyData?.numberOfFloors || 1;
+                
+                if (floorValue > maxFloors) {
+                    floorInput.style.borderColor = 'red';
+                    floorInput.style.backgroundColor = '#ffe6e6';
+                    floorError.textContent = `This is the highest floor this apartment has (${maxFloors}). If you want to have units beyond this floor, click the Back button and adjust the Number of Floors field accordingly.`;
+                    floorError.style.display = 'block';
+                } else {
+                    floorInput.style.borderColor = '';
+                    floorInput.style.backgroundColor = '';
+                    floorError.style.display = 'none';
+                }
+            };
+            floorInput.addEventListener('change', validateFloor);
+            floorInput.addEventListener('blur', validateFloor);
+            floorInput.addEventListener('input', validateFloor);
         }
     }
 
-    async populateRoomDetails(propertyId, containerEl, refreshCallback) {
+    async populateRoomDetails(propertyId, containerEl, onRemoveCallback) {
         try {
             this._roomsToDelete = [];
             if (!propertyId) return;
@@ -403,12 +474,45 @@ class PropertiesController {
                     }
                 }
             }
+            units.sort((a, b) => {
+                const parseFloor = (value) => {
+                    const numeric = Number(value);
+                    if (!Number.isNaN(numeric) && numeric > 0) return numeric;
+                    const match = String(value || '').trim().match(/^\d+/);
+                    return match ? Number(match[0]) : Number.MAX_SAFE_INTEGER;
+                };
+
+                const aFloor = parseFloor(a.floor || a.roomNumber);
+                const bFloor = parseFloor(b.floor || b.roomNumber);
+                if (aFloor !== bFloor) return aFloor - bFloor;
+
+                const aLabel = String(a.roomNumber || '').trim().toUpperCase();
+                const bLabel = String(b.roomNumber || '').trim().toUpperCase();
+                return aLabel.localeCompare(bLabel, undefined, { numeric: true, sensitivity: 'base' });
+            });
             container.innerHTML = '';
             units.forEach(u => {
                 container.insertAdjacentHTML('beforeend', this._roomFormHTML(u));
+                const newForm = container.lastElementChild;
+                if (newForm) {
+                    const originalData = {
+                        roomNumber: u.roomNumber || '',
+                        floor: String(u.floor || ''),
+                        monthlyRent: String(u.monthlyRent || 0),
+                        securityDeposit: String(u.securityDeposit || 0),
+                        numberOfBedrooms: String(u.numberOfBedrooms || 0),
+                        numberOfBathrooms: String(u.numberOfBathrooms || 0),
+                        maxMembers: String(u.maxMembers || 1)
+                    };
+                    newForm.dataset.originalRoomData = JSON.stringify(originalData);
+                }
             });
-            container.querySelectorAll('.room-form').forEach(f => this._attachRoomFormListeners(f));
-            if (typeof refreshCallback === 'function') refreshCallback();
+            // Get all existing room numbers for duplicate checking
+            const existingRoomNumbers = Array.from(container.querySelectorAll('.room-form')).map(form => ({
+                number: form.querySelector('.room-number')?.value.trim() || '',
+                unitId: form.getAttribute('data-unit-id') || ''
+            })).filter(r => r.number);
+            container.querySelectorAll('.room-form').forEach(f => this._attachRoomFormListeners(f, onRemoveCallback, existingRoomNumbers));
         } catch (err) {
             console.error('Error populating room details:', err);
         }
@@ -417,14 +521,21 @@ class PropertiesController {
     async _saveRoomDetails() {
         const root = document;
         const container = root.querySelector('#editRoomContainer');
-        if (!container) return;
+        if (!container) return { added: [], modified: [], deleted: [] };
+        
+        const roomChanges = {
+            added: [],
+            modified: [],
+            deleted: this._roomsToDelete?.length || 0
+        };
+        
         if (Array.isArray(this._roomsToDelete) && this._roomsToDelete.length > 0) {
             for (const uid of this._roomsToDelete) {
                 try {
-                    await window.firebaseDb.collection('units').doc(uid).delete();
-                    console.log('Deleted unit', uid);
+                    await window.firebaseDb.collection('rooms').doc(uid).delete();
+                    console.log('🗑️ Deleted room', uid);
                 } catch (e) {
-                    console.warn('Failed to delete unit', uid, e);
+                    console.warn('❌ Failed to delete room', uid, e);
                 }
             }
             this._roomsToDelete = [];
@@ -432,6 +543,17 @@ class PropertiesController {
         const forms = container.querySelectorAll('.room-form');
         for (const form of Array.from(forms)) {
             const unitId = form.getAttribute('data-unit-id');
+            
+            // Get apartment address from the editing property for filtering in unit layout
+            const apartmentAddress = this._editingProperty?.address || 
+                                    this._editingProperty?.apartmentAddress || 
+                                    this._editingProperty?.rentalAddress || '';
+            const apartmentName = this._editingProperty?.name || 
+                                 this._editingProperty?.apartmentName || '';
+            const landlordId = this._editingProperty?.landlordId || 
+                              this.currentUser?.uid || 
+                              this.currentUser?.id || '';
+            
             const data = {
                 roomNumber: form.querySelector('.room-number')?.value || '',
                 floor: form.querySelector('.room-floor')?.value || '',
@@ -440,23 +562,51 @@ class PropertiesController {
                 numberOfBedrooms: parseInt(form.querySelector('.room-bedrooms')?.value, 10) || 0,
                 numberOfBathrooms: parseFloat(form.querySelector('.room-bathrooms')?.value) || 0,
                 maxMembers: parseInt(form.querySelector('.room-maxmembers')?.value, 10) || 1,
+                apartmentId: this._currentEditingId,
                 propertyId: this._currentEditingId,
+                apartmentAddress: apartmentAddress,
+                apartmentName: apartmentName,
+                rentalAddress: apartmentAddress,
+                landlordId: landlordId,
                 updatedAt: new Date()
             };
             if (!data.roomNumber) continue;
             try {
                 if (unitId) {
-                    await window.firebaseDb.collection('units').doc(unitId).update(data);
-                    console.log('Updated unit', unitId);
+                    const originalRaw = form.dataset.originalRoomData;
+                    const originalData = originalRaw ? JSON.parse(originalRaw) : {};
+                    const changedFields = {};
+                    if (data.roomNumber !== (originalData.roomNumber || '')) changedFields.roomNumber = data.roomNumber;
+                    if (String(data.floor) !== (originalData.floor || '')) changedFields.floor = data.floor;
+                    if (String(data.monthlyRent) !== (originalData.monthlyRent || '0')) changedFields.monthlyRent = data.monthlyRent;
+                    if (String(data.securityDeposit) !== (originalData.securityDeposit || '0')) changedFields.securityDeposit = data.securityDeposit;
+                    if (String(data.numberOfBedrooms) !== (originalData.numberOfBedrooms || '0')) changedFields.numberOfBedrooms = data.numberOfBedrooms;
+                    if (String(data.numberOfBathrooms) !== (originalData.numberOfBathrooms || '0')) changedFields.numberOfBathrooms = data.numberOfBathrooms;
+                    if (String(data.maxMembers) !== (originalData.maxMembers || '1')) changedFields.maxMembers = data.maxMembers;
+                    if (Object.keys(changedFields).length > 0) {
+                        // For existing rooms, only update when actual values changed
+                        changedFields.updatedAt = new Date();
+                        await window.firebaseDb.collection('rooms').doc(unitId).update({ ...changedFields, apartmentId: this._currentEditingId, propertyId: this._currentEditingId, apartmentAddress, apartmentName, rentalAddress, landlordId });
+                        console.log('✏️ Updated room', unitId, 'with address:', apartmentAddress);
+                        roomChanges.modified.push({ roomNumber: data.roomNumber, floor: data.floor });
+                    } else {
+                        console.log('ℹ️ No changes detected for room', unitId);
+                    }
                 } else {
+                    // For new rooms, set as vacant
                     data.createdAt = new Date();
-                    const ref = await window.firebaseDb.collection('units').add(data);
-                    console.log('Created unit', ref.id);
+                    data.isAvailable = true;
+                    data.status = 'vacant';
+                    const ref = await window.firebaseDb.collection('rooms').add(data);
+                    console.log('✅ Created new room', ref.id, 'with address:', apartmentAddress);
+                    roomChanges.added.push({ roomNumber: data.roomNumber, floor: data.floor });
                 }
             } catch (e) {
-                console.warn('Failed to save unit:', e);
+                console.warn('❌ Failed to save room:', e);
             }
         }
+        
+        return roomChanges;
     }
 
     /**
@@ -503,15 +653,36 @@ class PropertiesController {
                                     <i class="fas fa-spinner fa-spin"></i> Loading property details...
                                 </div>
                                 <div id="propertyDetailsContent" style="display:none;">
-                                    <div id="tab-overview" class="tab-pane"></div>
-                                    <div id="unitsList"></div>
-                                    <div id="maintenanceList"></div>
-                                    <div id="tenantsList"></div>
-                                    <div id="activityList"></div>
+                                    <div class="property-metrics">
+                                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px;">
+                                            <div class="metric"><div class="metric-label">Units</div><div class="metric-value" id="detailsMetricUnits">-</div></div>
+                                            <div class="metric"><div class="metric-label">Occupancy</div><div class="metric-value" id="detailsMetricOccupancy">-</div></div>
+                                            <div class="metric"><div class="metric-label">Expected Rent</div><div class="metric-value" id="detailsMetricExpectedRent">-</div></div>
+                                        </div>
+                                    </div>
+                                    <div class="property-info-grid" style="margin-top: 20px;">
+                                        <div class="info-group" id="groupPropertyName"><label>Name</label><span id="detailsPropertyName">-</span></div>
+                                        <div class="info-group" id="groupPropertyAddress"><label>Address</label><span id="detailsPropertyAddress">-</span></div>
+                                        <div class="info-group" id="groupPropertyCreated"><label>Created</label><span id="detailsPropertyCreated">-</span></div>
+                                        <div class="info-group" id="groupPropertyUpdated"><label>Updated</label><span id="detailsPropertyUpdated">-</span></div>
+                                    </div>
+                                    <div class="property-tabs" style="margin-top: 20px;">
+                                        <button class="tab-button active" data-tab="overview"><i class="fas fa-info-circle"></i> Overview</button>
+                                        <button class="tab-button" data-tab="units"><i class="fas fa-door-open"></i> Units</button>
+                                        <button class="tab-button" data-tab="maintenance"><i class="fas fa-wrench"></i> Maintenance</button>
+                                        <button class="tab-button" data-tab="tenants"><i class="fas fa-users"></i> Tenants</button>
+                                    </div>
+                                    <div class="property-tab-content" style="margin-top: 15px;">
+                                        <div id="tab-overview" class="tab-pane active"></div>
+                                        <div id="tab-units" class="tab-pane"><div id="unitsList"></div></div>
+                                        <div id="tab-maintenance" class="tab-pane"><div id="maintenanceList"></div></div>
+                                        <div id="tab-tenants" class="tab-pane"><div id="tenantsList"></div></div>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="modal-footer">
+                            <div class="modal-footer property-details-footer">
                                 <button class="btn btn-secondary" onclick="if(window.propertiesController) window.propertiesController.closePropertyDetailsModal();">Close</button>
+                                <button class="btn btn-primary" onclick="if(window.propertiesController && typeof window.propertiesController.editPropertyFromDetails==='function') window.propertiesController.editPropertyFromDetails();"><i class="fas fa-edit"></i> Edit Property</button>
                             </div>
                         </div>
                     </div>`;
@@ -519,11 +690,16 @@ class PropertiesController {
                     container.innerHTML = minimal;
                     document.body.appendChild(container.firstElementChild);
                     modal = document.getElementById('propertyDetailsModal');
-                    // wire close button
-                    const closeBtn = document.getElementById('propertyDetailsClose');
-                    if (closeBtn) closeBtn.addEventListener('click', () => this.closePropertyDetailsModal());
+                    if (modal) {
+                        // wire close button
+                        const closeBtn = modal.querySelector('#propertyDetailsClose');
+                        if (closeBtn) closeBtn.addEventListener('click', () => this.closePropertyDetailsModal());
+                        console.log('✅ Property details modal injected successfully');
+                    } else {
+                        console.error('❌ Failed to inject property details modal');
+                    }
                 } catch (injErr) {
-                    console.warn('Could not inject property details modal:', injErr);
+                    console.warn('❌ Could not inject property details modal:', injErr);
                 }
             }
 
@@ -545,53 +721,70 @@ class PropertiesController {
                 this._propertyModalEventsSetup = true;
             }
 
-            // locate modal elements defined in index.html
+            // locate modal elements - verify modal is properly set up
             modal = document.getElementById('propertyDetailsModal');
-            const content = document.getElementById('propertyDetailsContent');
-            const loading = document.getElementById('propertyDetailsLoading');
-
             if (!modal) {
-                console.error('Property details modal not found in DOM after injection');
+                console.error('❌ Property details modal not found in DOM after injection');
+                window.showPropertiesError && window.showPropertiesError('Unable to display property details');
                 return;
             }
+            
+            // Verify critical modal elements exist
+            const content = modal.querySelector('#propertyDetailsContent');
+            const loading = modal.querySelector('#propertyDetailsLoading');
+            if (!content || !loading) {
+                console.error('❌ Critical modal elements missing:', { content: !!content, loading: !!loading });
+                return;
+            }
+            
             // store id so other helpers can access it (edit, etc.)
             modal.dataset.propertyId = propertyId;
 
             // Reset tab UI so every open starts on Overview (fresh state)
-            console.log('Resetting property details modal tabs to Overview');
-            const tabButtons = modal.querySelectorAll('.property-tabs .tab-button');
-            const tabPanes = modal.querySelectorAll('.property-tab-content .tab-pane');
-            tabButtons.forEach(b => b.classList.remove('active'));
-            tabPanes.forEach(p => p.style.display = 'none');
-            const overviewBtn = modal.querySelector('.property-tabs .tab-button[data-tab="overview"]');
-            if (overviewBtn) overviewBtn.classList.add('active');
-            const overviewPane = modal.querySelector('#tab-overview');
-            if (overviewPane) overviewPane.style.display = 'block';
+            console.log('🔄 Resetting property details modal tabs to Overview');
+            try {
+                const tabButtons = modal.querySelectorAll('.property-tabs .tab-button');
+                const tabPanes = modal.querySelectorAll('.property-tab-content .tab-pane');
+                
+                if (tabButtons.length === 0) {
+                    console.warn('⚠️ No tab buttons found in modal - tab structure may be incomplete');
+                } else {
+                    tabButtons.forEach(b => b.classList.remove('active'));
+                    tabPanes.forEach(p => p.style.display = 'none');
+                    const overviewBtn = modal.querySelector('.property-tabs .tab-button[data-tab="overview"]');
+                    if (overviewBtn) overviewBtn.classList.add('active');
+                    const overviewPane = modal.querySelector('#tab-overview');
+                    if (overviewPane) overviewPane.style.display = 'block';
+                    console.log('✅ Tabs reset successfully');
+                }
+            } catch (tabErr) {
+                console.warn('⚠️ Error resetting tabs:', tabErr);
+            }
 
             // reset tab content placeholders
-            const unitsList = document.getElementById('unitsList');
-            if (unitsList) unitsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading units...</p>';
-            const maintenanceList = document.getElementById('maintenanceList');
-            if (maintenanceList) maintenanceList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading maintenance requests...</p>';
-            const tenantsList = document.getElementById('tenantsList');
-            if (tenantsList) tenantsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading tenants...</p>';
-            const activityList = document.getElementById('activityList');
-            if (activityList) activityList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading activity...</p>';
+            try {
+                const unitsList = modal.querySelector('#unitsList');
+                if (unitsList) unitsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading units...</p>';
+                const maintenanceList = modal.querySelector('#maintenanceList');
+                if (maintenanceList) maintenanceList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading maintenance requests...</p>';
+                const tenantsList = modal.querySelector('#tenantsList');
+                if (tenantsList) tenantsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">Loading tenants...</p>';
+            } catch (placeholderErr) {
+                console.warn('⚠️ Error setting placeholder text:', placeholderErr);
+            }
 
             // reset/loading state
-            content && (content.style.display = 'none');
-            loading && (loading.style.display = 'flex');
+            if (content) content.style.display = 'none';
+            if (loading) loading.style.display = 'flex';
             modal.style.display = 'flex';
 
-            // header info - ensure elements exist (modal may be absent on some pages)
-            const nameEl = document.getElementById('propertyDetailsName');
-            const addressEl = document.getElementById('propertyDetailsAddress');
+            // header info - ensure elements exist and use modal scoping
+            const nameEl = modal.querySelector('#propertyDetailsName');
+            const addressEl = modal.querySelector('#propertyDetailsAddress');
             if (!nameEl || !addressEl) {
-                console.warn('Property details modal elements missing; aborting display');
-                window.showPropertiesError && window.showPropertiesError('Property details modal not available on this page');
-                // hide loading spinner if present
-                loading && (loading.style.display = 'none');
-                content && (content.style.display = 'block');
+                console.warn('❌ Property details modal elements missing (nameEl or addressEl)');
+                if (loading) loading.style.display = 'none';
+                if (content) content.style.display = 'block';
                 return;
             }
             nameEl.textContent = 'Property Details';
@@ -605,16 +798,17 @@ class PropertiesController {
             const createdAtValue = property.createdAt || property.created_at || property.createdOn || property.created || null;
             const updatedAtValue = property.updatedAt || property.updated_at || property.updatedOn || property.updated || null;
 
-            const infoNameEl = document.getElementById('detailsPropertyName');
-            const infoNameGroup = document.getElementById('groupPropertyName');
+            // Populate info elements using modal scoping
+            const infoNameEl = modal.querySelector('#detailsPropertyName');
+            const infoNameGroup = modal.querySelector('#groupPropertyName');
             if (infoNameEl && displayName) {
                 infoNameEl.textContent = displayName;
             } else if (infoNameGroup) {
                 infoNameGroup.style.display = 'none';
             }
 
-            const infoAddressEl = document.getElementById('detailsPropertyAddress');
-            const infoAddressGroup = document.getElementById('groupPropertyAddress');
+            const infoAddressEl = modal.querySelector('#detailsPropertyAddress');
+            const infoAddressGroup = modal.querySelector('#groupPropertyAddress');
             if (infoAddressEl && displayAddress) {
                 infoAddressEl.textContent = displayAddress;
             } else if (infoAddressGroup) {
@@ -622,8 +816,8 @@ class PropertiesController {
             }
 
             // created/updated timestamps
-            const createdEl = document.getElementById('detailsPropertyCreated');
-            const updatedEl = document.getElementById('detailsPropertyUpdated');
+            const createdEl = modal.querySelector('#detailsPropertyCreated');
+            const updatedEl = modal.querySelector('#detailsPropertyUpdated');
             if (createdEl) {
                 createdEl.textContent = createdAtValue ? this.formatDate(createdAtValue) : '-';
             }
@@ -631,18 +825,12 @@ class PropertiesController {
                 updatedEl.textContent = updatedAtValue ? this.formatDate(updatedAtValue) : '-';
             }
 
-            // Populate stories metric (moved to the metrics grid)
-            const storiesMetricEl = document.getElementById('detailsMetricStories');
+            // Populate stories metric
+            const storiesMetricEl = modal.querySelector('#detailsMetricStories');
             if (storiesMetricEl) {
                 const storiesValue = property.numberOfFloors != null ? property.numberOfFloors : (property.numberOfStories != null ? property.numberOfStories : '-');
                 storiesMetricEl.textContent = storiesValue;
             }
-
-            // hide year built / sqft rows as they are not stored
-            ['detailsPropertyYearBuilt','detailsPropertySqft'].forEach(id=>{
-                const el = document.getElementById(id);
-                if (el) el.closest('.info-group').style.display = 'none';
-            });
 
             // Metrics calculations (occupancy, expected/actual rent, maintenance)
             const propertyNameForQuery = property.apartmentName || property.name || property.apartmentAddress || property.address || '';
@@ -724,25 +912,25 @@ class PropertiesController {
             const propertyLeases = leases.filter(l => leaseMatchesProperty(l) && isActiveLease(l));
             const occupiedUnits = propertyLeases.length;
 
-            // Total units should reflect numberOfRooms (or totalUnits) if available, otherwise fall back to fetched units
+            // Total units and metrics using modal scoping
             const totalUnits = property.numberOfRooms != null ? property.numberOfRooms : (property.totalUnits != null ? property.totalUnits : (units || []).length);
-            const unitsEl = document.getElementById('detailsMetricUnits');
+            const unitsEl = modal.querySelector('#detailsMetricUnits');
             if (unitsEl) unitsEl.textContent = totalUnits;
 
             const occupancyRateFinal = totalUnits > 0 ? Math.round((occupiedUnits / totalUnits) * 100) : 0;
-            const occupancyEl = document.getElementById('detailsMetricOccupancy');
+            const occupancyEl = modal.querySelector('#detailsMetricOccupancy');
             if (occupancyEl) occupancyEl.textContent = `${occupancyRateFinal}%`;
 
-            // Expected rent: sum of monthly rent from active leases (fallback to unit rents)
+            // Expected rent using modal scoping
             let expectedRent = propertyLeases.reduce((sum, lease) => sum + (lease.monthlyRent || 0), 0);
             if (!expectedRent && units && units.length) {
                 expectedRent = units.reduce((sum, u) => sum + (u.monthlyRent || u.rent || 0), 0);
             }
-            const expectedEl = document.getElementById('detailsMetricExpectedRent');
+            const expectedEl = modal.querySelector('#detailsMetricExpectedRent');
             if (expectedEl) expectedEl.textContent = `₱${(expectedRent || 0).toLocaleString()}`;
 
-            // Actual rent collection: sum of paid bills this month for this apartment
-            const actualEl = document.getElementById('detailsMetricActualRent');
+            // Actual rent using modal scoping
+            const actualEl = modal.querySelector('#detailsMetricActualRent');
             if (actualEl) {
                 let actualRent = 0;
                 try {
@@ -813,12 +1001,18 @@ class PropertiesController {
                 return false;
             });
             const openMaintenance = (matchingMaintenance || []).filter(m => m.status !== 'completed').length;
-            document.getElementById('detailsMetricMaintenance').textContent = openMaintenance;
+            const maintenanceMetricEl = modal.querySelector('#detailsMetricMaintenance');
+            if (maintenanceMetricEl) {
+                maintenanceMetricEl.textContent = openMaintenance;
+            }
 
-            // overview tab
+            // overview tab - using modal scoping
             const addressStr = property.apartmentAddress || property.address || property.propertyAddress || property.location || '';
-            document.getElementById('detailsFullAddress').textContent = addressStr;
-            const descEl = document.getElementById('detailsDescription');
+            const fullAddressEl = modal.querySelector('#detailsFullAddress');
+            if (fullAddressEl) {
+                fullAddressEl.textContent = addressStr;
+            }
+            const descEl = modal.querySelector('#detailsDescription');
             if (descEl) {
                 if (property.description) {
                     descEl.textContent = property.description;
@@ -832,7 +1026,7 @@ class PropertiesController {
             }
 
             // amenities
-            const amenitiesEl = document.getElementById('detailsAmenities');
+            const amenitiesEl = modal.querySelector('#detailsAmenities');
             if (amenitiesEl) {
                 if (property.amenities && property.amenities.length > 0) {
                     amenitiesEl.innerHTML = property.amenities.map(a =>
@@ -844,22 +1038,21 @@ class PropertiesController {
             }
 
             // populate tabs (units, maintenance, tenants, activity)
-            // pass the full property object so tab population can match by name/address
-            await this._populatePropertyDetailsTabs(propertyId, units, maintenanceRequests, property);
+            // pass the full property object and modal so tab population can match by name/address
+            if (modal) {
+                await this._populatePropertyDetailsTabs(modal, propertyId, units, maintenanceRequests, property);
 
-            // tab switching helper
-            this._setupPropertyDetailsTabs();
+                // tab switching helper
+                this._setupPropertyDetailsTabs(modal);
 
-            // show content
-            loading && (loading.style.display = 'none');
-            content && (content.style.display = 'block');
+                // show content
+                if (loading) loading.style.display = 'none';
+                if (content) content.style.display = 'block';
 
-            console.log('Modal rendered successfully');
-        } catch (error) {
-            console.error('Error fetching property for modal:', error);
-            window.showPropertiesError('Failed to load property details: ' + error.message);
-            const modal = document.getElementById('propertyDetailsModal');
-            if (modal) modal.style.display = 'none';
+                console.log('✅ Modal rendered successfully');
+            } else {
+                console.error('❌ Modal reference lost before populating tabs');
+            }
         } finally {
             window.setPropertiesLoading(false);
         }
@@ -976,6 +1169,7 @@ class PropertiesController {
         // store original values so we can re-popaint when navigating back
         this._editingProperty = property;
         this._editPropertyData = {
+            landlordId: property.landlordId || this.currentUser?.uid || this.currentUser?.id || '',
             name: property.name || '',
             address: property.address || '',
             description: property.description || '',
@@ -1017,13 +1211,13 @@ class PropertiesController {
                     </select>
                 </div>
                 <div style="margin-top: 25px; display: flex; gap: 10px; justify-content: flex-end;">
-                    <button type="button" class="btn btn-secondary" onclick="ModalManager.closeModal(this.closest('.modal-overlay'))">Cancel</button>
+                    <button type="button" class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Cancel</button>
                     <button type="button" class="btn btn-primary" id="editNextBtn">Next: Room Details</button>
                 </div>
             </div>
         `;
 
-        const modal = window.modalManager.openModal(buildStep1(), {
+        const modal = window.ModalManager.openModal(buildStep1(), {
             title: 'Edit Property',
             showFooter: false,
             width: '600px'
@@ -1036,6 +1230,76 @@ class PropertiesController {
         // helpers to switch steps
         const showStep1 = () => {
             modal.querySelector('.modal-body').innerHTML = buildStep1();
+            
+            const activeRoomCount = typeof this._currentStep2RoomCount === 'number' ? this._currentStep2RoomCount : (this._actualCurrentRoomCount || 0);
+            const activeMaxFloor = typeof this._currentMaxRoomFloor === 'number' ? this._currentMaxRoomFloor : (this._actualMaxRoomFloor || 0);
+            const minRooms = Math.max(activeRoomCount, 1);
+            const minFloors = Math.max(activeMaxFloor, 1);
+            
+            const editPropertyRoomsField = modal.querySelector('#editPropertyRooms');
+            const roomsErrorElement = document.createElement('p');
+            roomsErrorElement.id = 'editPropertyRoomsError';
+            roomsErrorElement.style.color = 'red';
+            roomsErrorElement.style.fontSize = '12px';
+            roomsErrorElement.style.marginTop = '3px';
+            roomsErrorElement.style.display = 'none';
+            editPropertyRoomsField.parentElement.appendChild(roomsErrorElement);
+            
+            const editPropertyFloorsField = modal.querySelector('#editPropertyFloors');
+            const floorsErrorElement = document.createElement('p');
+            floorsErrorElement.id = 'editPropertyFloorsError';
+            floorsErrorElement.style.color = 'red';
+            floorsErrorElement.style.fontSize = '12px';
+            floorsErrorElement.style.marginTop = '3px';
+            floorsErrorElement.style.display = 'none';
+            editPropertyFloorsField.parentElement.appendChild(floorsErrorElement);
+            
+            if (editPropertyRoomsField) {
+                editPropertyRoomsField.setAttribute('min', minRooms);
+                const validateRoomCount = () => {
+                    const roomsValue = parseInt(editPropertyRoomsField.value, 10) || 0;
+                    if (roomsValue < minRooms) {
+                        editPropertyRoomsField.value = minRooms;
+                        this._editPropertyData.numberOfRooms = minRooms;
+                        editPropertyRoomsField.style.borderColor = 'red';
+                        editPropertyRoomsField.style.backgroundColor = '#ffe6e6';
+                        roomsErrorElement.textContent = `Number of Rooms cannot be less than the current number of rooms in Step 2 (${minRooms}). Delete rooms in Step 2 first.`;
+                        roomsErrorElement.style.display = 'block';
+                    } else {
+                        editPropertyRoomsField.style.borderColor = '';
+                        editPropertyRoomsField.style.backgroundColor = '';
+                        roomsErrorElement.style.display = 'none';
+                        this._editPropertyData.numberOfRooms = roomsValue;
+                    }
+                };
+                editPropertyRoomsField.addEventListener('input', validateRoomCount);
+                editPropertyRoomsField.addEventListener('change', validateRoomCount);
+                editPropertyRoomsField.addEventListener('blur', validateRoomCount);
+            }
+            
+            if (editPropertyFloorsField) {
+                editPropertyFloorsField.setAttribute('min', minFloors);
+                const validateFloorCount = () => {
+                    const floorsValue = parseInt(editPropertyFloorsField.value, 10) || 0;
+                    if (floorsValue < minFloors) {
+                        editPropertyFloorsField.value = minFloors;
+                        this._editPropertyData.numberOfFloors = minFloors;
+                        editPropertyFloorsField.style.borderColor = 'red';
+                        editPropertyFloorsField.style.backgroundColor = '#ffe6e6';
+                        floorsErrorElement.textContent = `Number of Floors cannot be less than the highest existing occupied floor (${minFloors}). Delete or move those units first.`;
+                        floorsErrorElement.style.display = 'block';
+                    } else {
+                        editPropertyFloorsField.style.borderColor = '';
+                        editPropertyFloorsField.style.backgroundColor = '';
+                        floorsErrorElement.style.display = 'none';
+                        this._editPropertyData.numberOfFloors = floorsValue;
+                    }
+                };
+                editPropertyFloorsField.addEventListener('input', validateFloorCount);
+                editPropertyFloorsField.addEventListener('change', validateFloorCount);
+                editPropertyFloorsField.addEventListener('blur', validateFloorCount);
+            }
+            
             const nextBtn = modal.querySelector('#editNextBtn');
             if (nextBtn) {
                 nextBtn.addEventListener('click', () => {
@@ -1047,9 +1311,33 @@ class PropertiesController {
                     const rooms = parseInt(modal.querySelector('#editPropertyRooms').value, 10) || 0;
                     const desc = modal.querySelector('#editPropertyDescription').value.trim();
                     const status = modal.querySelector('#editPropertyStatus').value;
+                    const activeRoomCount = typeof this._currentStep2RoomCount === 'number' ? this._currentStep2RoomCount : (this._actualCurrentRoomCount || 0);
+                    const activeMaxFloor = typeof this._currentMaxRoomFloor === 'number' ? this._currentMaxRoomFloor : (this._actualMaxRoomFloor || 0);
+                    const minRooms = Math.max(activeRoomCount, 0);
+                    const minFloors = Math.max(activeMaxFloor, 1);
+
+                    if (rooms < minRooms) {
+                        const msg = `Number of Rooms cannot be less than the current number of rooms in Step 2 (${minRooms}). Delete rooms in Step 2 first.`;
+                        if (window.notificationManager && typeof window.notificationManager.error === 'function') {
+                            window.notificationManager.error(msg);
+                        } else {
+                            alert(msg);
+                        }
+                        return;
+                    }
+
+                    if (floors < minFloors) {
+                        const msg = `Number of Floors cannot be less than the highest occupied floor (${minFloors}). Delete or move those units first.`;
+                        if (window.notificationManager && typeof window.notificationManager.error === 'function') {
+                            window.notificationManager.error(msg);
+                        } else {
+                            alert(msg);
+                        }
+                        return;
+                    }
 
                     if (!name || !addr || rooms < 1 || floors < 1) {
-                        const msg = 'Please fill in all required fields';
+                        const msg = 'Please fill in all required fields (Name, Address, Rooms, Floors)';
                         if (window.notificationManager && typeof window.notificationManager.error === 'function') {
                             window.notificationManager.error(msg);
                         } else {
@@ -1061,7 +1349,15 @@ class PropertiesController {
                     }
 
                     // store data for later, including mirrored apartment fields if necessary
-                    const newData = { name, address: addr, description: desc, numberOfRooms: rooms, numberOfFloors: floors, status };
+                    const newData = { 
+                        landlordId: this._editPropertyData.landlordId, 
+                        name, 
+                        address: addr, 
+                        description: desc, 
+                        numberOfRooms: rooms, 
+                        numberOfFloors: floors, 
+                        status 
+                    };
                     if (this._editingProperty && this._editingProperty.apartmentName !== undefined) {
                         newData.apartmentName = name;
                         newData.apartmentAddress = addr;
@@ -1074,7 +1370,7 @@ class PropertiesController {
             }
         };
 
-        const showStep2 = () => {
+        const showStep2 = async () => {
             console.log('showStep2 invoked for property', property.id, 'with data', this._editPropertyData);
             const step2HTML = `
                 <div class="edit-property-step2">
@@ -1084,17 +1380,137 @@ class PropertiesController {
                     </div>
                     <div style="margin-top:10px;">
                         <button type="button" class="btn btn-sm btn-secondary" id="addRoomBtn">+ Add Room</button>
+                        <p id="roomLimitMessage" style="color: red; display: none; margin-top: 5px;"></p>
+                    </div>
+                    <div style="margin-top:20px;">
+                        <p id="requiredFieldsMessage" style="color: red; display: none; margin-bottom: 10px; font-weight: bold;">Please fill out all required fields in all rooms.</p>
                     </div>
                     <div style="margin-top:25px; display:flex; gap:10px; justify-content:flex-end;">
                         <button type="button" class="btn btn-secondary" id="backToStep1Btn">Back</button>
-                        <button type="button" class="btn btn-primary" id="savePropertyBtn">Update Property & Rooms</button>
+                        <button type="button" class="btn btn-primary" id="savePropertyBtn" disabled>Update Property & Rooms</button>
                     </div>
                 </div>
             `;
             modal.querySelector('.modal-body').innerHTML = step2HTML;
 
+            // helper to validate all required fields in all rooms
+            const validateAllRequiredFields = () => {
+                const container = modal.querySelector('#editRoomContainer');
+                const roomForms = container.querySelectorAll('.room-form');
+                const saveBtn = modal.querySelector('#savePropertyBtn');
+                const messageEl = modal.querySelector('#requiredFieldsMessage');
+                const requiredFieldClasses = ['room-number', 'room-floor', 'room-bedrooms', 'room-bathrooms', 'room-maxmembers'];
+                const fieldsGreaterThanZero = ['room-rent', 'room-deposit', 'room-bedrooms', 'room-bathrooms'];
+                let isValid = true;
+
+                roomForms.forEach(form => {
+                    // Check required fields (must not be empty)
+                    requiredFieldClasses.forEach(fieldClass => {
+                        const field = form.querySelector(`.${fieldClass}`);
+                        if (field) {
+                            const value = field.value.trim();
+                            if (!value || (fieldClass.includes('number') && parseInt(value, 10) <= 0)) {
+                                field.style.borderColor = 'red';
+                                field.style.backgroundColor = '#ffe6e6';
+                                isValid = false;
+                            } else {
+                                field.style.borderColor = '';
+                                field.style.backgroundColor = '';
+                            }
+                        }
+                    });
+                    
+                    // Check fields that must be greater than 0
+                    fieldsGreaterThanZero.forEach(fieldClass => {
+                        const field = form.querySelector(`.${fieldClass}`);
+                        if (field) {
+                            const value = parseFloat(field.value) || 0;
+                            if (value <= 0) {
+                                field.style.borderColor = 'red';
+                                field.style.backgroundColor = '#ffe6e6';
+                                isValid = false;
+                            } else {
+                                field.style.borderColor = '';
+                                field.style.backgroundColor = '';
+                            }
+                        }
+                    });
+                });
+
+                if (isValid) {
+                    saveBtn.disabled = false;
+                    saveBtn.style.opacity = '1';
+                    messageEl.style.display = 'none';
+                } else {
+                    saveBtn.disabled = true;
+                    saveBtn.style.opacity = '0.5';
+                    messageEl.style.display = 'block';
+                }
+            };
+
+            // helper to sync Step 1 numberOfRooms with current room count in Step 2
+            const updateAddRoomButton = () => {
+                const container = modal.querySelector('#editRoomContainer');
+                const roomForms = container.querySelectorAll('.room-form');
+                const currentRoomCount = roomForms.length;
+                const addRoomBtn = modal.querySelector('#addRoomBtn');
+                const messageEl = modal.querySelector('#roomLimitMessage');
+
+                // ✅ Auto-adjust numberOfRooms to match current room count (added or deleted)
+                this._editPropertyData.numberOfRooms = currentRoomCount;
+                this._currentStep2RoomCount = currentRoomCount;
+
+                // Determine the highest floor among current rooms in Step 2
+                const currentFloorValues = Array.from(roomForms)
+                    .map(form => parseInt(form.querySelector('.room-floor')?.value, 10) || 0)
+                    .filter(v => v > 0);
+                const currentMaxFloor = currentFloorValues.length ? Math.max(...currentFloorValues) : 0;
+                this._currentMaxRoomFloor = currentMaxFloor;
+
+                // Also update Step 1 field if it exists
+                const editPropertyRoomsField = modal.querySelector('#editPropertyRooms');
+                if (editPropertyRoomsField) {
+                    editPropertyRoomsField.value = currentRoomCount;
+                    editPropertyRoomsField.setAttribute('min', currentRoomCount);
+                }
+
+                const editPropertyFloorsField = modal.querySelector('#editPropertyFloors');
+                if (editPropertyFloorsField) {
+                    editPropertyFloorsField.setAttribute('min', Math.max(currentMaxFloor, 1));
+                }
+
+                // Always keep Add Room button enabled
+                addRoomBtn.disabled = false;
+                addRoomBtn.style.opacity = '1';
+                messageEl.style.display = 'none';
+            };
+
             // populate rooms from database
-            this.populateRoomDetails(property.id, modal.querySelector('#editRoomContainer'));
+            await this.populateRoomDetails(property.id, modal.querySelector('#editRoomContainer'), updateAddRoomButton);
+            updateAddRoomButton();
+
+            // helper to get all existing room numbers
+            const getExistingRoomNumbers = () => {
+                const container = modal.querySelector('#editRoomContainer');
+                const roomForms = container.querySelectorAll('.room-form');
+                return Array.from(roomForms).map(form => ({
+                    number: form.querySelector('.room-number')?.value.trim() || '',
+                    unitId: form.getAttribute('data-unit-id') || ''
+                })).filter(r => r.number); // only include non-empty room numbers
+            };
+
+            // attach validation listeners to newly added room
+            const attachValidationToRoom = (form) => {
+                const requiredFieldClasses = ['room-number', 'room-floor', 'room-bedrooms', 'room-bathrooms', 'room-maxmembers'];
+                requiredFieldClasses.forEach(fieldClass => {
+                    const field = form.querySelector(`.${fieldClass}`);
+                    if (field) {
+                        field.addEventListener('input', validateAllRequiredFields);
+                        field.addEventListener('change', validateAllRequiredFields);
+                        field.addEventListener('blur', validateAllRequiredFields);
+                    }
+                });
+            };
 
             // allow adding blank form
             const addRoomBtn = modal.querySelector('#addRoomBtn');
@@ -1104,7 +1520,16 @@ class PropertiesController {
                     if (container) {
                         container.insertAdjacentHTML('beforeend', this._roomFormHTML());
                         const newForm = container.lastElementChild;
-                        this._attachRoomFormListeners(newForm);
+                        const existingRoomNumbers = getExistingRoomNumbers();
+                        this._attachRoomFormListeners(newForm, updateAddRoomButton, existingRoomNumbers);
+                        attachValidationToRoom(newForm); // attach validation to new room
+                        updateAddRoomButton(); // update after adding
+                        validateAllRequiredFields(); // validate all fields
+                        // Focus on the room number field of the newly added room
+                        const roomNumberInput = newForm.querySelector('.room-number');
+                        if (roomNumberInput) {
+                            roomNumberInput.focus();
+                        }
                     }
                 });
             }
@@ -1116,31 +1541,60 @@ class PropertiesController {
 
             // save button
             modal.querySelector('#savePropertyBtn').addEventListener('click', async () => {
+                // validate before saving
+                validateAllRequiredFields();
                 const btn = modal.querySelector('#savePropertyBtn');
+                if (btn.disabled) {
+                    return; // don't save if validation fails
+                }
                 btn.disabled = true;
                 try {
-                    // updateProperty already handles room saving as part of its workflow
+                    // updateProperty already handles room saving, activity logging, and modal closing
                     await this.updateProperty(property.id, this._editPropertyData);
-                    if (window.notificationManager && typeof window.notificationManager.success === 'function') {
-                        window.notificationManager.success('Property and room details updated');
-                    }
-                    window.modalManager.closeModal(modal);
-                    // clear references so updateProperty won't try to refresh later
-                    this._currentEditModal = null;
-                    this._currentEditingId = null;
                 } catch (err) {
                     console.error('Error saving edits:', err);
                     if (window.notificationManager && typeof window.notificationManager.error === 'function') {
                         window.notificationManager.error('Failed to update property/rooms');
                     }
-                } finally {
                     btn.disabled = false;
                 }
             });
+
+            // update button after populate (need to wait for populate to finish)
+            setTimeout(() => {
+                updateAddRoomButton();
+                // attach validation listeners to existing rooms
+                const container = modal.querySelector('#editRoomContainer');
+                const roomForms = container.querySelectorAll('.room-form');
+                roomForms.forEach(form => attachValidationToRoom(form));
+                validateAllRequiredFields(); // initial validation check
+            }, 100);
         };
 
         // start on step 1
-        showStep1();
+        // First, load the actual current room count from database
+        (async () => {
+            try {
+                const roomsSnapshot = await firebaseDb.collection('rooms')
+                    .where('apartmentId', '==', property.id)
+                    .get();
+                this._actualCurrentRoomCount = roomsSnapshot.size;
+                this._actualMaxRoomFloor = 0;
+                roomsSnapshot.forEach(doc => {
+                    const roomData = doc.data();
+                    const floorValue = parseInt(roomData.floor, 10);
+                    if (!Number.isNaN(floorValue) && floorValue > (this._actualMaxRoomFloor || 0)) {
+                        this._actualMaxRoomFloor = floorValue;
+                    }
+                });
+                console.log(`✅ Loaded ${this._actualCurrentRoomCount} actual rooms and max floor ${this._actualMaxRoomFloor} for property ${property.id}`);
+            } catch (err) {
+                console.warn('⚠️ Failed to fetch actual room count:', err);
+                this._actualCurrentRoomCount = 0;
+                this._actualMaxRoomFloor = 0;
+            }
+            showStep1();
+        })();
     }
 
     /**
@@ -1160,8 +1614,8 @@ class PropertiesController {
             await this.service.createProperty(propertyData);
             await this.loadProperties();
 
-            if (window.modalManager) {
-                window.modalManager.closeModal('addProperty');
+            if (window.ModalManager) {
+                window.ModalManager.closeModal('addProperty');
             }
 
             if (window.notificationManager) {
@@ -1186,10 +1640,31 @@ class PropertiesController {
             const property = new Property(propertyData);
             if (!property.isValid()) {
                 const errors = property.getValidationErrors();
-                throw new Error(errors.join(', '));
+                const errorMsg = errors.length > 0 ? errors.join(', ') : 'Property validation failed';
+                throw new Error(errorMsg);
+            }
+
+            // Get the original property data BEFORE updating (for change tracking)
+            let originalData = null;
+            try {
+                const originalDoc = await this.service.firebaseService.read('apartments', propertyId);
+                if (originalDoc && originalDoc.exists) {
+                    originalData = originalDoc.data();
+                }
+            } catch (err) {
+                console.warn('⚠️ Could not fetch original property data for change tracking:', err);
             }
 
             await this.service.updateProperty(propertyId, propertyData);
+            
+            // CASCADE UPDATE: Update all related documents when apartment is edited
+            try {
+                await this.cascadeUpdateRelatedDocuments(propertyId, originalData, propertyData);
+            } catch (cascadeErr) {
+                console.warn('⚠️ Cascade update warning:', cascadeErr);
+                // Don't fail the entire update if cascade fails
+            }
+            
             // reload the list so cards reflect changes
             await this.loadProperties();
 
@@ -1197,48 +1672,309 @@ class PropertiesController {
                 window.notificationManager.success('Property updated successfully');
             }
 
-            // save room changes as well
-            await this._saveRoomDetails();
-
-            // if the edit modal is still open for this property refresh its fields
-            if (this._currentEditingId === propertyId && this._currentEditModal) {
-                const updated = await this.service.getProperty(propertyId);
-                if (updated) {
-                    const nameField = document.getElementById('editPropertyName');
-                    if (nameField) {
-                        nameField.value = updated.name || '';
-                    }
-                    const addrField = document.getElementById('editPropertyAddress');
-                    if (addrField) {
-                        addrField.value = updated.address || '';
-                    }
-                    const descField = document.getElementById('editPropertyDescription');
-                    if (descField) {
-                        descField.value = updated.description || '';
-                    }
-                    const roomsField = document.getElementById('editPropertyRooms');
-                    if (roomsField) {
-                        roomsField.value = updated.numberOfRooms || updated.rooms || 0;
-                    }
-                    const floorsField = document.getElementById('editPropertyFloors');
-                    if (floorsField) {
-                        floorsField.value = updated.numberOfFloors || updated.floors || 0;
-                    }
-                    const statusField = document.getElementById('editPropertyStatus');
-                    if (statusField) {
-                        statusField.value = updated.status || (updated.isActive ? 'active' : 'inactive');
-                    }
+            // Show push notification for property edit
+            if (window.NotificationManager && typeof window.NotificationManager.notifyPropertyEdited === 'function') {
+                try {
+                    window.NotificationManager.notifyPropertyEdited(propertyData, changes);
+                    console.log('✅ Push notification sent for property edit');
+                } catch (notifyErr) {
+                    console.warn('⚠️ Failed to send push notification for property edit:', notifyErr);
                 }
+            }
+
+            // save room changes as well
+            const roomChanges = await this._saveRoomDetails();
+
+            // Log activity for property edit
+            try {
+                const landlordId = propertyData.landlordId || this.currentUser?.uid || this.currentUser?.id;
+                const propertyName = propertyData.name || 'Unknown Property';
+                
+                // Track what changed - handle both field name variants
+                const changes = {};
+                if (originalData) {
+                    const fieldMappings = [
+                        { fields: ['name', 'apartmentName'], displayName: 'name' },
+                        { fields: ['address', 'apartmentAddress'], displayName: 'address' },
+                        { fields: ['description'], displayName: 'description' },
+                        { fields: ['numberOfRooms', 'totalUnits'], displayName: 'numberOfRooms' },
+                        { fields: ['numberOfFloors'], displayName: 'numberOfFloors' },
+                        { fields: ['status', 'isActive'], displayName: 'status' }
+                    ];
+                    
+                    fieldMappings.forEach(({ fields, displayName }) => {
+                        // Get original value (check all possible field names)
+                        let originalValue = null;
+                        for (const field of fields) {
+                            if (originalData[field] != null) {
+                                originalValue = originalData[field];
+                                break;
+                            }
+                        }
+                        
+                        // Get new value (check all possible field names)
+                        let newValue = null;
+                        for (const field of fields) {
+                            if (propertyData[field] != null) {
+                                newValue = propertyData[field];
+                                break;
+                            }
+                        }
+                        
+                        // Special handling for status/isActive conversion
+                        if (displayName === 'status') {
+                            if (originalData.isActive != null && originalData.status == null) {
+                                originalValue = originalData.isActive ? 'active' : 'inactive';
+                            }
+                            if (propertyData.isActive != null && propertyData.status == null) {
+                                newValue = propertyData.isActive ? 'active' : 'inactive';
+                            }
+                        }
+                        
+                        // More robust comparison that handles type differences
+                        const hasChanged = originalValue !== newValue && 
+                                         !(originalValue == null && newValue == null) &&
+                                         !(originalValue === '' && newValue == null) &&
+                                         !(originalValue == null && newValue === '');
+                        
+                        if (hasChanged) {
+                            changes[displayName] = {
+                                from: originalValue != null ? String(originalValue) : 'Not set',
+                                to: newValue != null ? String(newValue) : 'Not set'
+                            };
+                        }
+                    });
+                }
+                
+                // ADD ROOM CHANGES TO THE CHANGES SUMMARY
+                if (roomChanges && roomChanges.added && roomChanges.added.length > 0) {
+                    const addedRoomsDetails = roomChanges.added.map(r => `${r.roomNumber} (Floor ${r.floor})`).join(', ');
+                    changes.roomsAdded = {
+                        from: '(none)',
+                        to: addedRoomsDetails
+                    };
+                }
+                if (roomChanges && roomChanges.modified && roomChanges.modified.length > 0) {
+                    const modifiedRoomsDetails = roomChanges.modified.map(r => `${r.roomNumber} (Floor ${r.floor})`).join(', ');
+                    changes.roomsModified = {
+                        from: '(previous)',
+                        to: modifiedRoomsDetails
+                    };
+                }
+                if (roomChanges && roomChanges.deleted && roomChanges.deleted > 0) {
+                    changes.roomsDeleted = {
+                        from: roomChanges.deleted + ' room(s)',
+                        to: '(deleted)'
+                    };
+                }
+
+                const activityData = {
+                    landlordId: landlordId,
+                    type: 'property_edited',
+                    title: 'Property Edited',
+                    message: `Apartment "${propertyName}" has been updated`,
+                    apartmentId: propertyId, // Use apartmentId for consistency
+                    propertyId: propertyId,
+                    data: {
+                        // Include comprehensive property details in activity data for modal display
+                        name: propertyData.name || 'Unknown Property',
+                        address: propertyData.address || 'Unknown Address',
+                        numberOfRooms: propertyData.numberOfRooms || 0,
+                        numberOfUnits: propertyData.numberOfRooms || propertyData.numberOfUnits || 0,
+                        landlordName: propertyData.landlordName || this.currentUser?.displayName || this.currentUser?.email || 'Landlord',
+                        ownerName: propertyData.landlordName || this.currentUser?.displayName || this.currentUser?.email || 'Landlord',
+                        status: propertyData.status || 'active', // Ensure status is always set
+                        updatedAt: new Date().toISOString(),
+                        createdAt: new Date().toISOString(),
+                        // Add change summary
+                        changes: changes,
+                        hasChanges: Object.keys(changes).length > 0,
+                        // Add additional fallback fields
+                        propertyName: propertyData.name || 'Unknown Property',
+                        location: propertyData.address || 'Unknown Address',
+                        apartmentAddress: propertyData.address || 'Unknown Address',
+                        apartmentId: propertyId,
+                        propertyId: propertyId
+                    },
+                    createdAt: new Date().toISOString(),
+                    timestamp: new Date().toISOString(),
+                    isSeen: 'unseen'
+                };
+
+                if (typeof window.DataManager !== 'undefined' && typeof window.DataManager.addActivity === 'function') {
+                    await window.DataManager.addActivity(activityData);
+                    console.log('✅ Activity created for property edit');
+                } else if (typeof window.firebaseDb !== 'undefined') {
+                    await window.firebaseDb.collection('activities').add(activityData);
+                    console.log('✅ Activity created for property edit (direct Firestore)');
+                }
+            } catch (actErr) {
+                console.warn('⚠️ Failed to log activity for property edit:', actErr);
+            }
+
+            // Close ALL modals after successful update
+            try {
+                window.ModalManager.closeAllModals();
+            } catch (modalErr) {
+                console.warn('⚠️ Failed to close modals after property update:', modalErr);
             }
 
             // do not automatically close modal; user can close manually
         } catch (error) {
             console.error('Error updating property:', error);
-            window.showPropertiesError(error.message || 'Failed to update property');
+            console.error('Property data being updated:', propertyData);
+            const errorMsg = error?.message || 'Failed to update property';
+            window.showPropertiesError(errorMsg);
             // leave modal open so user can try again
         } finally {
             window.setPropertiesLoading(false);
         }
+    }
+
+    /**
+     * Cascade update related documents when apartment is edited
+     * Updates rooms, leases, and other documents that reference this apartment
+     */
+    async cascadeUpdateRelatedDocuments(propertyId, originalData, updatedData) {
+        console.log('🔄 Cascading updates to related documents...');
+        
+        if (!propertyId) {
+            console.warn('⚠️ No propertyId provided for cascade update');
+            return;
+        }
+
+        const updates = {};
+        
+        // Track which fields changed
+        const changedFields = {};
+        
+        // Check for address changes (name and address changes need to cascade)
+        const oldAddress = originalData?.address || originalData?.apartmentAddress;
+        const newAddress = updatedData.address || updatedData.apartmentAddress;
+        
+        const oldName = originalData?.name || originalData?.apartmentName;
+        const newName = updatedData.name || updatedData.apartmentName;
+        
+        if (oldAddress && oldAddress !== newAddress) {
+            updates.apartmentAddress = newAddress;
+            updates.rentalAddress = newAddress;
+            changedFields.address = true;
+            console.log(`🏷️  Address changed: "${oldAddress}" → "${newAddress}"`);
+        }
+        
+        if (oldName && oldName !== newName) {
+            updates.apartmentName = newName;
+            changedFields.name = true;
+            console.log(`🏷️  Name changed: "${oldName}" → "${newName}"`);
+        }
+
+        // Only proceed with cascade if there are relevant changes
+        if (Object.keys(updates).length === 0) {
+            console.log('ℹ️ No cascade updates needed');
+            return;
+        }
+
+        // Update all rooms that belong to this apartment
+        try {
+            console.log(`📝 Updating rooms for apartment ${propertyId}...`);
+            const roomsSnapshot = await firebaseDb.collection('rooms')
+                .where('apartmentId', '==', propertyId)
+                .get();
+            
+            if (!roomsSnapshot.empty) {
+                const batch = firebaseDb.batch();
+                roomsSnapshot.docs.forEach(doc => {
+                    batch.update(doc.ref, updates);
+                });
+                await batch.commit();
+                console.log(`✅ Updated ${roomsSnapshot.size} rooms`);
+            } else {
+                console.log('ℹ️ No rooms found for this apartment');
+            }
+        } catch (err) {
+            console.error('❌ Error updating rooms:', err);
+        }
+
+        // Update all leases that belong to this apartment
+        try {
+            console.log(`📝 Updating leases for apartment ${propertyId}...`);
+            const leasesSnapshot = await firebaseDb.collection('leases')
+                .where('propertyId', '==', propertyId)
+                .get();
+            
+            if (!leasesSnapshot.empty) {
+                const batch = firebaseDb.batch();
+                leasesSnapshot.docs.forEach(doc => {
+                    const updateObj = {};
+                    if (changedFields.address) updateObj.propertyAddress = newAddress;
+                    if (changedFields.name) updateObj.propertyName = newName;
+                    batch.update(doc.ref, updateObj);
+                });
+                await batch.commit();
+                console.log(`✅ Updated ${leasesSnapshot.size} leases`);
+            } else {
+                console.log('ℹ️ No leases found for this apartment');
+            }
+        } catch (err) {
+            console.error('❌ Error updating leases:', err);
+        }
+
+        // Update tenant records that reference this apartment's address
+        try {
+            if (changedFields.address) {
+                console.log(`📝 Updating tenant records with old address...`);
+                const tenantsSnapshot = await firebaseDb.collection('tenants')
+                    .where('rentalAddress', '==', oldAddress)
+                    .get();
+                
+                if (!tenantsSnapshot.empty) {
+                    const batch = firebaseDb.batch();
+                    tenantsSnapshot.docs.forEach(doc => {
+                        batch.update(doc.ref, {
+                            rentalAddress: newAddress,
+                            apartmentAddress: newAddress
+                        });
+                    });
+                    await batch.commit();
+                    console.log(`✅ Updated ${tenantsSnapshot.size} tenant records`);
+                }
+            }
+        } catch (err) {
+            console.error('❌ Error updating tenants:', err);
+        }
+
+        // Update activity log with apartment reference changes
+        try {
+            if (changedFields.address || changedFields.name) {
+                const actUpdateObj = {};
+                if (changedFields.address) {
+                    actUpdateObj['data.address'] = newAddress;
+                    actUpdateObj['data.apartmentAddress'] = newAddress;
+                }
+                if (changedFields.name) {
+                    actUpdateObj['data.name'] = newName;
+                    actUpdateObj['data.propertyName'] = newName;
+                }
+                
+                console.log(`📝 Updating activity log...`);
+                const activitiesSnapshot = await firebaseDb.collection('activities')
+                    .where('apartmentId', '==', propertyId)
+                    .get();
+                
+                if (!activitiesSnapshot.empty) {
+                    const batch = firebaseDb.batch();
+                    activitiesSnapshot.docs.forEach(doc => {
+                        batch.update(doc.ref, { 'data': { ...doc.data().data, ...actUpdateObj } });
+                    });
+                    await batch.commit();
+                    console.log(`✅ Updated ${activitiesSnapshot.size} activity records`);
+                }
+            }
+        } catch (err) {
+            console.warn('⚠️ Error updating activity log (non-critical):', err);
+        }
+
+        console.log('✅ Cascade update completed');
     }
 
     /**
@@ -1269,29 +2005,74 @@ class PropertiesController {
      * @param {Array} units
      * @param {Array} maintenanceRequests
      */
-    async _populatePropertyDetailsTabs(propertyId, units, maintenanceRequests, property) {
+    async _populatePropertyDetailsTabs(modal, propertyId, units, maintenanceRequests, property) {
         // units tab
-        const unitsList = document.getElementById('unitsList');
+        const unitsList = modal.querySelector('#unitsList');
         if (unitsList) {
             if (!units || units.length === 0) {
-                unitsList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No units found</p>';
+                unitsList.innerHTML = '<p style="text-align: center; color: #9ca3af; padding: 40px 20px;">No units found</p>';
             } else {
-                unitsList.innerHTML = units.map(unit => `
-                    <div class="unit-item">
-                        <div class="unit-header">
-                            <div class="unit-name">${unit.unitNumber || 'Unit ' + unit.id.substring(0, 5)}</div>
-                            <div class="unit-status">${unit.isOccupied ? 'Occupied' : 'Vacant'}</div>
-                        </div>
-                        <span class="status-badge ${unit.isOccupied ? 'status-active' : 'status-inactive'}">
-                            ${unit.isOccupied ? 'Occupied' : 'Vacant'}
-                        </span>
+                unitsList.innerHTML = `
+                    <div class="units-grid">
+                        ${units.map(unit => {
+                            // Handle both unit and room formats
+                            const unitName = unit.roomNumber || unit.unitNumber || unit.name || ('Unit ' + (unit.id?.substring(0, 5) || '?'));
+                            // Determine occupancy - check multiple possible fields
+                            const isOccupied = unit.isOccupied === true || unit.occupied === true || unit.status === 'occupied';
+                            const occupancyStatus = isOccupied ? 'Occupied' : 'Vacant';
+                            const badgeClass = isOccupied ? 'status-occupied' : 'status-vacant';
+                            
+                            // Get additional details if available
+                            const monthlyRent = unit.monthlyRent || unit.rent || 0;
+                            const deposit = unit.securityDeposit || unit.deposit || 0;
+                            const bedrooms = unit.numberOfBedrooms || unit.bedrooms || 0;
+                            const bathrooms = unit.numberOfBathrooms || unit.bathrooms || 0;
+                            const floor = unit.floor || '-';
+                            
+                            return `
+                                <div class="unit-card">
+                                    <div class="unit-card-header">
+                                        <div class="unit-card-title">${String(unitName).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}</div>
+                                        <span class="unit-status-badge ${badgeClass}">
+                                            <i class="fas fa-${isOccupied ? 'check-circle' : 'circle'}"></i> ${occupancyStatus}
+                                        </span>
+                                    </div>
+                                    <div class="unit-card-body">
+                                        <div class="unit-detail">
+                                            <span class="unit-detail-label"><i class="fas fa-layer-group"></i> Floor</span>
+                                            <span class="unit-detail-value">${floor}</span>
+                                        </div>
+                                        <div class="unit-detail">
+                                            <span class="unit-detail-label"><i class="fas fa-door-open"></i> Bedrooms</span>
+                                            <span class="unit-detail-value">${bedrooms}</span>
+                                        </div>
+                                        <div class="unit-detail">
+                                            <span class="unit-detail-label"><i class="fas fa-bath"></i> Bathrooms</span>
+                                            <span class="unit-detail-value">${bathrooms}</span>
+                                        </div>
+                                    </div>
+                                    <div class="unit-card-footer">
+                                        <div class="unit-price-info">
+                                            <div class="unit-price-item">
+                                                <span class="price-label">Monthly Rent</span>
+                                                <span class="price-value">₱${monthlyRent.toLocaleString('en-PH', {minimumFractionDigits: 0})}</span>
+                                            </div>
+                                            <div class="unit-price-item">
+                                                <span class="price-label">Deposit</span>
+                                                <span class="price-value">₱${deposit.toLocaleString('en-PH', {minimumFractionDigits: 0})}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
                     </div>
-                `).join('');
+                `;
             }
         }
 
         // maintenance tab
-        const maintenanceList = document.getElementById('maintenanceList');
+        const maintenanceList = modal.querySelector('#maintenanceList');
         if (maintenanceList) {
             if (!maintenanceRequests || maintenanceRequests.length === 0) {
                 maintenanceList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No maintenance requests</p>';
@@ -1369,7 +2150,7 @@ class PropertiesController {
                     });
                 }
 
-            const tenantsList = document.getElementById('tenantsList');
+            const tenantsList = modal.querySelector('#tenantsList');
             if (tenantsList) {
                 // Fallback: if no tenants found in `users`, try leases (some flows write tenants to `leases`/`tenants` first)
                 if ((!tenants || tenants.length === 0) && window.firebaseDb) {
@@ -1463,93 +2244,58 @@ class PropertiesController {
         } catch (e) {
             console.warn('Error populating tenants tab', e);
         }
-
-        // activity tab
-        try {
-            let activities = [];
-
-            // Determine which tenants are associated with this apartment (used to filter activities)
-            const tenantIds = (tenants || []).map(t => t.id).filter(Boolean);
-
-            if (this.service.getPropertyActivity) {
-                activities = await this.service.getPropertyActivity(propertyId);
-            } else if (window.firebaseDb && tenantIds.length > 0) {
-                // Firestore "in" queries are limited to 10 items; chunk if needed
-                const chunked = [];
-                for (let i = 0; i < tenantIds.length; i += 10) {
-                    chunked.push(tenantIds.slice(i, i + 10));
-                }
-
-                for (const chunk of chunked) {
-                    const snapshot = await window.firebaseDb
-                        .collection('activities')
-                        .where('tenantId', 'in', chunk)
-                        .where('landlordId', '==', this.currentUser?.uid || '')
-                        .orderBy('createdAt', 'desc')
-                        .limit(20)
-                        .get();
-                    activities.push(...snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                }
-
-                // ensure newest first
-                activities.sort((a, b) => {
-                    const aDate = new Date(a.createdAt?.toDate?.() || a.createdAt || 0).getTime();
-                    const bDate = new Date(b.createdAt?.toDate?.() || b.createdAt || 0).getTime();
-                    return bDate - aDate;
-                });
-            }
-
-            const activityList = document.getElementById('activityList');
-            if (activityList) {
-                if (!activities || activities.length === 0) {
-                    activityList.innerHTML = '<p style="text-align: center; color: #9ca3af;">No activity recorded</p>';
-                } else {
-                    activityList.innerHTML = activities.map(activity => {
-                        const date = activity.createdAt ? new Date(activity.createdAt.toDate?.() || activity.createdAt).toLocaleDateString() : '';
-                        const title = activity.title || activity.action || 'Activity';
-                        const message = activity.message || activity.description || '';
-                        return `
-                            <div class="activity-item">
-                                <div class="activity-icon"><i class="fas fa-circle"></i></div>
-                                <div class="activity-content">
-                                    <div class="activity-title">${title}</div>
-                                    <div class="activity-time">${date}</div>
-                                    ${message ? `<div class="activity-description">${message}</div>` : ''}
-                                </div>
-                            </div>
-                        `;
-                    }).join('');
-                }
-            }
-        } catch (e) {
-            console.warn('Error populating activity tab', e);
-        }
     }
 
     /**
      * Wire up tab buttons inside property details modal.
      */
-    _setupPropertyDetailsTabs() {
-        // Avoid binding duplicate listeners on repeated modal opens
-        if (this._propertyDetailsTabsInitialized) return;
-        this._propertyDetailsTabsInitialized = true;
+    _setupPropertyDetailsTabs(modal) {
+        if (!modal) {
+            console.warn('⚠️ _setupPropertyDetailsTabs called without modal reference');
+            return;
+        }
 
-        const tabButtons = document.querySelectorAll('.property-tabs .tab-button');
-        const tabPanes = document.querySelectorAll('.property-tab-content .tab-pane');
+        try {
+            const tabButtons = modal.querySelectorAll('.property-tabs .tab-button');
+            const tabPanes = modal.querySelectorAll('.property-tab-content .tab-pane');
 
-        tabButtons.forEach(button => {
-            button.addEventListener('click', (e) => {
-                e.preventDefault();
-                const tabName = button.getAttribute('data-tab');
+            if (tabButtons.length === 0) {
+                console.warn('⚠️ No tab buttons found - tabs may not be configured');
+                return;
+            }
 
-                tabButtons.forEach(b => b.classList.remove('active'));
-                tabPanes.forEach(p => p.style.display = 'none');
-
-                button.classList.add('active');
-                const pane = document.getElementById(`tab-${tabName}`);
-                if (pane) pane.style.display = 'block';
+            // Reset tab listeners for this specific modal to allow re-opening
+            let hasExistingListeners = false;
+            tabButtons.forEach(button => {
+                // Check if listeners are already attached
+                if (button.onclick !== null || button._tabListenerAttached) {
+                    hasExistingListeners = true;
+                }
             });
-        });
+
+            if (hasExistingListeners) {
+                console.log('ℹ️ Tab listeners already configured for this modal');
+                return;
+            }
+
+            tabButtons.forEach(button => {
+                button._tabListenerAttached = true;
+                button.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const tabName = button.getAttribute('data-tab');
+
+                    tabButtons.forEach(b => b.classList.remove('active'));
+                    tabPanes.forEach(p => p.style.display = 'none');
+
+                    button.classList.add('active');
+                    const pane = modal.querySelector(`#tab-${tabName}`);
+                    if (pane) pane.style.display = 'block';
+                });
+            });
+            console.log('✅ Tab listeners configured successfully');
+        } catch (err) {
+            console.error('❌ Error setting up property details tabs:', err);
+        }
     }
 
     /**

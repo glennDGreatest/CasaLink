@@ -81,8 +81,15 @@ class PredictiveAnalytics {
     async predictRevenueForecast(months = 6) {
         try {
             const historicalData = await this.getHistoricalRevenueData();
-            if (historicalData.length < 3) {
-                return this.getFallbackRevenueForecast(months);
+            if (!historicalData || historicalData.length === 0) {
+                return {
+                    predictions: [],
+                    confidence: 0,
+                    trend: 0,
+                    accuracy: 0,
+                    nextMonthPrediction: 0,
+                    growthRate: 0
+                };
             }
 
             // Heuristic forecast using weighted moving average (transparent and easy to explain)
@@ -95,12 +102,21 @@ class PredictiveAnalytics {
                 confidence,
                 trend,
                 accuracy: this.calculateModelAccuracy(historicalData),
-                nextMonthPrediction: predictions[0],
-                growthRate: ((predictions[0] - historicalData[historicalData.length - 1].revenue) / historicalData[historicalData.length - 1].revenue * 100).toFixed(1)
+                nextMonthPrediction: predictions[0] || 0,
+                growthRate: historicalData[historicalData.length - 1].revenue
+                    ? ((predictions[0] - historicalData[historicalData.length - 1].revenue) / historicalData[historicalData.length - 1].revenue * 100).toFixed(1)
+                    : 0
             };
         } catch (error) {
             console.error('Error predicting revenue:', error);
-            return this.getFallbackRevenueForecast(months);
+            return {
+                predictions: [],
+                confidence: 0,
+                trend: 0,
+                accuracy: 0,
+                nextMonthPrediction: 0,
+                growthRate: 0
+            };
         }
     }
 
@@ -108,6 +124,16 @@ class PredictiveAnalytics {
     async predictOccupancyTrend(months = 6) {
         try {
             const leases = await this.dataManager.getLandlordLeases(this.dataManager.currentUser.uid);
+            if (!leases || leases.length === 0) {
+                return {
+                    predictions: [],
+                    currentOccupancy: 0,
+                    riskFactors: [],
+                    atRiskUnits: 0,
+                    recommendation: 'Insufficient lease data to generate occupancy forecast.'
+                };
+            }
+
             const currentOccupancy = await this.calculateCurrentOccupancy(leases);
 
             // Heuristic forecast based on lease expirations
@@ -122,7 +148,13 @@ class PredictiveAnalytics {
             };
         } catch (error) {
             console.error('Error predicting occupancy:', error);
-            return this.getFallbackOccupancyPredictions(months);
+            return {
+                predictions: [],
+                currentOccupancy: 0,
+                riskFactors: [],
+                atRiskUnits: 0,
+                recommendation: 'Insufficient lease data to generate occupancy forecast.'
+            };
         }
     }
 
@@ -298,6 +330,15 @@ class PredictiveAnalytics {
     async predictMaintenanceCosts(months = 6) {
         try {
             const maintenanceData = await this.getHistoricalMaintenanceData();
+            if (!maintenanceData || maintenanceData.length === 0) {
+                return {
+                    monthlyPredictions: [],
+                    seasonalTrend: { monthlyAverages: [], peakMonthIndex: -1, peakMonthName: null },
+                    budgetRecommendation: 0,
+                    highRiskPeriods: [],
+                    recommendation: 'Insufficient maintenance history to generate a forecast.'
+                };
+            }
             const predictions = this.calculateMaintenanceForecast(maintenanceData, months);
             
             return {
@@ -308,7 +349,13 @@ class PredictiveAnalytics {
             };
         } catch (error) {
             console.error('Error predicting maintenance:', error);
-            return this.getFallbackMaintenancePredictions(months);
+            return {
+                monthlyPredictions: [],
+                seasonalTrend: { monthlyAverages: [], peakMonthIndex: -1, peakMonthName: null },
+                budgetRecommendation: 0,
+                highRiskPeriods: [],
+                recommendation: 'Insufficient maintenance history to generate a forecast.'
+            };
         }
     }
 
@@ -898,16 +945,18 @@ class PredictiveAnalytics {
                 }
             });
             
-            return Object.entries(monthlyRevenue)
+            const results = Object.entries(monthlyRevenue)
                 .sort(([a], [b]) => a.localeCompare(b))
                 .map(([month, revenue], index) => ({
                     month,
                     revenue,
                     period: index + 1
                 }));
+
+            return results;
         } catch (error) {
             console.error('Error getting historical revenue data:', error);
-            return this.generateSampleRevenueData();
+            return [];
         }
     }
 
@@ -995,6 +1044,10 @@ class PredictiveAnalytics {
     }
 
     generateOccupancyRecommendation(predictions, riskFactors) {
+        if (!Array.isArray(predictions) || !predictions.length) {
+            return 'Insufficient lease data to generate a recommendation.';
+        }
+
         const avgFutureOccupancy = predictions.reduce((a, b) => a + b, 0) / predictions.length;
         
         if (avgFutureOccupancy < 85) return 'High vacancy risk - consider marketing campaigns';
@@ -1004,6 +1057,9 @@ class PredictiveAnalytics {
     }
 
     calculateOptimalMaintenanceBudget(predictions) {
+        if (!Array.isArray(predictions) || !predictions.length) {
+            return 0;
+        }
         const avgPredicted = predictions.reduce((a, b) => a + b, 0) / predictions.length;
         return Math.round(avgPredicted * 1.2); // 20% buffer
     }
@@ -1017,37 +1073,34 @@ class PredictiveAnalytics {
 
     // ===== FALLBACK METHODS =====
     getFallbackRevenueForecast(months) {
-        const baseRevenue = 84500;
-        const predictions = Array(months).fill(0).map((_, i) => 
-            Math.round(baseRevenue * (1 + (i * 0.02)))
-        );
-        
         return {
-            predictions,
-            confidence: Array(months).fill(0.7),
-            trend: 0.02,
-            accuracy: 0.75,
-            nextMonthPrediction: predictions[0],
-            growthRate: '2.0'
+            predictions: [],
+            confidence: 0,
+            trend: 0,
+            accuracy: 0,
+            nextMonthPrediction: 0,
+            growthRate: 0,
+            message: 'Insufficient historical revenue data to generate a forecast.'
         };
     }
 
     getFallbackOccupancyPredictions(months) {
         return {
-            predictions: Array(months).fill(94),
-            currentOccupancy: 94,
+            predictions: [],
+            currentOccupancy: 0,
             riskFactors: [],
             atRiskUnits: 0,
-            recommendation: 'Insufficient data for detailed analysis'
+            recommendation: 'Insufficient lease data to generate a forecast.'
         };
     }
 
     getFallbackMaintenancePredictions(months) {
         return {
-            monthlyPredictions: Array(months).fill(2150),
-            seasonalTrend: 'stable',
-            budgetRecommendation: 2580,
-            highRiskPeriods: []
+            monthlyPredictions: [],
+            seasonalTrend: { monthlyAverages: [], peakMonthIndex: -1, peakMonthName: null },
+            budgetRecommendation: 0,
+            highRiskPeriods: [],
+            message: 'Insufficient maintenance history to generate a forecast.'
         };
     }
 

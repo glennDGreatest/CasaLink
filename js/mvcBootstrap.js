@@ -361,14 +361,14 @@
                                         </div>
                                         <div class="stat">
                                             <span class="stat-label">Created</span>
-                                            <span class="stat-value">${new Date(prop.createdAt).getFullYear()}</span>
+                                            <span class="stat-value">${prop.createdAt ? window.formatDate(prop.createdAt) : 'N/A'}</span>
                                         </div>
                                     </div>
                                     <div class="property-actions">
-                                        <button class="btn btn-sm btn-primary" onclick="if(window.propertiesController && typeof window.propertiesController.viewProperty === 'function') window.propertiesController.viewProperty('${prop.id}')">
+                                        <button class="btn btn-sm btn-primary">
                                             <i class="fas fa-eye"></i> View
                                         </button>
-                                        <button class="btn btn-sm btn-secondary" onclick="if(window.propertiesController && typeof window.propertiesController.editProperty === 'function') window.propertiesController.editProperty('${prop.id}')">
+                                        <button class="btn btn-sm btn-secondary">
                                             <i class="fas fa-edit"></i> Edit
                                         </button>
                                     </div>

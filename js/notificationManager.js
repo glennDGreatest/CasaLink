@@ -4,7 +4,14 @@ class NotificationManager {
     static registration = null;
 
     static async init() {
+        console.log('🔔 Initializing NotificationManager...');
+        console.log('📱 User Agent:', navigator.userAgent);
+        console.log('🔍 Is Mobile Chrome:', this.isMobileChrome());
+        console.log('🔔 Notification API available:', 'Notification' in window);
+        console.log('🔧 Service Worker available:', 'serviceWorker' in navigator);
+        
         this.permission = Notification.permission;
+        console.log('📋 Current permission status:', this.permission);
         
         if ('Notification' in window && 'serviceWorker' in navigator) {
             try {
@@ -27,15 +34,30 @@ class NotificationManager {
                     if (r && r.active) this.registration = r;
                 }
                 
+                console.log('🔧 Service Worker registration:', this.registration ? 'Available' : 'Not available');
+                
+                // Request permission when not already decided
                 if (this.permission === 'default') {
+                    console.log('🎯 Requesting notification permission for the current device...');
                     await this.requestPermission();
+                } else {
+                    console.log('⏭️ Notification permission already set:', this.permission);
                 }
                 
                 this.setupNotificationListeners();
             } catch (error) {
-                console.error('Notification initialization failed:', error);
+                console.error('❌ Notification initialization failed:', error);
             }
+        } else {
+            console.warn('⚠️ Notification API or Service Worker not supported');
         }
+    }
+
+    static isMobileChrome() {
+        const userAgent = navigator.userAgent;
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+        const isChrome = /Chrome|CriOS/i.test(userAgent) && !/Edg/i.test(userAgent); // Include CriOS (Chrome on iOS)
+        return isMobile && isChrome;
     }
 
     static async requestPermission() {
@@ -123,6 +145,12 @@ class NotificationManager {
             case 'view_maintenance':
                 window.casaLink?.showPage('tenantMaintenance');
                 break;
+            case 'view_properties':
+                window.casaLink?.showPage('properties');
+                break;
+            case 'view_activity':
+                window.casaLink?.showPage('activity-log');
+                break;
             default:
                 // Default behavior
                 window.focus();
@@ -184,6 +212,35 @@ class NotificationManager {
                 { action: 'view_maintenance', title: 'View Request' },
                 { action: 'assign_staff', title: 'Assign Staff' }
             ]
+        });
+    }
+
+    static notifyPropertyEdited(propertyData, changes) {
+        const propertyName = propertyData.name || propertyData.apartmentName || 'Property';
+        let changeSummary = '';
+        
+        if (changes && Object.keys(changes).length > 0) {
+            const changeList = Object.keys(changes).map(field => {
+                const displayName = field === 'numberOfRooms' ? 'rooms' :
+                                  field === 'numberOfFloors' ? 'floors' :
+                                  field === 'apartmentName' ? 'name' :
+                                  field;
+                return `${displayName} updated`;
+            });
+            changeSummary = ` (${changeList.join(', ')})`;
+        }
+
+        this.showNotification('Property Updated', {
+            body: `${propertyName} has been edited${changeSummary}`,
+            tag: 'property-edited',
+            actions: [
+                { action: 'view_properties', title: 'View Properties' },
+                { action: 'view_activity', title: 'View Activity' }
+            ],
+            data: {
+                propertyId: propertyData.id || propertyData.propertyId,
+                changes: changes
+            }
         });
     }
 }

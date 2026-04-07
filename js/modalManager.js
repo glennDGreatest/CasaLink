@@ -72,124 +72,136 @@ class ModalManager {
     }
 
     showTenantPaymentModal(billId) {
-        // Get the bill data
-        const bill = getBillById(billId);
-        if (!bill) {
-            showNotification('Bill not found', 'error');
+        // Get the bill data from Firestore
+        const db = window.firebaseDb || (typeof firebaseDb !== 'undefined' && firebaseDb);
+        if (!db) {
+            showNotification('Database not available', 'error');
             return;
         }
 
-        // Get tenant data
-        const tenant = getTenantById(bill.tenantId);
-        
-        // Create modal HTML
-        const modalHTML = `
-            <div class="modal-overlay active" id="paymentModal">
-                <div class="modal">
-                    <div class="modal-header">
-                        <h2>Record Payment</h2>
-                        <button class="close-btn" onclick="closeModal()">&times;</button>
-                    </div>
-                    <div class="modal-body">
-                        <div class="payment-info">
-                            <h3>Record payment for ${tenant ? tenant.name : 'Tenant'}</h3>
-                            
-                            <!-- Bill Details -->
-                            <div class="bill-details-section">
-                                <h4>Bill Details</h4>
-                                <div class="bill-detail-item">
-                                    <span class="label">Amount Due:</span>
-                                    <span class="value">₱${formatCurrency(bill.amount)}</span>
-                                </div>
-                                <div class="bill-detail-item">
-                                    <span class="label">Due Date:</span>
-                                    <span class="value">${formatDate(bill.dueDate)}</span>
-                                </div>
-                                <div class="bill-detail-item">
-                                    <span class="label">Room:</span>
-                                    <span class="value">${tenant ? tenant.room : 'N/A'}</span>
-                                </div>
-                                <div class="bill-detail-item">
-                                    <span class="label">Description:</span>
-                                    <span class="value">${bill.description || 'Monthly Rent'}</span>
-                                </div>
-                            </div>
-                            
-                            <!-- Payment Form -->
-                            <form id="paymentForm" class="payment-form">
-                                <!-- Payment Method -->
-                                <div class="form-group">
-                                    <label for="paymentMethod">Payment Method *</label>
-                                    <select id="paymentMethod" name="paymentMethod" required>
-                                        <option value="">-- Select Payment Method --</option>
-                                        <option value="cash">Cash</option>
-                                        <option value="gcash">GCash</option>
-                                        <option value="maya">Maya</option>
-                                        <option value="bank_transfer">Bank Transfer</option>
-                                        <option value="check">Check</option>
-                                    </select>
-                                </div>
+        db.collection('bills').doc(billId).get().then(billDoc => {
+            if (!billDoc.exists) {
+                showNotification('Bill not found', 'error');
+                return;
+            }
+            
+            const bill = { id: billDoc.id, ...billDoc.data() };
+            
+            // Get tenant data (assuming current user is tenant)
+            const tenant = { name: 'Current Tenant' }; // Placeholder
+            
+            // Create modal HTML
+            const modalHTML = `
+                <div class="modal-overlay active" id="paymentModal">
+                    <div class="modal">
+                        <div class="modal-header">
+                            <h2>Record Payment</h2>
+                            <button class="close-btn" onclick="closeModal()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="payment-info">
+                                <h3>Record payment for ${tenant ? tenant.name : 'Tenant'}</h3>
                                 
-                                <!-- Reference Number (Conditional) -->
-                                <div class="form-group" id="referenceNumberGroup" style="display: none;">
-                                    <label for="referenceNumber">Reference Number</label>
-                                    <input type="text" id="referenceNumber" name="referenceNumber" 
-                                        placeholder="Transaction ID, receipt number, etc.">
-                                    <small class="field-note">Required for GCash, Maya, and Bank Transfer</small>
-                                </div>
-                                
-                                <!-- Payment Date -->
-                                <div class="form-group">
-                                    <label for="paymentDate">Payment Date *</label>
-                                    <input type="date" id="paymentDate" name="paymentDate" required 
-                                        value="${getCurrentDate()}">
-                                </div>
-                                
-                                <!-- Amount Paid -->
-                                <div class="form-group">
-                                    <label for="amountPaid">Amount Paid *</label>
-                                    <div class="currency-input">
-                                        <span class="currency-symbol">₱</span>
-                                        <input type="number" id="amountPaid" name="amountPaid" 
-                                            min="0" step="0.01" value="${bill.amount}" required>
+                                <!-- Bill Details -->
+                                <div class="bill-details-section">
+                                    <h4>Bill Details</h4>
+                                    <div class="bill-detail-item">
+                                        <span class="label">Amount Due:</span>
+                                        <span class="value">₱${this.formatCurrency(bill.totalAmount || bill.amount || 0)}</span>
                                     </div>
-                                    <small class="field-note">Enter the actual amount received</small>
+                                    <div class="bill-detail-item">
+                                        <span class="label">Due Date:</span>
+                                        <span class="value">${this.formatDate(bill.dueDate)}</span>
+                                    </div>
+                                    <div class="bill-detail-item">
+                                        <span class="label">Room:</span>
+                                        <span class="value">${bill.roomNumber || 'N/A'}</span>
+                                    </div>
+                                    <div class="bill-detail-item">
+                                        <span class="label">Description:</span>
+                                        <span class="value">${bill.description || 'Monthly Rent'}</span>
+                                    </div>
                                 </div>
                                 
-                                <!-- Notes -->
-                                <div class="form-group">
-                                    <label for="paymentNotes">Notes (Optional)</label>
-                                    <textarea id="paymentNotes" name="paymentNotes" 
-                                            placeholder="Additional notes about this payment" 
-                                            rows="3"></textarea>
-                                </div>
-                                
-                                <!-- Payment Instructions -->
-                                <div class="payment-instructions">
-                                    <p><strong>Payment Instructions:</strong></p>
-                                    <p>Please note that payment submission is recorded. Your landlord will verify the payment and update the status accordingly.</p>
-                                </div>
-                            </form>
+                                <!-- Payment Form -->
+                                <form id="paymentForm" class="payment-form">
+                                    <!-- Payment Method -->
+                                    <div class="form-group">
+                                        <label for="paymentMethod">Payment Method *</label>
+                                        <select id="paymentMethod" name="paymentMethod" required>
+                                            <option value="">-- Select Payment Method --</option>
+                                            <option value="cash">Cash</option>
+                                            <option value="gcash">GCash</option>
+                                            <option value="maya">Maya</option>
+                                            <option value="bank_transfer">Bank Transfer</option>
+                                            <option value="check">Check</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- Reference Number (Conditional) -->
+                                    <div class="form-group" id="referenceNumberGroup" style="display: none;">
+                                        <label for="referenceNumber">Reference Number</label>
+                                        <input type="text" id="referenceNumber" name="referenceNumber" 
+                                            placeholder="Transaction ID, receipt number, etc.">
+                                        <small class="field-note">Required for GCash, Maya, and Bank Transfer</small>
+                                    </div>
+                                    
+                                    <!-- Payment Date -->
+                                    <div class="form-group">
+                                        <label for="paymentDate">Payment Date *</label>
+                                        <input type="date" id="paymentDate" name="paymentDate" required 
+                                            value="${this.getCurrentDate()}">
+                                    </div>
+                                    
+                                    <!-- Amount Paid -->
+                                    <div class="form-group">
+                                        <label for="amountPaid">Amount Paid *</label>
+                                        <div class="currency-input">
+                                            <span class="currency-symbol">₱</span>
+                                            <input type="number" id="amountPaid" name="amountPaid" 
+                                                min="0" step="0.01" value="${bill.totalAmount || bill.amount || 0}" required>
+                                        </div>
+                                        <small class="field-note">Enter the actual amount received</small>
+                                    </div>
+                                    
+                                    <!-- Notes -->
+                                    <div class="form-group">
+                                        <label for="paymentNotes">Notes (Optional)</label>
+                                        <textarea id="paymentNotes" name="paymentNotes" 
+                                                placeholder="Additional notes about this payment" 
+                                                rows="3"></textarea>
+                                    </div>
+                                    
+                                    <!-- Payment Instructions -->
+                                    <div class="payment-instructions">
+                                        <p><strong>Payment Instructions:</strong></p>
+                                        <p>Please note that payment submission is recorded. Your landlord will verify the payment and update the status accordingly.</p>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                            <button type="button" class="btn btn-primary" onclick="submitTenantPayment('${billId}', '${bill.landlordId || ''}')">Record Payment</button>
                         </div>
                     </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
-                        <button type="button" class="btn btn-primary" onclick="submitTenantPayment('${billId}')">Record Payment</button>
-                    </div>
                 </div>
-            </div>
-        `;
-        
-        // Add modal to DOM
-        document.body.insertAdjacentHTML('beforeend', modalHTML);
-        
-        // Add event listener for payment method change
-        document.getElementById('paymentMethod').addEventListener('change', function() {
-            toggleReferenceNumberField(this.value);
+            `;
+            
+            // Add modal to DOM
+            document.body.insertAdjacentHTML('beforeend', modalHTML);
+            
+            // Add event listener for payment method change
+            document.getElementById('paymentMethod').addEventListener('change', function() {
+                this.toggleReferenceNumberField(this.value);
+            }.bind(this));
+            
+            // Initialize reference number field visibility
+            this.toggleReferenceNumberField(document.getElementById('paymentMethod').value);
+        }).catch(error => {
+            console.error('Error fetching bill:', error);
+            showNotification('Error loading bill details', 'error');
         });
-        
-        // Initialize reference number field visibility
-        toggleReferenceNumberField(document.getElementById('paymentMethod').value);
     }
 
     getCurrentDate() {
@@ -230,7 +242,7 @@ getBillById(billId) {
 }
 
     // Function to submit tenant payment
-    async submitTenantPayment(billId) {
+    async submitTenantPayment(billId, landlordId) {
         const form = document.getElementById('paymentForm');
         
         // Validate form
@@ -239,13 +251,33 @@ getBillById(billId) {
             return;
         }
         
+        // Get bill data first to populate payment data
+        let billData = null;
+        try {
+            const db = window.firebaseDb || (typeof firebaseDb !== 'undefined' && firebaseDb);
+            if (db) {
+                const billDoc = await db.collection('bills').doc(billId).get();
+                if (billDoc.exists) {
+                    billData = billDoc.data();
+                }
+            }
+        } catch (e) {
+            console.warn('Could not fetch bill data:', e);
+        }
+        
         // Get form data
         const formData = new FormData(form);
+        const currentUser = window.currentUser || (typeof currentUser !== 'undefined' && currentUser);
         const paymentData = {
             billId: billId,
+            tenantId: billData?.tenantId || currentUser?.id || currentUser?.uid || null,
+            landlordId: landlordId || billData?.landlordId || null,
+            tenantName: billData?.tenantName || currentUser?.name || '',
+            roomNumber: billData?.roomNumber || '',
             paymentMethod: formData.get('paymentMethod'),
             referenceNumber: formData.get('referenceNumber') || '',
             paymentDate: formData.get('paymentDate'),
+            amount: parseFloat(formData.get('amountPaid')),
             amountPaid: parseFloat(formData.get('amountPaid')),
             notes: formData.get('paymentNotes') || '',
             status: 'waiting_verification', // Payment needs landlord verification (NOT 'pending')
@@ -259,12 +291,16 @@ getBillById(billId) {
             submitBtn.textContent = 'Processing...';
             
             // Save payment to database (use DataManager.recordPayment)
-            if (typeof DataManager !== 'undefined' && DataManager.recordPayment) {
-                await DataManager.recordPayment(paymentData);
+            let paymentId = null;
+            const dm = window.DataManager || (typeof DataManager !== 'undefined' && DataManager);
+            if (dm && dm.recordPayment) {
+                paymentId = await dm.recordPayment(paymentData);
             } else {
                 // Fallback: try global firebaseDb if available
-                if (typeof firebaseDb !== 'undefined') {
-                    await firebaseDb.collection('payments').add({ ...paymentData, processedAt: new Date().toISOString() });
+                const db = window.firebaseDb || (typeof firebaseDb !== 'undefined' && firebaseDb);
+                if (db) {
+                    const paymentRef = await db.collection('payments').add({ ...paymentData, processedAt: new Date().toISOString() });
+                    paymentId = paymentRef.id;
                 } else {
                     throw new Error('No DataManager or firebaseDb available to save payment');
                 }
@@ -272,8 +308,9 @@ getBillById(billId) {
             
             // Update related bill to indicate pending verification
             try {
-                if (typeof firebaseDb !== 'undefined') {
-                    await firebaseDb.collection('bills').doc(billId).update({
+                const db = window.firebaseDb || (typeof firebaseDb !== 'undefined' && firebaseDb);
+                if (db) {
+                    await db.collection('bills').doc(billId).update({
                         status: 'payment_pending',
                         lastUpdated: new Date().toISOString(),
                         pendingPaymentAmount: paymentData.amountPaid,
@@ -283,6 +320,67 @@ getBillById(billId) {
                 }
             } catch (e) {
                 console.warn('Could not update bill status after payment submission:', e);
+            }
+
+            // Create activity for payment submission - USE DataManager for consistency
+            try {
+                const ts = new Date().toISOString();
+                const finalLandlordId = landlordId || paymentData.landlordId || billData?.landlordId || billData?.createdBy || billData?.ownerId || null;
+                paymentData.landlordId = finalLandlordId;
+
+                console.log('📝 Creating payment activity with data:', {
+                    type: 'payment_submitted',
+                    tenantId: paymentData.tenantId,
+                    landlordId: finalLandlordId,
+                    paymentId: paymentId,
+                    billId: billId,
+                    billDataLandlordId: billData?.landlordId,
+                    paymentDataLandlordId: paymentData.landlordId,
+                    passedLandlordId: landlordId
+                });
+
+                const activityData = {
+                    type: 'payment_submitted',
+                    paymentId: paymentId,
+                    billId: billId,
+                    tenantId: paymentData.tenantId || null,
+                    landlordId: finalLandlordId,
+                    amount: paymentData.amountPaid,
+                    title: 'Payment Submitted',
+                    message: `Tenant ${paymentData.tenantName || 'Unknown'} submitted a payment of ₱${paymentData.amountPaid} for bill ${billId}`,
+                    createdAt: ts,
+                    timestamp: ts,
+                    isSeen: 'unseen',
+                    icon: 'fas fa-credit-card',
+                    color: 'var(--warning)',
+                    data: {
+                        paymentId: paymentId,
+                        billId: billId,
+                        tenantName: paymentData.tenantName,
+                        roomNumber: paymentData.roomNumber,
+                        amount: paymentData.amountPaid
+                    }
+                };
+
+                // Use DataManager.addActivity for consistency with other activity creation
+                const dm = window.DataManager || (typeof DataManager !== 'undefined' && DataManager);
+                if (dm && dm.addActivity) {
+                    const result = await dm.addActivity(activityData);
+                    console.log('✅ Activity created via DataManager for payment submission, ID:', result.id, 'for landlord:', finalLandlordId);
+                } else {
+                    // Fallback to direct Firestore
+                    const db = window.firebaseDb || (typeof firebaseDb !== 'undefined' && firebaseDb);
+                    if (db) {
+                        const docRef = await db.collection('activities').add(activityData);
+                        console.log('✅ Activity created directly in Firestore for payment submission, ID:', docRef.id, 'for landlord:', finalLandlordId);
+                    } else {
+                        console.error('❌ No DataManager or firebaseDb available for activity creation');
+                        throw new Error('No database connection');
+                    }
+                }
+            } catch (actErr) {
+                console.error('❌ Could not create activity for payment submission:', actErr);
+                // Continue with payment submission even if activity creation fails
             }
 
             // Optionally notify landlord (create a notification record)
@@ -334,7 +432,16 @@ getBillById(billId) {
             modal.parentNode.removeChild(modal);
         }
     }
+
+    static closeAllModals() {
+        const modals = document.querySelectorAll('.modal-overlay');
+        modals.forEach(modal => {
+            if (modal.parentNode) {
+                modal.parentNode.removeChild(modal);
+            }
+        });
+    }
 }
 // expose both capitalized and lowercase for backwards compatibility
 window.ModalManager = ModalManager;
-window.modalManager = ModalManager;
+window.ModalManager = ModalManager;

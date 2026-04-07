@@ -30,9 +30,9 @@
         });
     }
 
-    // Close mobile menu when a link is clicked
-    const navLinks = document.querySelectorAll('.nav-link');
-    navLinks.forEach(link => {
+    // Close mobile menu when a landing page link is clicked
+    const landingNavLinks = document.querySelectorAll('.landing-navbar .nav-link');
+    landingNavLinks.forEach(link => {
         link.addEventListener('click', function() {
             if (navMenu) {
                 navMenu.classList.remove('active');
@@ -144,29 +144,31 @@
     }
 
     // ============================================
-    // Active Navigation Link on Scroll
+    // Active Navigation Link on Scroll (Landing page only)
     // ============================================
 
-    window.addEventListener('scroll', function() {
-        let current = '';
-        const sections = document.querySelectorAll('section');
+    if (document.querySelector('.landing-navbar')) {
+        window.addEventListener('scroll', function() {
+            let current = '';
+            const sections = document.querySelectorAll('section');
 
-        sections.forEach(section => {
-            const sectionTop = section.offsetTop;
-            const sectionHeight = section.clientHeight;
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.clientHeight;
 
-            if (pageYOffset >= sectionTop - 200) {
-                current = section.getAttribute('id');
-            }
+                if (pageYOffset >= sectionTop - 200) {
+                    current = section.getAttribute('id');
+                }
+            });
+
+            document.querySelectorAll('.landing-navbar .nav-link').forEach(link => {
+                link.classList.remove('active');
+                if (link.getAttribute('href') === `#${current}`) {
+                    link.classList.add('active');
+                }
+            });
         });
-
-        document.querySelectorAll('.nav-link').forEach(link => {
-            link.classList.remove('active');
-            if (link.getAttribute('href') === `#${current}`) {
-                link.classList.add('active');
-            }
-        });
-    });
+    }
 
     // ============================================
     // Button Ripple Effect

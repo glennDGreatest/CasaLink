@@ -84,8 +84,7 @@ class Property {
   getValidationErrors() {
     const errors = [];
     if (!this.address) errors.push('Address is required');
-    if (!this.city) errors.push('City is required');
-    if (!this.state) errors.push('State is required');
+    // City and state are optional as landlords may not always provide them
     if (!(this.totalUnits > 0) && !(this.bedrooms > 0) && !(this.monthlyRate > 0)) {
       errors.push('Provide total units, bedrooms, or a monthly rate');
     }
