@@ -44,20 +44,103 @@ class PredictionCharts {
             return date.toLocaleDateString('en-US', { month: 'short' });
         }) : [];
         if (!historicalData.length && !predictionLabels.length) {
-            const wrapper = ctx.parentNode;
-            if (wrapper) {
-                ctx.style.display = 'none';
-                let message = wrapper.querySelector('.chart-no-data');
-                if (!message) {
-                    message = document.createElement('div');
-                    message.className = 'chart-no-data';
-                    message.style.padding = '24px';
-                    message.style.textAlign = 'center';
-                    message.style.color = '#666';
-                    message.style.fontSize = '14px';
-                    wrapper.appendChild(message);
+            // Render a mock illustrative chart so landlord sees expected UI
+            try {
+                const wrapper = ctx.parentNode;
+                ctx.style.display = '';
+
+                const mockLabels = [];
+                const mockData = [];
+                for (let i = 5; i >= 0; i--) {
+                    const d = new Date();
+                    d.setMonth(d.getMonth() - i);
+                    mockLabels.push(d.toLocaleDateString('en-US', { month: 'short' }));
+                    mockData.push(50000 + Math.round(Math.random() * 20000) - 10000);
                 }
-                message.textContent = 'Insufficient historical revenue data to render the forecast chart.';
+                const mockPreds = [mockData[mockData.length - 1] + 2000, mockData[mockData.length - 1] + 5000, mockData[mockData.length - 1] + 8000];
+
+                if (this.predictionCharts.has('revenueTrend')) {
+                    this.predictionCharts.get('revenueTrend').destroy();
+                }
+
+                // compute next-month labels (three months)
+                const nextMonthLabels = [1,2,3].map(i => {
+                    const d = new Date(); d.setMonth(d.getMonth() + i);
+                    return d.toLocaleDateString('en-US', { month: 'short' });
+                });
+
+                this.predictionCharts.set('revenueTrend', new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: [...mockLabels, ...nextMonthLabels],
+                        datasets: [
+                            {
+                                label: 'Historical (mock)',
+                                data: [...mockData, ...Array(3).fill(null)],
+                                borderColor: 'rgba(107,114,128,0.9)',
+                                backgroundColor: 'rgba(107,114,128,0.08)',
+                                borderWidth: 2,
+                                fill: false,
+                                tension: 0.3
+                            },
+                            {
+                                label: 'Forecast (mock)',
+                                data: [...Array(mockData.length).fill(null), ...mockPreds],
+                                borderColor: 'rgba(59,130,246,0.9)',
+                                backgroundColor: 'rgba(59,130,246,0.08)',
+                                borderWidth: 2,
+                                borderDash: [6, 4],
+                                fill: false,
+                                tension: 0.3
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: true },
+                            tooltip: { callbacks: { label: function(context) { return `${context.dataset.label}: ₱${context.parsed.y?.toLocaleString() || 'N/A'}`; } } }
+                        },
+                        scales: {
+                            y: { ticks: { callback: function(value){ return '₱' + value.toLocaleString(); } } }
+                        }
+                    }
+                }));
+
+                // show a clear banner that this is mock/illustration only
+                if (wrapper) {
+                    let banner = wrapper.querySelector('.mock-chart-banner');
+                    if (!banner) {
+                        banner = document.createElement('div');
+                        banner.className = 'mock-chart-banner';
+                        banner.style.marginTop = '8px';
+                        banner.style.fontSize = '12px';
+                        banner.style.color = '#9ca3af';
+                        banner.style.textAlign = 'center';
+                        banner.textContent = 'Mock chart — illustration only. Collect historical payments to see real forecasts.';
+                        wrapper.appendChild(banner);
+                    } else {
+                        banner.style.display = '';
+                    }
+                }
+            } catch (err) {
+                console.warn('Could not render mock revenue forecast chart:', err);
+                const wrapper = ctx.parentNode;
+                if (wrapper) {
+                    ctx.style.display = 'none';
+                    let message = wrapper.querySelector('.chart-no-data');
+                    if (!message) {
+                        message = document.createElement('div');
+                        message.className = 'chart-no-data';
+                        message.style.padding = '24px';
+                        message.style.textAlign = 'center';
+                        message.style.color = '#666';
+                        message.style.fontSize = '14px';
+                        wrapper.appendChild(message);
+                    }
+                    message.textContent = 'Insufficient historical revenue data to render the forecast chart.';
+                }
             }
             return;
         }

@@ -374,7 +374,9 @@
 .churn-left {
     flex: 1 1 auto;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
 }
 .churn-name {
     font-weight: 700;
@@ -384,7 +386,20 @@
 .churn-meta {
     font-size: 0.82rem;
     color: #6b7280;
-    margin-top: 4px;
+    margin: 0 0 0 8px;
+}
+
+/* Stack vertically on very small screens */
+@media (max-width: 420px) {
+    .churn-left {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+    }
+    .churn-meta {
+        margin-left: 0;
+        margin-top: 4px;
+    }
 }
 .churn-right {
     display: flex;
@@ -3043,6 +3058,13 @@ table tbody tr:hover {
     color: white;
 }
 
+/* Generic info/neutral badge (used for unknown or custom statuses) */
+.status-badge.info {
+    background-color: rgba(23, 162, 184, 0.08);
+    color: var(--info);
+    border: 1px solid rgba(23, 162, 184, 0.12);
+}
+
 /* Waiting / Awaiting verification (prominent, consistent) */
 .status-badge.waiting {
     background: linear-gradient(135deg, #fff4e6 0%, #ffd8a8 100%);
@@ -3266,6 +3288,128 @@ table tbody tr:hover {
     color: var(--dark-gray);
     text-align: center;
 }
+
+/* ===================== ENHANCED UI / UX STYLES ===================== */
+/* Modal: enhanced animations, sizes, backdrop blur */
+.modal-overlay {
+    background: rgba(6,10,24,0.5);
+    backdrop-filter: blur(6px) saturate(120%);
+    -webkit-backdrop-filter: blur(6px) saturate(120%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.modal-content {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(12, 30, 70, 0.14);
+    width: 90%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow: auto;
+    transform-origin: center bottom;
+    transition: transform 260ms cubic-bezier(.2,.9,.2,1), opacity 200ms ease;
+}
+
+.modal-slide-up {
+    transform: translateY(18px);
+    opacity: 0;
+}
+.modal-overlay.active .modal-slide-up {
+    transform: translateY(0);
+    opacity: 1;
+}
+
+/* Modal header/footer polish */
+.modal-header {
+    padding: 18px 20px;
+    border-bottom: 1px solid rgba(15,23,42,0.06);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.modal-header h3 { font-size: 1.05rem; margin: 0; }
+.modal-body { padding: 18px 20px; }
+.modal-footer { padding: 14px 18px; gap: 10px; }
+
+/* Payment modal specific */
+.payment-form-container { display: flex; flex-direction: column; gap: 14px; }
+.payment-header-row { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.payment-method-selector { display:flex; gap:10px; flex-wrap:wrap; margin-top:8px; }
+.payment-method-card {
+    background: white;
+    border: 1px solid rgba(16,24,40,0.06);
+    padding: 12px 14px;
+    border-radius: 10px;
+    min-width: 110px;
+    display:flex; align-items:center; gap:10px; cursor:pointer; transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+.payment-method-card .payment-method-card-icon { font-size: 18px; }
+.payment-method-card.selected { border-color: var(--royal-blue); box-shadow: 0 8px 20px rgba(22,38,96,0.08); transform: translateY(-4px); }
+
+.file-upload-box { border: 1px dashed rgba(22,38,96,0.08); padding: 14px; border-radius: 8px; display:flex; align-items:center; gap:12px; cursor:pointer; }
+.file-upload-box .file-upload-preview img { max-height: 80px; max-width: 100%; border-radius: 6px; }
+
+/* Tables: responsive wrapper and zebra stripes */
+.table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-responsive table { width: 100%; border-collapse: collapse; min-width: 680px; }
+.table-responsive tr:nth-child(even) td { background: rgba(22,38,96,0.02); }
+.table-responsive tr:hover td { background: rgba(22,38,96,0.04); transform: translateZ(0); }
+.table-responsive td, .table-responsive th { padding: 12px 14px; border-bottom: 1px solid rgba(15,23,42,0.04); }
+.action-buttons { display:flex; gap:8px; flex-wrap:wrap; }
+
+/* Cards & Predictive Section */
+.card { transition: transform 200ms ease, box-shadow 200ms ease; border-radius: 12px; }
+.card:hover { transform: translateY(-4px); box-shadow: 0 12px 30px rgba(12,30,70,0.12); }
+.predictive-card { border-left: 6px solid transparent; padding: 14px; }
+.predictive-card.trend-positive { border-left-color: #22C55E; }
+.predictive-card.trend-warning { border-left-color: #F59E0B; }
+.predictive-card.trend-negative { border-left-color: #EF4444; }
+.card-group { gap: 18px; display:flex; flex-wrap:wrap; }
+
+/* Charts */
+.chart-container { width: 100%; min-height: 200px; position: relative; }
+@media (min-width: 900px) { .chart-container { min-height: 250px; } }
+.chart-skeleton { background: linear-gradient(90deg, rgba(255,255,255,0.02) 0%, rgba(240,246,255,0.4) 50%, rgba(255,255,255,0.02) 100%); border-radius: 8px; width: 100%; height: 100%; display:flex; align-items:center; justify-content:center; }
+
+/* Buttons & interactions */
+.btn { transition: transform 120ms ease, box-shadow 120ms ease, background-color 160ms ease; }
+.btn:active { transform: scale(0.98); }
+.btn[disabled], .btn.disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+/* Forms */
+.form-input, .form-select, .form-textarea-payment, .form-input-payment { padding: 10px 12px; border: 1px solid rgba(15,23,42,0.08); border-radius: 8px; outline: none; transition: box-shadow 120ms ease, border-color 120ms ease; }
+.form-input:focus, .form-select:focus, .form-textarea-payment:focus { box-shadow: 0 6px 18px rgba(22,38,96,0.08); border-color: var(--royal-blue); }
+.form-group { display:flex; flex-direction:column; gap:6px; }
+.form-label { font-size: 13px; color: var(--dark-gray); }
+
+/* Floating label (optional) */
+.floating-label { position: relative; }
+.floating-label input { padding-top: 18px; }
+.floating-label label { position: absolute; left: 12px; top: 10px; font-size: 12px; color: var(--dark-gray); pointer-events: none; transition: transform 120ms ease, font-size 120ms ease; }
+.floating-label input:focus + label, .floating-label input:not(:placeholder-shown) + label { transform: translateY(-10px); font-size: 11px; }
+
+/* Touch targets */
+.touch-target { min-width: 44px; min-height: 44px; padding: 8px; display:inline-flex; align-items:center; justify-content:center; }
+
+/* Loading spinner component */
+.spinner { display:inline-block; width: 36px; height: 36px; border: 4px solid rgba(0,0,0,0.08); border-top-color: var(--royal-blue); border-radius: 999px; animation: spin 800ms linear infinite; }
+.spinner-centered { display:flex; align-items:center; justify-content:center; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Responsive tweaks */
+@media (max-width: 800px) {
+    .modal-content { width: 96%; border-radius: 10px; padding: 0; }
+    .payment-method-card { min-width: 120px; padding: 10px; }
+    .table-responsive table { min-width: 640px; }
+}
+
+/* Small utility */
+.visually-hidden { position:absolute !important; height:1px; width:1px; overflow:hidden; clip:rect(1px,1px,1px,1px); white-space:nowrap; }
+
+/* End enhanced styles */
 
 .data-loading i {
     font-size: 2rem;
@@ -3875,6 +4019,54 @@ table tbody tr:hover {
     transform: translateY(0);
     pointer-events: auto;
     display: block;
+}
+
+/* Profile layout styles */
+.profile-grid {
+    display: grid;
+    grid-template-columns: 320px 1fr; /* fixed left column for avatar/stats, right column fills remaining space */
+    gap: 25px;
+    width: 100%;
+    max-width: none;
+}
+.profile-left { display: flex; flex-direction: column; gap: 20px; }
+.profile-right { display: flex; flex-direction: column; gap: 20px; }
+/* ensure profile cards create a baseline stacking context and allow cards to size to content */
+.profile-right .card { position: relative; z-index: 0; height: auto !important; }
+
+/* payment QR container: keep it inside the Banking card and prevent overlap */
+.payment-qr-container { position: static; z-index: auto; margin-bottom: 24px; overflow: visible; width: 100%; box-sizing: border-box; }
+
+/* constrain QR images visually while allowing the card to expand */
+.payment-qr-container img { display: block; max-width: 140px; width: auto; height: auto; margin: 6px auto; }
+.profile-card { text-align: center; padding: 24px; }
+.profile-avatar { width: 80px; height: 80px; margin: 0 auto 15px; font-size: 2rem; display:flex; align-items:center; justify-content:center; border-radius:50%; background:var(--powder-blue); color:var(--royal-blue); }
+.profile-name { margin: 0 0 5px 0; color: var(--text-dark); }
+.profile-email { color: var(--dark-gray); margin: 0 0 15px 0; }
+.profile-badges { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; }
+.quick-stats { padding: 18px; }
+.quick-stats-list { display:flex; flex-direction:column; gap:12px; }
+.stat-item { display:flex; justify-content:space-between; padding:10px; background:#f8f9fa; border-radius:6px; }
+.stat-label { color:var(--dark-gray); }
+.stat-value { font-weight:600; }
+.profile-section h3 { margin: 0 0 16px 0; color: var(--text-dark); border-bottom: none; padding-bottom: 0; display:flex; align-items:center; }
+.profile-details-grid { display:grid; grid-template-columns: 1fr 1fr; gap:20px; }
+.profile-field-block { margin-top: 16px; }
+.profile-field-block label { color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display:block; margin-bottom:6px; }
+.profile-field-block p { margin:0; color:var(--text-dark); font-weight:500; }
+.field label { color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display:block; margin-bottom:5px; }
+.field p { margin:0; color:var(--text-dark); font-weight:500; }
+.field p.large { font-size:1.2rem; }
+.lease-summary { margin-top:16px; padding:15px; background:#f0f7ff; border-radius:8px; border-left:4px solid var(--info); }
+.lease-grid { display:grid; grid-template-columns:1fr 1fr; gap:15px; }
+.lease-remaining { margin-top:10px; text-align:center; color:var(--dark-gray); }
+.security-list { display:flex; flex-direction:column; gap:15px; }
+.security-item .security-row { display:flex; gap:10px; align-items:center; justify-content:space-between; }
+.muted { color:var(--dark-gray); font-size:0.9rem; }
+
+@media (max-width: 900px) {
+    .profile-grid { grid-template-columns: 1fr; }
+    .profile-details-grid { grid-template-columns: 1fr; }
 }
 
 /* Optional extra enter animation class for a subtle pop */

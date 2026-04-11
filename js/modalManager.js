@@ -24,11 +24,12 @@ class ModalManager {
         }
         
         // ⬇️ Updated modal-content with width & maxWidth
+        // Accessibility attributes and slide-up animation
         modal.innerHTML = `
-            <div class="modal-content" style="${options.width ? `width: ${options.width};` : ''} ${options.maxWidth ? `max-width: ${options.maxWidth};` : ''}">
+            <div class="modal-content modal-slide-up" role="dialog" aria-modal="true" aria-label="${options.title || 'Dialog'}" style="${options.width ? `width: ${options.width};` : ''} ${options.maxWidth ? `max-width: ${options.maxWidth};` : ''}">
                 <div class="modal-header">
                     <h3>${options.title || 'Form'}</h3>
-                    <button class="modal-close">&times;</button>
+                    <button class="modal-close" aria-label="Close">&times;</button>
                 </div>
                 <div class="modal-body">
                     ${content}
@@ -39,12 +40,24 @@ class ModalManager {
 
         document.body.appendChild(modal);
 
-        // Keep all your existing event handlers
-        modal.querySelector('.modal-close').addEventListener('click', () => this.closeModal(modal));
-        modal.querySelector('#modalCancel')?.addEventListener('click', () => this.closeModal(modal));
+        // Accessibility: focus management
+        const focusableSelector = 'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
+        const previouslyFocused = document.activeElement;
+        const firstFocusable = modal.querySelector(focusableSelector);
+        if (firstFocusable) firstFocusable.focus();
 
-        modal.querySelector('#modalSubmit')?.addEventListener('click', () => {
-            if (options.onSubmit) options.onSubmit();
+        // Close handlers
+        const onClose = (sourceEvent) => {
+            this.closeModal(modal);
+            if (previouslyFocused && previouslyFocused.focus) previouslyFocused.focus();
+        };
+
+        modal.querySelector('.modal-close').addEventListener('click', onClose);
+        modal.querySelector('#modalCancel')?.addEventListener('click', onClose);
+
+        // Submit handler
+        modal.querySelector('#modalSubmit')?.addEventListener('click', (e) => {
+            if (options.onSubmit) options.onSubmit(e, modal);
             else this.closeModal(modal);
         });
 
@@ -53,9 +66,9 @@ class ModalManager {
             options.extraButtons.forEach((btn, index) => {
                 const extraBtn = modal.querySelector(`#modalExtraBtn_${index}`);
                 if (extraBtn && btn.onClick) {
-                    extraBtn.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        btn.onClick();
+                    extraBtn.addEventListener('click', (ev) => {
+                        ev.preventDefault();
+                        btn.onClick(ev, modal);
                     });
                 }
             });
@@ -64,9 +77,44 @@ class ModalManager {
         // Close on outside click
         modal.addEventListener('click', (e) => {
             if (e.target === modal) {
-                this.closeModal(modal);
+                onClose();
             }
         });
+
+        // Trap focus and ESC to close
+        const keyHandler = (e) => {
+            if (e.key === 'Escape') {
+                onClose();
+                return;
+            }
+            if (e.key === 'Tab') {
+                const focusable = Array.from(modal.querySelectorAll(focusableSelector)).filter(el => el.offsetParent !== null);
+                if (focusable.length === 0) {
+                    e.preventDefault();
+                    return;
+                }
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (e.shiftKey) {
+                    if (document.activeElement === first) {
+                        e.preventDefault();
+                        last.focus();
+                    }
+                } else {
+                    if (document.activeElement === last) {
+                        e.preventDefault();
+                        first.focus();
+                    }
+                }
+            }
+        };
+
+        document.addEventListener('keydown', keyHandler);
+
+        // attach a cleanup reference so closeModal can remove listeners
+        modal._cleanup = () => {
+            document.removeEventListener('keydown', keyHandler);
+        };
 
         return modal;
     }
@@ -428,6 +476,10 @@ getBillById(billId) {
 
 
     static closeModal(modal) {
+        if (!modal) return;
+        try {
+            if (typeof modal._cleanup === 'function') modal._cleanup();
+        } catch (e) { /* ignore */ }
         if (modal && modal.parentNode) {
             modal.parentNode.removeChild(modal);
         }

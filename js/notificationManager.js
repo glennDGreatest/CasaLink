@@ -220,14 +220,18 @@ class NotificationManager {
         let changeSummary = '';
         
         if (changes && Object.keys(changes).length > 0) {
-            const changeList = Object.keys(changes).map(field => {
-                const displayName = field === 'numberOfRooms' ? 'rooms' :
-                                  field === 'numberOfFloors' ? 'floors' :
-                                  field === 'apartmentName' ? 'name' :
-                                  field;
-                return `${displayName} updated`;
-            });
-            changeSummary = ` (${changeList.join(', ')})`;
+            // Exclude room-level summary flags (roomsAdded/roomsModified/roomsDeleted)
+            const keys = Object.keys(changes).filter(k => !/^rooms?/i.test(k));
+            if (keys.length) {
+                const changeList = keys.map(field => {
+                    const displayName = field === 'numberOfRooms' ? 'rooms' :
+                                      field === 'numberOfFloors' ? 'floors' :
+                                      field === 'apartmentName' ? 'name' :
+                                      field;
+                    return `${displayName} updated`;
+                });
+                changeSummary = ` (${changeList.join(', ')})`;
+            }
         }
 
         this.showNotification('Property Updated', {

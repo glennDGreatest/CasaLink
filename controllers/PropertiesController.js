@@ -548,6 +548,7 @@ class PropertiesController {
             const apartmentAddress = this._editingProperty?.address || 
                                     this._editingProperty?.apartmentAddress || 
                                     this._editingProperty?.rentalAddress || '';
+            const rentalAddress = apartmentAddress;
             const apartmentName = this._editingProperty?.name || 
                                  this._editingProperty?.apartmentName || '';
             const landlordId = this._editingProperty?.landlordId || 
@@ -586,9 +587,21 @@ class PropertiesController {
                     if (Object.keys(changedFields).length > 0) {
                         // For existing rooms, only update when actual values changed
                         changedFields.updatedAt = new Date();
-                        await window.firebaseDb.collection('rooms').doc(unitId).update({ ...changedFields, apartmentId: this._currentEditingId, propertyId: this._currentEditingId, apartmentAddress, apartmentName, rentalAddress, landlordId });
-                        console.log('✏️ Updated room', unitId, 'with address:', apartmentAddress);
-                        roomChanges.modified.push({ roomNumber: data.roomNumber, floor: data.floor });
+                        const updatePayload = { ...changedFields, apartmentId: this._currentEditingId, propertyId: this._currentEditingId, apartmentAddress, apartmentName, rentalAddress, landlordId };
+                        try {
+                            await window.firebaseDb.collection('rooms').doc(unitId).update(updatePayload);
+                            console.log('✏️ Updated room', unitId, 'with address:', apartmentAddress);
+                            const changedKeys = Object.keys(changedFields).filter(k => k !== 'updatedAt');
+                            const changedDetails = {};
+                            changedKeys.forEach(k => {
+                                const fromVal = originalData[k] != null ? originalData[k] : '';
+                                const toVal = data[k] != null ? data[k] : '';
+                                changedDetails[k] = { from: fromVal, to: toVal };
+                            });
+                            roomChanges.modified.push({ roomNumber: data.roomNumber, floor: data.floor, changedFields: changedKeys, changedDetails, unitId, apartmentName, apartmentAddress });
+                        } catch (e) {
+                            console.warn('❌ Failed to update room', unitId, e);
+                        }
                     } else {
                         console.log('ℹ️ No changes detected for room', unitId);
                     }
@@ -599,7 +612,9 @@ class PropertiesController {
                     data.status = 'vacant';
                     const ref = await window.firebaseDb.collection('rooms').add(data);
                     console.log('✅ Created new room', ref.id, 'with address:', apartmentAddress);
-                    roomChanges.added.push({ roomNumber: data.roomNumber, floor: data.floor });
+                    // record which initial fields were set for the activity
+                    const initialFields = ['roomNumber','floor','monthlyRent','securityDeposit','numberOfBedrooms','numberOfBathrooms','maxMembers'].filter(f => data[f] !== undefined && data[f] !== '' && data[f] !== 0);
+                    roomChanges.added.push({ roomNumber: data.roomNumber, floor: data.floor, unitId: ref.id, initialFields, apartmentName, apartmentAddress });
                 }
             } catch (e) {
                 console.warn('❌ Failed to save room:', e);
@@ -1655,6 +1670,16 @@ class PropertiesController {
                 console.warn('⚠️ Could not fetch original property data for change tracking:', err);
             }
 
+            // Save room changes first so room documents are updated prior to
+            // updating the apartment record and running cascade logic.
+            let roomChanges = { added: [], modified: [], deleted: 0 };
+            try {
+                roomChanges = await this._saveRoomDetails();
+                console.log('✅ Room changes saved before property update:', roomChanges);
+            } catch (roomErr) {
+                console.warn('⚠️ Failed to save room details before updating property:', roomErr);
+            }
+
             await this.service.updateProperty(propertyId, propertyData);
             
             // CASCADE UPDATE: Update all related documents when apartment is edited
@@ -1672,18 +1697,9 @@ class PropertiesController {
                 window.notificationManager.success('Property updated successfully');
             }
 
-            // Show push notification for property edit
-            if (window.NotificationManager && typeof window.NotificationManager.notifyPropertyEdited === 'function') {
-                try {
-                    window.NotificationManager.notifyPropertyEdited(propertyData, changes);
-                    console.log('✅ Push notification sent for property edit');
-                } catch (notifyErr) {
-                    console.warn('⚠️ Failed to send push notification for property edit:', notifyErr);
-                }
-            }
+            // (notification will be sent after change summary/activity is built)
 
-            // save room changes as well
-            const roomChanges = await this._saveRoomDetails();
+
 
             // Log activity for property edit
             try {
@@ -1804,9 +1820,117 @@ class PropertiesController {
                 if (typeof window.DataManager !== 'undefined' && typeof window.DataManager.addActivity === 'function') {
                     await window.DataManager.addActivity(activityData);
                     console.log('✅ Activity created for property edit');
+                    if (window.NotificationManager && typeof window.NotificationManager.notifyPropertyEdited === 'function') {
+                        try {
+                            window.NotificationManager.notifyPropertyEdited(propertyData, changes);
+                            console.log('✅ Push notification sent for property edit');
+                        } catch (notifyErr) {
+                            console.warn('⚠️ Failed to send push notification for property edit:', notifyErr);
+                        }
+                    }
                 } else if (typeof window.firebaseDb !== 'undefined') {
                     await window.firebaseDb.collection('activities').add(activityData);
                     console.log('✅ Activity created for property edit (direct Firestore)');
+                    if (window.NotificationManager && typeof window.NotificationManager.notifyPropertyEdited === 'function') {
+                        try {
+                            window.NotificationManager.notifyPropertyEdited(propertyData, changes);
+                            console.log('✅ Push notification sent for property edit');
+                        } catch (notifyErr) {
+                            console.warn('⚠️ Failed to send push notification for property edit:', notifyErr);
+                        }
+                    }
+                }
+
+                // Create granular activity entries for each property field change
+                try {
+                    const addActivity = async (item) => {
+                        if (typeof window.DataManager !== 'undefined' && typeof window.DataManager.addActivity === 'function') {
+                            await window.DataManager.addActivity(item);
+                        } else if (typeof window.firebaseDb !== 'undefined') {
+                            await window.firebaseDb.collection('activities').add(item);
+                        }
+                    };
+
+                    // Per-property-field activities
+                    for (const [field, diff] of Object.entries(changes)) {
+                        if (field.startsWith('rooms')) continue; // skip room summary entries
+                        const fieldActivity = {
+                            landlordId: landlordId,
+                            type: 'property_field_changed',
+                            title: `Property field changed: ${field}`,
+                            message: `${field} changed for ${propertyName}`,
+                            apartmentId: propertyId,
+                            propertyId: propertyId,
+                            data: {
+                                field,
+                                from: diff.from,
+                                to: diff.to,
+                                propertyName,
+                                apartmentAddress: propertyData.address || ''
+                            },
+                            createdAt: new Date().toISOString(),
+                            timestamp: new Date().toISOString(),
+                            isSeen: 'unseen'
+                        };
+                        await addActivity(fieldActivity);
+                    }
+
+                    // Per-room activities for additions/modifications/deletions
+                    if (roomChanges) {
+                        if (Array.isArray(roomChanges.added)) {
+                            for (const r of roomChanges.added) {
+                                    const a = {
+                                        landlordId,
+                                        type: 'room_added',
+                                        title: `Room added: ${r.roomNumber}`,
+                                        message: `Room ${r.roomNumber} was added to ${propertyName}`,
+                                        apartmentId: propertyId,
+                                        propertyId: propertyId,
+                                        data: { roomNumber: r.roomNumber, floor: r.floor, unitId: r.unitId, initialFields: r.initialFields || [], apartmentName: r.apartmentName || propertyName, apartmentAddress: r.apartmentAddress || propertyData.address || '' },
+                                        createdAt: new Date().toISOString(),
+                                        timestamp: new Date().toISOString(),
+                                        isSeen: 'unseen'
+                                    };
+                                await addActivity(a);
+                            }
+                        }
+
+                        if (Array.isArray(roomChanges.modified)) {
+                            for (const r of roomChanges.modified) {
+                                const a = {
+                                    landlordId,
+                                    type: 'room_edited',
+                                    title: `Room edited: ${r.roomNumber}`,
+                                    message: `Room ${r.roomNumber} updated (${(r.changedFields||[]).join(', ')}) in ${propertyName}`,
+                                    apartmentId: propertyId,
+                                    propertyId: propertyId,
+                                    data: { roomNumber: r.roomNumber, floor: r.floor, changedFields: r.changedFields || [], changedDetails: r.changedDetails || {}, unitId: r.unitId, apartmentName: r.apartmentName || propertyName, apartmentAddress: r.apartmentAddress || propertyData.address || '' },
+                                    createdAt: new Date().toISOString(),
+                                    timestamp: new Date().toISOString(),
+                                    isSeen: 'unseen'
+                                };
+                                await addActivity(a);
+                            }
+                        }
+
+                        if (roomChanges.deleted && Number(roomChanges.deleted) > 0) {
+                            const a = {
+                                landlordId,
+                                type: 'room_deleted',
+                                title: `Room(s) deleted: ${roomChanges.deleted}`,
+                                message: `${roomChanges.deleted} room(s) were deleted from ${propertyName}`,
+                                apartmentId: propertyId,
+                                propertyId: propertyId,
+                                data: { deletedCount: roomChanges.deleted },
+                                createdAt: new Date().toISOString(),
+                                timestamp: new Date().toISOString(),
+                                isSeen: 'unseen'
+                            };
+                            await addActivity(a);
+                        }
+                    }
+                } catch (activityErr) {
+                    console.warn('⚠️ Failed to create granular activities:', activityErr);
                 }
             } catch (actErr) {
                 console.warn('⚠️ Failed to log activity for property edit:', actErr);
@@ -1874,7 +1998,7 @@ class PropertiesController {
             return;
         }
 
-        // Update all rooms that belong to this apartment
+        // Update all rooms/units that belong to this apartment
         try {
             console.log(`📝 Updating rooms for apartment ${propertyId}...`);
             const roomsSnapshot = await firebaseDb.collection('rooms')
@@ -1894,6 +2018,8 @@ class PropertiesController {
         } catch (err) {
             console.error('❌ Error updating rooms:', err);
         }
+
+        // (units collection is not used in this installation) - no action
 
         // Update all leases that belong to this apartment
         try {

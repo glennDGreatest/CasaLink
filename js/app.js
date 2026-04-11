@@ -2,7 +2,8 @@ class CasaLink {
     constructor() {
         console.log('🏠 CasaLink constructor starting...');
         
-        this.appVersion = '1.0.4';
+        // Bump version to trigger client cache-busting when users reload
+        this.appVersion = '1.0.8';
         this.currentUser = null;
         this.currentRole = null;
         this.isOnline = navigator.onLine;
@@ -25,6 +26,12 @@ class CasaLink {
         this.billsTotalPages = 1;
         this.billsAllData = [];
         this.billsFilteredData = [];
+        // Tenant-specific payments pagination (for tenant Billing & Payments page)
+        this.tenantPaymentsCurrentPage = 1;
+        this.tenantPaymentsItemsPerPage = 8;
+        this.tenantPaymentsTotalPages = 1;
+        this.tenantPaymentsAllData = [];
+        this.tenantPaymentsFilteredData = [];
         this.paymentsCurrentPage = 1;
         this.paymentsItemsPerPage = 10;
         this.paymentsTotalPages = 1;
@@ -49,12 +56,24 @@ class CasaLink {
         this.maintenanceTotalPages = 1;
         this.maintenanceAllData = [];
         this.maintenanceFilteredData = [];
+        // Tenant maintenance pagination (reuses same page controls when tenant view is active)
+        this.tenantMaintenanceCurrentPage = 1;
+        this.tenantMaintenanceItemsPerPage = 5;
+        this.tenantMaintenanceTotalPages = 1;
+        this.tenantMaintenanceAllData = [];
+        this.tenantMaintenanceFilteredData = [];
 
         this.activitiesCurrentPage = 1;
         this.activitiesItemsPerPage = 5;
         this.activitiesTotalPages = 1;
         this.activitiesAllData = [];
         this.activitiesFilteredData = [];
+        // Recommendations pagination state
+        this.recommendationsCurrentPage = 1;
+        this.recommendationsItemsPerPage = 5;
+        this.recommendationsTotalPages = 1;
+        this.recommendationsAllData = [];
+        this.recommendationsFilteredData = [];
         this.activityAutoRefreshInterval = null;
         this.activityListener = null;
         this.activityRealtimeInitialized = false;
@@ -266,10 +285,7 @@ class CasaLink {
             // Store new version
             localStorage.setItem('casalink_app_version', this.appVersion);
             
-            // Reload to apply fresh files
-            setTimeout(() => {
-                window.location.reload();
-            }, 1000);
+            // Cache cleared; no automatic reload or notification to avoid refresh loops.
         }
     }
 
@@ -1377,142 +1393,64 @@ class CasaLink {
                         </button>
                     </div>
 
-                    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 25px; max-width: 1200px;">
+                    <div class="profile-grid">
                         <!-- Left Column: Profile Card -->
-                        <div style="display: flex; flex-direction: column; gap: 20px;">
+                        <div class="profile-left">
                             <!-- Profile Card -->
-                            <div class="card" style="text-align: center;">
-                                <div class="avatar" style="width: 80px; height: 80px; margin: 0 auto 15px; font-size: 2rem;">
-                                    ${tenantData.name.charAt(0).toUpperCase()}
-                                </div>
-                                <h2 style="margin: 0 0 5px 0; color: var(--text-dark);">${tenantData.name}</h2>
-                                <p style="color: var(--dark-gray); margin: 0 0 15px 0;">${tenantData.email}</p>
-                                <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-                                    <span class="status-badge active">
-                                        <i class="fas fa-check-circle"></i> Active Tenant
-                                    </span>
-                                </div>
+                            <div class="card profile-card">
+                                <div class="avatar profile-avatar">${tenantData.name.charAt(0).toUpperCase()}</div>
+                                <h2 class="profile-name">${tenantData.name}</h2>
+                                <p class="profile-email">${tenantData.email}</p>
+                                <div class="profile-badges"><span class="status-badge active"><i class="fas fa-check-circle"></i> Active Tenant</span></div>
                             </div>
 
                             <!-- Quick Stats -->
-                            <div class="card">
-                                <h3 style="margin: 0 0 15px 0; color: var(--text-dark);">Quick Stats</h3>
-                                <div style="display: flex; flex-direction: column; gap: 12px;">
-                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
-                                        <span style="color: var(--dark-gray);">Room Number</span>
-                                        <strong>${tenantData.roomNumber || 'N/A'}</strong>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
-                                        <span style="color: var(--dark-gray);">Account Status</span>
-                                        <strong style="color: var(--success);">Verified</strong>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
-                                        <span style="color: var(--dark-gray);">Member Since</span>
-                                        <strong>${this.formatDate(tenantData.createdAt)}</strong>
-                                    </div>
+                            <div class="card quick-stats">
+                                <h3>Quick Stats</h3>
+                                <div class="quick-stats-list">
+                                    <div class="stat-item"><span class="stat-label">Room Number</span><strong class="stat-value">${tenantData.roomNumber || 'N/A'}</strong></div>
+                                    <div class="stat-item"><span class="stat-label">Account Status</span><strong class="stat-value" style="color:var(--success);">Verified</strong></div>
+                                    <div class="stat-item"><span class="stat-label">Member Since</span><strong class="stat-value">${this.formatDate(tenantData.createdAt)}</strong></div>
                                 </div>
                             </div>
                         </div>
 
                         <!-- Right Column: Profile Details -->
-                        <div style="display: flex; flex-direction: column; gap: 20px;">
+                        <div class="profile-right">
                             <!-- Personal Information -->
-                            <div class="card">
-                                <h3 style="margin: 0 0 20px 0; color: var(--text-dark); border-bottom: 2px solid var(--royal-blue); padding-bottom: 10px;">
-                                    <i class="fas fa-user" style="color: var(--royal-blue); margin-right: 10px;"></i>
-                                    Personal Information
-                                </h3>
-                                
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                                    <div>
-                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Full Name</label>
-                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${tenantData.name}</p>
-                                    </div>
-                                    <div>
-                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Email Address</label>
-                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500; word-break: break-all;">${tenantData.email}</p>
-                                    </div>
-                                    <div>
-                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Phone Number</label>
-                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${tenantData.phone || 'Not provided'}</p>
-                                    </div>
-                                    <div>
-                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Age</label>
-                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${tenantData.age || 'Not provided'}</p>
-                                    </div>
+                            <div class="card profile-section">
+                                <h3><i class="fas fa-user" style="color: var(--royal-blue); margin-right: 10px;"></i>Personal Information</h3>
+                                <div class="profile-details-grid">
+                                    <div class="field"><label>Full Name</label><p>${tenantData.name}</p></div>
+                                    <div class="field"><label>Email Address</label><p>${tenantData.email}</p></div>
+                                    <div class="field"><label>Phone Number</label><p>${tenantData.phone || 'Not provided'}</p></div>
+                                    <div class="field"><label>Age</label><p>${tenantData.age || 'Not provided'}</p></div>
                                 </div>
-
-                                <div style="margin-top: 20px;">
-                                    <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Occupation</label>
-                                    <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${tenantData.occupation || 'Not provided'}</p>
-                                </div>
+                                <div class="profile-field-block"><label>Occupation</label><p>${tenantData.occupation || 'Not provided'}</p></div>
                             </div>
 
                             <!-- Property Information -->
-                            <div class="card">
-                                <h3 style="margin: 0 0 20px 0; color: var(--text-dark); border-bottom: 2px solid var(--success); padding-bottom: 10px;">
-                                    <i class="fas fa-home" style="color: var(--success); margin-right: 10px;"></i>
-                                    Property Information
-                                </h3>
-
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                                    <div>
-                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Room Number</label>
-                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500; font-size: 1.2rem;">${tenantData.roomNumber || 'N/A'}</p>
-                                    </div>
-                                    <div>
-                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Monthly Rent</label>
-                                        <p style="margin: 0; color: var(--text-dark); font-weight: 500; font-size: 1.2rem;">₱${lease?.monthlyRent ? parseFloat(lease.monthlyRent).toLocaleString() : '0'}</p>
-                                    </div>
+                            <div class="card profile-section">
+                                <h3><i class="fas fa-home" style="color: var(--success); margin-right: 10px;"></i>Property Information</h3>
+                                <div class="profile-details-grid">
+                                    <div class="field"><label>Room Number</label><p class="large">${tenantData.roomNumber || 'N/A'}</p></div>
+                                    <div class="field"><label>Monthly Rent</label><p class="large">₱${lease?.monthlyRent ? parseFloat(lease.monthlyRent).toLocaleString() : '0'}</p></div>
                                 </div>
-
-                                <div style="margin-top: 20px;">
-                                    <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Rental Address</label>
-                                    <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${tenantData.rentalAddress || 'Not provided'}</p>
-                                </div>
-
+                                <div class="profile-field-block"><label>Rental Address</label><p>${(tenantData.rentalAddress || tenantData.apartmentAddress || tenantData.apartmentName || (tenantData.roomNumber ? (tenantData.roomNumber + (tenantData.apartmentName ? ' • ' + tenantData.apartmentName : '')) : '') ) || 'Not provided'}</p></div>
                                 ${lease ? `
-                                    <div style="margin-top: 20px; padding: 15px; background: #f0f7ff; border-radius: 8px; border-left: 4px solid var(--info);">
-                                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                                            <div>
-                                                <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Lease Start Date</label>
-                                                <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${this.formatDate(lease.leaseStart)}</p>
-                                            </div>
-                                            <div>
-                                                <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Lease End Date</label>
-                                                <p style="margin: 0; color: var(--text-dark); font-weight: 500;">${this.formatDate(lease.leaseEnd)}</p>
-                                            </div>
-                                        </div>
-                                        <div style="margin-top: 10px; text-align: center;">
-                                            <small style="color: var(--dark-gray);">Days Remaining: <strong>${this.getDaysRemaining(lease.leaseEnd)}</strong></small>
-                                        </div>
+                                    <div class="lease-summary">
+                                        <div class="lease-grid"><div class="field"><label>Lease Start Date</label><p>${this.formatDate(lease.leaseStart)}</p></div><div class="field"><label>Lease End Date</label><p>${this.formatDate(lease.leaseEnd)}</p></div></div>
+                                        <div class="lease-remaining">Days Remaining: <strong>${this.getDaysRemaining(lease.leaseEnd)}</strong></div>
                                     </div>
                                 ` : ''}
                             </div>
 
                             <!-- Account Security -->
-                            <div class="card">
-                                <h3 style="margin: 0 0 20px 0; color: var(--text-dark); border-bottom: 2px solid var(--warning); padding-bottom: 10px;">
-                                    <i class="fas fa-lock" style="color: var(--warning); margin-right: 10px;"></i>
-                                    Account Security
-                                </h3>
-
-                                <div style="display: flex; flex-direction: column; gap: 15px;">
-                                    <div style="padding: 15px; background: #fffbf0; border-radius: 8px; border-left: 4px solid var(--warning);">
-                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 5px;">Password</label>
-                                        <p style="margin: 0 0 10px 0; color: var(--text-dark);">••••••••</p>
-                                        <button class="btn btn-warning btn-sm" onclick="casaLink.showPasswordChangeModal()">
-                                            <i class="fas fa-key"></i> Change Password
-                                        </button>
-                                    </div>
-
-                                    <div style="padding: 15px; background: #f0fff4; border-radius: 8px;">
-                                        <label style="color: var(--dark-gray); font-size: 0.9rem; font-weight: 500; display: block; margin-bottom: 10px;">
-                                            <i class="fas fa-check-circle" style="color: var(--success); margin-right: 8px;"></i>
-                                            Two-Factor Authentication
-                                        </label>
-                                        <p style="margin: 0; color: var(--dark-gray); font-size: 0.9rem;">Enhance your account security with 2FA (Coming soon)</p>
-                                    </div>
+                            <div class="card profile-section">
+                                <h3><i class="fas fa-lock" style="color: var(--warning); margin-right: 10px;"></i>Account Security</h3>
+                                <div class="security-list">
+                                    <div class="security-item"><label>Password</label><div class="security-row"><span>••••••••</span><button class="btn btn-warning btn-sm" onclick="casaLink.showPasswordChangeModal()"><i class="fas fa-key"></i> Change</button></div></div>
+                                    <div class="security-item"><label><i class="fas fa-check-circle" style="color: var(--success); margin-right: 8px;"></i>Two-Factor Authentication</label><p class="muted">Enhance your account security with 2FA (Coming soon)</p></div>
                                 </div>
                             </div>
                         </div>
@@ -1589,49 +1527,31 @@ class CasaLink {
                         </button>
                     </div>
 
-                    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 25px; max-width: 1200px;">
+                    <div class="profile-grid">
                         <!-- Left Column: Profile Card -->
-                        <div style="display: flex; flex-direction: column; gap: 20px;">
+                        <div class="profile-left">
                             <!-- Profile Card -->
-                            <div class="card" style="text-align: center;">
-                                <div class="avatar" style="width: 80px; height: 80px; margin: 0 auto 15px; font-size: 2rem;">
-                                    ${landlordData.name.charAt(0).toUpperCase()}
-                                </div>
-                                <h2 style="margin: 0 0 5px 0; color: var(--text-dark);">${landlordData.name}</h2>
-                                <p style="color: var(--dark-gray); margin: 0 0 15px 0;">${landlordData.email}</p>
-                                <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
-                                    <span class="status-badge active">
-                                        <i class="fas fa-check-circle"></i> Active Landlord
-                                    </span>
-                                </div>
+                            <div class="card profile-card">
+                                <div class="avatar profile-avatar">${landlordData.name.charAt(0).toUpperCase()}</div>
+                                <h2 class="profile-name">${landlordData.name}</h2>
+                                <p class="profile-email">${landlordData.email}</p>
+                                <div class="profile-badges"><span class="status-badge active"><i class="fas fa-check-circle"></i> Active Landlord</span></div>
                             </div>
 
                             <!-- Quick Stats -->
-                            <div class="card">
-                                <h3 style="margin: 0 0 15px 0; color: var(--text-dark);">Quick Stats</h3>
-                                <div style="display: flex; flex-direction: column; gap: 12px;">
-                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
-                                        <span style="color: var(--dark-gray);">Properties</span>
-                                        <strong>${propertiesCount}</strong>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
-                                        <span style="color: var(--dark-gray);">Active Tenants</span>
-                                        <strong>${tenantsCount}</strong>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
-                                        <span style="color: var(--dark-gray);">Open Maintenance</span>
-                                        <strong>${maintenanceCount}</strong>
-                                    </div>
-                                    <div style="display: flex; justify-content: space-between; padding: 10px; background: #f8f9fa; border-radius: 6px;">
-                                        <span style="color: var(--dark-gray);">Member Since</span>
-                                        <strong>${this.formatDate(landlordData.createdAt)}</strong>
-                                    </div>
+                            <div class="card quick-stats">
+                                <h3>Quick Stats</h3>
+                                <div class="quick-stats-list">
+                                    <div class="stat-item"><span class="stat-label">Properties</span><strong class="stat-value">${propertiesCount}</strong></div>
+                                    <div class="stat-item"><span class="stat-label">Active Tenants</span><strong class="stat-value">${tenantsCount}</strong></div>
+                                    <div class="stat-item"><span class="stat-label">Open Maintenance</span><strong class="stat-value">${maintenanceCount}</strong></div>
+                                    <div class="stat-item"><span class="stat-label">Member Since</span><strong class="stat-value">${this.formatDate(landlordData.createdAt)}</strong></div>
                                 </div>
                             </div>
                         </div>
 
                         <!-- Right Column: Profile Details -->
-                        <div style="display: flex; flex-direction: column; gap: 20px;">
+                        <div class="profile-right">
                             <!-- Personal Information -->
                             <div class="card">
                                 <h3 style="margin: 0 0 20px 0; color: var(--text-dark); border-bottom: 2px solid var(--royal-blue); padding-bottom: 10px;">
@@ -1694,7 +1614,7 @@ class CasaLink {
 
                                 <!-- QR Code Images -->
                                 ${(landlordData.gcashQrBase64 || landlordData.mayaQrBase64) ? `
-                                <div style="border-top: 1px solid #e2e8f0; padding-top: 20px; margin-top: 10px;">
+                                <div class="payment-qr-container" style="border-top: 1px solid #e2e8f0; padding-top: 20px; margin-top: 10px; overflow: visible;">
                                     <h4 style="margin: 0 0 15px 0; color: var(--text-dark); font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 10px;">
                                         <i class="fas fa-qrcode" style="color: var(--primary);"></i>
                                         Payment QR Codes
@@ -2012,7 +1932,7 @@ class CasaLink {
             const date = item.archivedAt ? new Date(item.archivedAt).toLocaleString() : 'Unknown';
 
             const restoreButton = ['tenant', 'bill'].includes(item.type)
-                ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.restoreArchivedItem('${item.id}')"><i class="fas fa-undo"></i> Restore</button>`
+                ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.showArchiveItemModal('${item.id}')"><i class="fas fa-undo"></i> Restore</button>`
                 : `<button class="btn btn-sm btn-secondary" disabled title="Restore unavailable for this item type"><i class="fas fa-undo"></i> Restore</button>`;
 
             return `
@@ -2022,9 +1942,6 @@ class CasaLink {
                     <td>${date}</td>
                     <td>
                         ${restoreButton}
-                        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); casaLink.permanentlyDeleteArchivedItem('${item.id}')">
-                            <i class="fas fa-trash"></i> Delete
-                        </button>
                     </td>
                 </tr>
             `;
@@ -2098,6 +2015,21 @@ class CasaLink {
             const archivedAt = item.archivedAt ? new Date(item.archivedAt).toLocaleString() : 'Unknown';
             const archivedBy = item.archivedBy || 'System';
 
+            // Resolve archivedBy (likely an id) to a friendly name when possible
+            let archivedByName = archivedBy;
+            if (archivedBy && typeof archivedBy === 'string' && archivedBy !== 'System' && typeof firebaseDb !== 'undefined') {
+                try {
+                    const udoc = await firebaseDb.collection('users').doc(archivedBy).get();
+                    if (udoc.exists) {
+                        const udata = udoc.data() || {};
+                        archivedByName = udata.name || udata.displayName || udata.email || archivedBy;
+                    }
+                } catch (err) {
+                    console.warn('Could not fetch archivedBy user name:', err);
+                    archivedByName = archivedBy;
+                }
+            }
+
             let detailsHtml = '';
             const data = item.data || {};
 
@@ -2147,27 +2079,39 @@ class CasaLink {
 
             const modalContent = `
                 <div class="archive-details-modal">
+                    <style>
+                        .archive-details-modal .modal-footer { display:flex; gap:12px; justify-content:flex-end; padding-top:12px; }
+                        .archive-details-modal .modal-footer .btn { padding:10px 16px; border-radius:8px; font-weight:600; min-width:120px; box-shadow:0 2px 6px rgba(0,0,0,0.08); border:1px solid rgba(0,0,0,0.06); cursor:pointer; }
+                        .archive-details-modal .modal-footer .btn.btn-primary { background: linear-gradient(180deg,#1a73e8,#1558b5); color: #fff; border: none; }
+                        .archive-details-modal .modal-footer .btn.btn-secondary { background:#fff; color:#2c3e50; border:1px solid #dfe6ee; }
+                        .archive-details-modal .modal-footer .btn:focus { outline: none; box-shadow: 0 0 0 3px rgba(26,115,232,0.12); }
+                        .archive-details-modal .archive-preview { background: #fff; padding: 18px; border-radius:8px; border:1px solid #eef2f6; }
+                    </style>
+
                     <div style="background:#f8f9fa;padding:20px;border-radius:8px;margin-bottom:18px;">
                         <h3 style="margin:0 0 10px 0;">${typeLabel} Details</h3>
                         <p style="margin:0;color:var(--dark-gray);">${title}</p>
                     </div>
-                    <div style="background:white;padding:20px;border-radius:8px;border:1px solid #e9ecef;margin-bottom:18px;">
+
+                    <div class="archive-preview" style="margin-bottom:18px;">
                         <h4 style="margin:0 0 12px 0;color:var(--royal-blue);">Archived Information</h4>
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;font-size:0.95rem;">
                             <div><strong>Type:</strong><br>${typeLabel}</div>
                             <div><strong>Original ID:</strong><br>${item.originalId || 'N/A'}</div>
                             <div><strong>Archived At:</strong><br>${archivedAt}</div>
-                            <div><strong>Archived By:</strong><br>${archivedBy}</div>
+                            <div><strong>Archived By:</strong><br>${archivedByName}</div>
                             <div><strong>Original Collection:</strong><br>${item.originalCollection || 'archive'}</div>
                         </div>
                     </div>
+
                     <div style="background:white;padding:20px;border-radius:8px;border:1px solid #e9ecef;margin-bottom:18px;">
                         <h4 style="margin:0 0 12px 0;color:var(--royal-blue);">Details</h4>
                         ${detailsHtml}
                     </div>
+
                     <div class="modal-footer">
                         <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
-                        ${['tenant', 'bill'].includes(item.type) ? `<button class="btn btn-primary" onclick="window.casaLink.restoreArchivedItem('${archiveId}'); window.ModalManager.closeModal(this.closest('.modal-overlay'))">Restore ${typeLabel}</button>` : ''}
+                        ${item.type === 'tenant' ? `<button class="btn btn-primary" onclick="window.casaLink.restoreArchivedItem('${archiveId}'); window.ModalManager.closeModal(this.closest('.modal-overlay'))">Restore Tenant</button>` : (['bill'].includes(item.type) ? `<button class="btn btn-primary" onclick="window.casaLink.restoreArchivedItem('${archiveId}'); window.ModalManager.closeModal(this.closest('.modal-overlay'))">Restore ${typeLabel}</button>` : '')}
                     </div>
                 </div>
             `;
@@ -2175,7 +2119,8 @@ class CasaLink {
             window.ModalManager.openModal(modalContent, {
                 title: `Archived ${typeLabel}`,
                 width: '720px',
-                maxWidth: '95%'
+                maxWidth: '95%',
+                showFooter: false
             });
         } catch (error) {
             console.error('Error opening archived item modal:', error);
@@ -3426,6 +3371,167 @@ class CasaLink {
         }
     }
 
+    /* Recommendations pagination helpers */
+    getCurrentRecommendationsPage() {
+        const startIndex = (this.recommendationsCurrentPage - 1) * this.recommendationsItemsPerPage;
+        const endIndex = startIndex + this.recommendationsItemsPerPage;
+        const currentPageData = this.recommendationsFilteredData.slice(startIndex, endIndex);
+        console.log(`📄 Getting recommendations page ${this.recommendationsCurrentPage}: ${startIndex}-${endIndex} of ${this.recommendationsFilteredData.length} items`);
+        return currentPageData;
+    }
+
+    updateRecommendationsList(items) {
+        const listEl = document.getElementById('recommendationsList');
+        if (!listEl) return;
+        listEl.innerHTML = '';
+
+        if (!items || items.length === 0) {
+            listEl.innerHTML = '<div class="empty-recommendations">No recommendations available</div>';
+            this.updateRecommendationsPaginationInfo();
+            return;
+        }
+
+        items.forEach(rec => {
+            const item = document.createElement('div');
+            item.className = 'recommendation-item';
+            if (rec.priority) item.classList.add(rec.priority);
+
+            const icon = document.createElement('i');
+            icon.className = 'fas fa-lightbulb';
+
+            const textSpan = document.createElement('span');
+            textSpan.className = 'rec-text';
+            textSpan.textContent = rec.text;
+
+            const explanation = rec.explanation || rec.reason || 'Explanation not available.';
+            const badge = document.createElement('span');
+            badge.className = 'explain-badge';
+            badge.title = 'How this was computed';
+            badge.setAttribute('aria-label', 'Explanation');
+            badge.textContent = '?';
+            badge.dataset.description = explanation;
+
+            item.appendChild(icon);
+            item.appendChild(document.createTextNode(' '));
+            item.appendChild(textSpan);
+            item.appendChild(document.createTextNode(' '));
+            item.appendChild(badge);
+
+            // open modal with details when clicking recommendation
+            item.style.cursor = 'pointer';
+            item.addEventListener('click', (e) => {
+                e.stopPropagation();
+                try { this.showRecommendationModal(rec); } catch (err) { console.error('Error opening recommendation modal', err); }
+            });
+
+            listEl.appendChild(item);
+        });
+
+        this.updateRecommendationsPaginationInfo();
+    }
+
+    setupRecommendationsPagination() {
+        const paginationContainer = document.getElementById('recommendationsPagination');
+        const pageNumbers = document.getElementById('recommendationsPageNumbers');
+        const prevButton = document.getElementById('recommendationsPrevPage');
+        const nextButton = document.getElementById('recommendationsNextPage');
+
+        if (!paginationContainer || !pageNumbers || !prevButton || !nextButton) {
+            console.error('❌ Recommendations pagination elements not found');
+            return;
+        }
+
+        console.log(`🔧 Setting up recommendations pagination - ${this.recommendationsTotalPages} pages available`);
+
+        if (this.recommendationsTotalPages > 1) {
+            paginationContainer.style.display = 'flex';
+            pageNumbers.innerHTML = '';
+
+            const startPage = Math.max(1, this.recommendationsCurrentPage - 2);
+            const endPage = Math.min(this.recommendationsTotalPages, startPage + 4);
+
+            for (let i = startPage; i <= endPage; i++) {
+                const pageButton = document.createElement('button');
+                pageButton.className = `btn btn-sm ${i === this.recommendationsCurrentPage ? 'btn-primary' : 'btn-secondary'}`;
+                pageButton.textContent = i;
+                pageButton.onclick = () => {
+                    this.recommendationsCurrentPage = i;
+                    try { sessionStorage.setItem('casalink_recommendations_page', String(this.recommendationsCurrentPage)); } catch (e) { }
+                    this.updateRecommendationsList(this.getCurrentRecommendationsPage());
+                    this.setupRecommendationsPagination();
+                };
+                pageNumbers.appendChild(pageButton);
+            }
+
+            prevButton.disabled = this.recommendationsCurrentPage === 1;
+            prevButton.title = this.recommendationsCurrentPage === 1 ? 'You are on the first page' : 'Go to previous page';
+            nextButton.disabled = this.recommendationsCurrentPage === this.recommendationsTotalPages;
+            nextButton.title = this.recommendationsCurrentPage === this.recommendationsTotalPages ? 'You are on the last page' : 'Go to next page';
+
+            prevButton.replaceWith(prevButton.cloneNode(true));
+            document.getElementById('recommendationsPrevPage').onclick = () => {
+                if (this.recommendationsCurrentPage > 1) {
+                    this.recommendationsCurrentPage--;
+                    try { sessionStorage.setItem('casalink_recommendations_page', String(this.recommendationsCurrentPage)); } catch (e) { }
+                    this.updateRecommendationsList(this.getCurrentRecommendationsPage());
+                    this.setupRecommendationsPagination();
+                }
+            };
+
+            nextButton.replaceWith(nextButton.cloneNode(true));
+            document.getElementById('recommendationsNextPage').onclick = () => {
+                if (this.recommendationsCurrentPage < this.recommendationsTotalPages) {
+                    this.recommendationsCurrentPage++;
+                    try { sessionStorage.setItem('casalink_recommendations_page', String(this.recommendationsCurrentPage)); } catch (e) { }
+                    this.updateRecommendationsList(this.getCurrentRecommendationsPage());
+                    this.setupRecommendationsPagination();
+                }
+            };
+        } else {
+            paginationContainer.style.display = 'none';
+        }
+
+        this.updateRecommendationsPaginationInfo();
+    }
+
+    updateRecommendationsPaginationInfo() {
+        const infoEl = document.getElementById('recommendationsPaginationInfo');
+        if (!infoEl) return;
+        const total = this.recommendationsFilteredData.length || 0;
+        if (total === 0) {
+            infoEl.textContent = 'No recommendations to display';
+            return;
+        }
+        const start = (this.recommendationsCurrentPage - 1) * this.recommendationsItemsPerPage + 1;
+        const end = Math.min(this.recommendationsCurrentPage * this.recommendationsItemsPerPage, total);
+        infoEl.textContent = `Showing ${start}–${end} of ${total} recommendations`;
+    }
+
+    hideRecommendationsPagination() {
+        const paginationContainer = document.getElementById('recommendationsPagination');
+        if (paginationContainer) paginationContainer.style.display = 'none';
+        const infoEl = document.getElementById('recommendationsPaginationInfo');
+        if (infoEl) infoEl.textContent = 'No recommendations to display';
+    }
+
+    showRecommendationModal(rec = {}) {
+        try {
+            const title = rec.text || 'Recommendation Details';
+            const explanation = rec.explanation || rec.reason || 'No additional details available.';
+            const priority = rec.priority ? `<div style="margin-bottom:8px;"><strong>Priority:</strong> ${rec.priority}</div>` : '';
+            const modalContent = `
+                <div style="padding:12px;">
+                    <div style="font-size:16px;margin-bottom:8px;">${title}</div>
+                    ${priority}
+                    <div style="color:var(--gray-800);">${explanation}</div>
+                </div>
+            `;
+            window.ModalManager.openModal(modalContent, { title: 'Recommendation', showFooter: false });
+        } catch (e) {
+            console.error('Error showing recommendation modal', e);
+        }
+    }
+
     displayRecentActivities(activities) {
         console.log('🔍 STEP 3: Starting displayRecentActivities with pagination');
         
@@ -4264,6 +4370,108 @@ class CasaLink {
                             ` : ''}
                             <div style="background: rgba(255, 193, 7, 0.1); padding: 15px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--warning);">
                                 <p style="margin: 0;"><i class="fas fa-info-circle"></i> <strong>Note:</strong> This property has been recently updated. Changes may include property details, room configurations, or other information.</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-primary" onclick="casaLink.showPage('properties')"><i class="fas fa-building"></i> View Properties</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'room_edited':
+                    // Activity for a single room edit
+                    data = activityData || {};
+                    modalTitle = 'Room Updated';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-door-open" style="font-size: 3rem; color: var(--warning); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Room Updated</h3>
+                                <p>Details for the room that was edited</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Room Information</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Room Number:</strong><br>${data.roomNumber || 'N/A'}</div>
+                                    <div><strong>Floor:</strong><br>${data.floor || 'N/A'}</div>
+                                    <div><strong>Apartment:</strong><br>${data.apartmentName || data.propertyName || data.apartmentAddress || 'N/A'}</div>
+                                    <div><strong>Changed Fields:</strong><br>${(data.changedFields || []).join(', ') || 'N/A'}</div>
+                                </div>
+                            </div>
+
+                            ${data.changedDetails && Object.keys(data.changedDetails).length ? `
+                            <div style="background: #fff3cd; padding: 20px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid var(--warning);">
+                                <h4 style="color: var(--warning); margin-bottom: 15px;"><i class="fas fa-history"></i> Change Summary</h4>
+                                <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+                                    ${Object.entries(data.changedDetails).map(([field, change]) => {
+                                        let fieldName = field;
+                                        if (field === 'roomNumber') fieldName = 'Room Number';
+                                        else if (field === 'floor') fieldName = 'Floor';
+                                        else if (field === 'monthlyRent') fieldName = 'Monthly Rent';
+                                        else if (field === 'securityDeposit') fieldName = 'Deposit';
+                                        else if (field === 'numberOfBedrooms') fieldName = 'Bedrooms';
+                                        else if (field === 'numberOfBathrooms') fieldName = 'Bathrooms';
+                                        else if (field === 'maxMembers') fieldName = 'Max Members';
+                                        return `<div style="background: white; padding: 12px; border-radius: 6px; border: 1px solid #dee2e6;"><strong>✏️ ${fieldName}:</strong><br><span style="color: var(--danger); text-decoration: line-through; font-size: 0.9rem;">${change.from}</span> → <span style="color: var(--success); font-weight: 600; font-size: 0.95rem;">${change.to}</span></div>`;
+                                    }).join('')}
+                                </div>
+                            </div>
+                            ` : ''}
+                            <div class="modal-footer">
+                                <button class="btn btn-primary" onclick="casaLink.showPage('properties')"><i class="fas fa-building"></i> View Properties</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'room_added':
+                    data = activityData || {};
+                    modalTitle = 'Room Added';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-plus" style="font-size: 3rem; color: var(--success); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Room Added</h3>
+                                <p>Details for the new room</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Room Information</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Room Number:</strong><br>${data.roomNumber || 'N/A'}</div>
+                                    <div><strong>Floor:</strong><br>${data.floor || 'N/A'}</div>
+                                    <div><strong>Apartment:</strong><br>${data.apartmentName || data.propertyName || 'N/A'}</div>
+                                    <div><strong>Initial Fields:</strong><br>${(data.initialFields || []).join(', ') || 'N/A'}</div>
+                                </div>
+                            </div>
+                            <div class="modal-footer">
+                                <button class="btn btn-primary" onclick="casaLink.showPage('properties')"><i class="fas fa-building"></i> View Properties</button>
+                                <button class="btn btn-secondary" onclick="window.ModalManager.closeModal(this.closest('.modal-overlay'))">Close</button>
+                            </div>
+                        </div>
+                    `;
+                    break;
+
+                case 'room_deleted':
+                    data = activityData || {};
+                    modalTitle = 'Room Deleted';
+                    modalContent = `
+                        <div class="activity-details-modal">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <i class="fas fa-trash" style="font-size: 3rem; color: var(--danger); margin-bottom: 15px;"></i>
+                                <h3 style="margin-bottom: 10px;">Room Deleted</h3>
+                                <p>Details for the deleted room</p>
+                            </div>
+                            ${isSeen ? `<div style="text-align: center; margin-bottom: 15px;"><span class="status-badge ${isSeen === 'unseen' ? 'warning' : 'success'}"><i class="fas ${isSeen === 'unseen' ? 'fa-eye-slash' : 'fa-eye'}"></i> ${isSeen === 'unseen' ? 'Unseen' : 'Seen'}</span></div>` : ''}
+                            <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="color: var(--royal-blue); margin-bottom: 15px;">Room Information</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                                    <div><strong>Deleted Count:</strong><br>${data.deletedCount || data.count || 'N/A'}</div>
+                                    <div><strong>Apartment:</strong><br>${data.apartmentName || data.propertyName || 'N/A'}</div>
+                                </div>
                             </div>
                             <div class="modal-footer">
                                 <button class="btn btn-primary" onclick="casaLink.showPage('properties')"><i class="fas fa-building"></i> View Properties</button>
@@ -9947,6 +10155,7 @@ class CasaLink {
                     <h4><i class="${icon}"></i> ${title}</h4>
                     <span class="recommendation-badge">Logistic Regression</span>
                 </div>
+                ${shortDesc || computeDesc ? `<div class="predictive-desc" style="margin:8px 12px 0 12px;font-size:13px;color:#374151;">${shortDesc ? `<div class="figure-meaning" style="margin-bottom:6px;color:#4b5563;">${shortDesc}</div>` : ''}${computeDesc ? `<div class="figure-compute" style="font-size:12px;color:#6b7280;">How computed: ${computeDesc}</div>` : ''}</div>` : ''}
                 <div class="prediction-content">
                     ${bodyHtml}
                 </div>
@@ -10035,6 +10244,80 @@ class CasaLink {
                 });
             } catch (err) {
                 console.warn('Could not enrich churn list with apartment data', err);
+            }
+        })();
+
+        // Enrich Late Payment Risk items with apartment/room if possible
+        (async () => {
+            try {
+                const landlordId = (this.currentUser && this.currentUser.uid) || (window.casaLink && window.casaLink.currentUser && window.casaLink.currentUser.uid) || null;
+                if (!landlordId) return;
+                const dm = (window.DataManager || DataManager);
+                if (!dm) return;
+
+                const [units, apartments] = await Promise.all([
+                    dm.getLandlordUnits(landlordId).catch(() => []),
+                    dm.getLandlordApartments(landlordId).catch(() => [])
+                ]);
+
+                const unitsByNumber = {};
+                const unitsById = {};
+                (units || []).forEach(u => {
+                    if (u.unitNumber) unitsByNumber[String(u.unitNumber).toLowerCase()] = u;
+                    if (u.roomNumber) unitsByNumber[String(u.roomNumber).toLowerCase()] = u;
+                    if (u.id) unitsById[String(u.id)] = u;
+                    if (u._id) unitsById[String(u._id)] = u;
+                });
+
+                const apartmentsById = {};
+                (apartments || []).forEach(a => {
+                    const id = a.id || a.apartmentId || a._id || '';
+                    if (id) apartmentsById[String(id)] = a;
+                });
+
+                const card = Array.from(document.querySelectorAll('.predictive-card')).find(c => c.querySelector('h4') && c.querySelector('h4').textContent.trim() === 'Late Payment Risk');
+                if (!card) return;
+                const items = card.querySelectorAll('.prediction-list-item');
+                items.forEach(item => {
+                    try {
+                        // We expect some data attributes possibly set by predictiveAnalytics
+                        const unitAttr = (item.getAttribute('data-unit') || '').toString();
+                        const tenantAttr = (item.getAttribute('data-tenant-id') || item.getAttribute('data-tenant') || '').toString();
+
+                        let aptName = '';
+                        let roomLabel = '';
+
+                        // If unitAttr matches a unit id or number
+                        if (unitAttr && unitsById[unitAttr]) {
+                            const u = unitsById[unitAttr];
+                            roomLabel = u.unitNumber || u.roomNumber || u.room || '';
+                            aptName = u.apartmentAddress || u.apartmentName || u.apartment || u.property || '';
+                        } else if (unitAttr && unitsByNumber[unitAttr.toLowerCase()]) {
+                            const u = unitsByNumber[unitAttr.toLowerCase()];
+                            roomLabel = u.unitNumber || u.roomNumber || u.room || '';
+                            aptName = u.apartmentAddress || u.apartmentName || u.apartment || u.property || '';
+                        }
+
+                        // if apartment id stored
+                        const aptId = item.getAttribute('data-apartment-id') || '';
+                        if (!aptName && aptId && apartmentsById[aptId]) {
+                            const a = apartmentsById[aptId];
+                            aptName = a.apartmentName || a.apartmentAddress || a.name || '';
+                        }
+
+                        if (aptName || roomLabel) {
+                            const noteEl = item.querySelector('.maintenance-triage-item-note') || item.querySelector('.maintenance-triage-item-meta');
+                            if (noteEl) {
+                                const prefix = `${aptName ? aptName : ''}${aptName && roomLabel ? ' • ' : ''}${roomLabel ? roomLabel : ''}`;
+                                if (prefix) {
+                                    noteEl.insertAdjacentHTML('afterbegin', `<div style="font-size:12px;color:#6b7280;margin-bottom:6px;">${prefix}</div>`);
+                                }
+                            }
+                        }
+                    } catch (e) { console.warn('Failed to enrich late payment item', e); }
+                });
+            } catch (err) {
+                console.warn('Could not enrich late payment list with apartment data', err);
             }
         })();
 
@@ -10158,7 +10441,27 @@ class CasaLink {
         const lateRows = (data.latePaymentRisk || []).slice(0, 5);
         const lateHtml = lateRows.length === 0
             ? '<div class="prediction-empty">No late payment risks detected. Keep payment collections up to date to continue monitoring tenant stability.</div>'
-            : `<div class="prediction-list">${lateRows.map(r => `<div class="prediction-list-item"><div class="maintenance-triage-item-title">${r.tenant || r.unit || 'Unknown tenant'}</div><div class="maintenance-triage-item-meta"><span class="prediction-risk ${String(r.riskLevel || '').toLowerCase()}">${r.riskLevel || 'Unknown risk'}</span><span>${r.probability || 0}% risk</span></div><div class="maintenance-triage-item-note">${r.reason || 'No additional reason provided.'}</div></div>`).join('')}</div>`;
+            : `<div class="prediction-list">${lateRows.map(r => {
+                const tenant = r.tenant || r.name || r.unit || 'Unknown tenant';
+                const risk = r.riskLevel || 'Unknown';
+                const prob = r.probability || r.prob || 0;
+                const outstanding = (r.outstandingBalance || r.balance || 0);
+                const daysOverdue = r.daysOverdue || r.days_overdue || r.days || 0;
+                const lastPayment = r.lastPaymentDate || r.lastPayment || r.last_paid || '';
+                const contact = r.contact || r.phone || '';
+                const suggested = r.suggestedAction || r.recommendation || '';
+                return `<div class="prediction-list-item">
+                            <div class="maintenance-triage-item-title">${tenant}</div>
+                            <div class="maintenance-triage-item-meta">
+                                <span class="prediction-risk ${String(risk || '').toLowerCase()}">${risk}</span>
+                                <span style="margin-left:8px;">${prob}% risk</span>
+                            </div>
+                            <div class="maintenance-triage-item-note">Outstanding: ${outstanding ? '₱' + Number(outstanding).toLocaleString() : '₱0'} • ${daysOverdue ? daysOverdue + ' days overdue' : 'No days info'}</div>
+                            <div style="font-size:12px;color:#6b7280;margin-top:6px;">${lastPayment ? `Last payment: ${lastPayment}` : ''}${contact ? ` • Contact: ${contact}` : ''}</div>
+                            ${r.reason ? `<div style="margin-top:6px;color:#374151">Reason: ${r.reason}</div>` : ''}
+                            ${suggested ? `<div style="margin-top:6px;color:#1f2937;font-weight:600">Suggested: ${suggested}</div>` : ''}
+                        </div>`;
+            }).join('')}</div>`;
         addCard('Late Payment Risk', 'fas fa-exclamation-triangle', lateHtml, 'Identifies tenants at risk of late payments so you can follow up.', 'Probability score derived from recent payment timeliness, historical overdue counts, and outstanding balances.');
 
         // Maintenance Triage
@@ -10166,12 +10469,98 @@ class CasaLink {
         const triageHtml = triageItems.length === 0
             ? '<div class="prediction-empty">No maintenance requests available. Record completed maintenance and urgency so the system can prioritize repairs for you.</div>'
             : `<div class="prediction-list">${triageItems.map(r => {
-                const confidenceLabel = r.confidence ? `<span class="prediction-label">${r.confidence}% confidence</span>` : '';
-                const responseLabel = r.responseTime ? `<span class="prediction-label">${r.responseTime}</span>` : '';
-                return `<div class="maintenance-triage-item"><div class="maintenance-triage-item-title">${r.title || 'Maintenance request'}</div><div class="maintenance-triage-item-meta"><span class="prediction-risk ${String(r.priority || '').toLowerCase()}">${r.priority || 'Unknown priority'}</span>${responseLabel}${confidenceLabel}</div><div class="maintenance-triage-item-note">${r.notes || r.description || r.reason || 'No additional details provided.'}</div></div>`;
+                const title = r.title || r.issue || 'Maintenance request';
+                const priority = r.priority || r.severity || 'Unknown';
+                const response = r.responseTime || r.targetResponse || r.window || '';
+                const confidence = r.confidence || Math.round((r.probability || 0));
+                const location = r.location || r.unit || '';
+                const reportedAt = r.reportedAt || r.createdAt || r.date || '';
+                const estCost = r.estimatedCost || r.estimate || r.estimate_cost || 0;
+                const notes = r.notes || r.description || r.reason || '';
+                const attachments = Array.isArray(r.photos) ? r.photos.length : (r.photoCount || 0);
+                return `<div class="maintenance-triage-item">
+                            <div class="maintenance-triage-item-title">${title}${location ? ' • ' + location : ''}</div>
+                            <div class="maintenance-triage-item-meta">
+                                <span class="prediction-risk ${String(priority).toLowerCase()}">${priority}</span>
+                                ${response ? `<span style="margin-left:8px;">${response}</span>` : ''}
+                                ${confidence ? `<span style="margin-left:8px;">${confidence}% confidence</span>` : ''}
+                            </div>
+                            <div class="maintenance-triage-item-note">${notes || 'No additional details provided.'}</div>
+                            <div style="font-size:12px;color:#6b7280;margin-top:6px;">${reportedAt ? `Reported: ${reportedAt}` : ''}${attachments ? ` • ${attachments} photo(s)` : ''}${estCost ? ` • Est. cost: ₱${Number(estCost).toLocaleString()}` : ''}</div>
+                        </div>`;
             }).join('')}</div>`;
         addCard('Maintenance Triage', 'fas fa-tools', triageHtml, 'Prioritizes maintenance requests based on urgency and impact.', 'Priority ranking based on request age, reported severity, and affected units to surface high-impact issues.');
 
+        // Enrich Maintenance Triage items with apartment/room metadata asynchronously
+        (async () => {
+            try {
+                const landlordId = (this.currentUser && this.currentUser.uid) || (window.casaLink && window.casaLink.currentUser && window.casaLink.currentUser.uid) || null;
+                if (!landlordId) return;
+                const dm = (window.DataManager || DataManager);
+                if (!dm) return;
+
+                const [units, apartments] = await Promise.all([
+                    dm.getLandlordUnits(landlordId).catch(() => []),
+                    dm.getLandlordApartments(landlordId).catch(() => [])
+                ]);
+
+                const unitsByNumber = {};
+                const unitsById = {};
+                (units || []).forEach(u => {
+                    if (u.unitNumber) unitsByNumber[String(u.unitNumber).toLowerCase()] = u;
+                    if (u.roomNumber) unitsByNumber[String(u.roomNumber).toLowerCase()] = u;
+                    if (u.id) unitsById[String(u.id)] = u;
+                    if (u._id) unitsById[String(u._id)] = u;
+                });
+
+                const apartmentsById = {};
+                (apartments || []).forEach(a => {
+                    const id = a.id || a.apartmentId || a._id || '';
+                    if (id) apartmentsById[String(id)] = a;
+                });
+
+                const card = Array.from(document.querySelectorAll('.predictive-card')).find(c => c.querySelector('h4') && c.querySelector('h4').textContent.trim() === 'Maintenance Triage');
+                if (!card) return;
+                const items = card.querySelectorAll('.maintenance-triage-item');
+                items.forEach(item => {
+                    try {
+                        const unitAttr = (item.getAttribute('data-unit') || item.getAttribute('data-room') || '').toString();
+                        const unitIdAttr = (item.getAttribute('data-unit-id') || item.getAttribute('data-room-id') || '').toString();
+                        const aptIdAttr = (item.getAttribute('data-apartment-id') || item.getAttribute('data-property-id') || '').toString();
+
+                        let aptName = '';
+                        let roomLabel = '';
+
+                        if (unitIdAttr && unitsById[unitIdAttr]) {
+                            const u = unitsById[unitIdAttr];
+                            roomLabel = u.unitNumber || u.roomNumber || u.room || '';
+                            aptName = u.apartmentAddress || u.apartmentName || u.apartment || u.property || '';
+                        } else if (unitAttr && unitsByNumber[unitAttr.toLowerCase()]) {
+                            const u = unitsByNumber[unitAttr.toLowerCase()];
+                            roomLabel = u.unitNumber || u.roomNumber || u.room || '';
+                            aptName = u.apartmentAddress || u.apartmentName || u.apartment || u.property || '';
+                        }
+
+                        if (!aptName && aptIdAttr && apartmentsById[aptIdAttr]) {
+                            const a = apartmentsById[aptIdAttr];
+                            aptName = a.apartmentName || a.apartmentAddress || a.name || '';
+                        }
+
+                        if (aptName || roomLabel) {
+                            const titleEl = item.querySelector('.maintenance-triage-item-title');
+                            if (titleEl) {
+                                const prefix = `${roomLabel ? roomLabel : ''}${roomLabel && aptName ? ' • ' : ''}${aptName ? aptName : ''}`;
+                                if (prefix) {
+                                    titleEl.insertAdjacentHTML('afterbegin', `<div style="font-size:12px;color:#6b7280;margin-bottom:6px;">${prefix}</div>`);
+                                }
+                            }
+                        }
+                    } catch (e) { console.warn('Failed to enrich triage item', e); }
+                });
+            } catch (err) {
+                console.warn('Could not enrich maintenance triage with apartment data', err);
+            }
+        })();
         // Initialize paginated lists inside predictions
         try { if (typeof this.initPaginatedLists === 'function') this.initPaginatedLists(); } catch (e) { console.warn('Pagination init failed', e); }
         // Attach hover descriptions
@@ -10197,6 +10586,10 @@ class CasaLink {
                     <div class="forecast-value">${value}</div>
                     <div class="forecast-subtitle">${subtitle}</div>
                     <div class="forecast-note">${note}</div>
+                    <div class="forecast-explain" style="margin-top:8px;font-size:13px;color:#374151;">
+                        ${shortDesc ? `<div class="figure-meaning" style="margin-bottom:6px;color:#4b5563;">${shortDesc}</div>` : ''}
+                        ${computeDesc ? `<div class="figure-compute" style="font-size:12px;color:#6b7280;">How computed: ${computeDesc}</div>` : ''}
+                    </div>
                 </div>
             `;
             if (shortDesc) card.dataset.description = shortDesc;
@@ -10279,6 +10672,8 @@ class CasaLink {
         this.attachCardTooltips('forecastCards');
         // Attach small question-mark compute badges
         this.attachComputeBadges('forecastCards');
+        // Attach explain buttons that open a modal describing what figures mean
+        this.attachExplainButtons('forecastCards');
     }
 
     attachCardTooltips(containerId) {
@@ -10374,6 +10769,54 @@ class CasaLink {
         }
     }
 
+    attachExplainButtons(containerId) {
+        try {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            container.querySelectorAll('.forecast-card, .predictive-card').forEach(card => {
+                const desc = card.dataset.description || '';
+                const compute = card.dataset.computeDescription || '';
+                const valueEl = card.querySelector('.forecast-value, .predictive-value');
+                if (!valueEl) return;
+
+                // avoid duplicating the icon
+                if (card.querySelector('.explain-icon')) return;
+
+                const icon = document.createElement('button');
+                icon.className = 'explain-icon';
+                icon.title = 'What does this mean?';
+                icon.innerHTML = '?';
+                icon.style.marginLeft = '8px';
+                icon.style.border = 'none';
+                icon.style.background = '#eef2ff';
+                icon.style.borderRadius = '50%';
+                icon.style.width = '22px';
+                icon.style.height = '22px';
+                icon.style.cursor = 'pointer';
+                icon.style.fontSize = '12px';
+
+                icon.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const title = card.querySelector('h4') ? card.querySelector('h4').textContent : 'Figure explanation';
+                    const body = `
+                        <div style="padding:12px;">
+                            <div style="font-weight:700;margin-bottom:8px;">What this figure means</div>
+                            <div style="margin-bottom:10px;">${desc || 'No short description available.'}</div>
+                            ${compute ? `<div style="font-weight:700;margin-bottom:6px;">How it is computed</div><div>${compute}</div>` : ''}
+                        </div>
+                    `;
+                    try { window.ModalManager.openModal(body, { title, showFooter: false }); } catch (err) { alert(title + "\n\n" + (desc || '') + (compute ? "\n\nHow computed:\n" + compute : '')); }
+                });
+
+                // append next to value
+                valueEl.appendChild(icon);
+            });
+        } catch (err) {
+            console.warn('Could not attach explain buttons:', err);
+        }
+    }
+
     // Initialize and render paginated lists stored in data-items attributes
     initPaginatedLists() {
         try {
@@ -10419,22 +10862,39 @@ class CasaLink {
                 escape: (v) => { try { return this.escapeHtml(v); } catch (e) { return String(v||''); } },
                 renderChurnItem: (t) => {
                     const name = t.tenant || t.name || t.unit || 'Unknown';
-                    const prob = typeof t.probability === 'number' ? `${t.probability}%` : (t.probability || 'N/A');
-                    const risk = (t.riskLevel || '').toUpperCase();
-                    const reason = t.reason || t.explanation || '';
+                    const probNum = Number(t.probability || t.prob || 0) || 0;
+                    const prob = `${probNum}%`;
+                    const risk = (t.riskLevel || '').toUpperCase() || (probNum >= 75 ? 'HIGH' : (probNum >= 40 ? 'MEDIUM' : 'LOW'));
+                    const reason = t.reason || t.explanation || t.insight || '';
                     const apartmentLabel = t.apartmentName || t.apartmentAddress || t.apartment || t.property || t.building || '';
                     const roomLabel = t.unit || t.unitNumber || t.roomNumber || t.room || '';
+                    const lastPayment = t.lastPaymentDate || t.lastPayment || t.last_paid || '';
+                    const avgDaysLate = (typeof t.avgDaysLate !== 'undefined') ? `${t.avgDaysLate} days` : (t.avg_days_late ? `${t.avg_days_late} days` : 'N/A');
+                    const maintenanceCount = t.maintenanceCount || t.maintenance_count || 0;
+                    const contact = t.contact || t.phone || '';
+                    const suggestedAction = t.suggestedAction || t.recommendation || '';
+
+                    const progressBar = `<div style="margin-top:6px; background:#eef2f0; border-radius:6px; height:8px; overflow:hidden;"><div style="height:8px; width:${Math.min(100, Math.max(0, probNum))}%; background:${probNum>=75? '#ef4444' : probNum>=40? '#f59e0b' : '#10b981'};"></div></div>`;
+
                     return `
                         <div class="churn-item">
                             <div class="churn-left">
                                 <div class="churn-name">${helpers.escape(name)}</div>
                                 <div class="churn-meta">${helpers.escape(apartmentLabel)}${apartmentLabel && roomLabel ? ' • ' : ''}${helpers.escape(roomLabel)}</div>
+                                <div class="churn-extra" style="font-size:12px;color:#6b7280;margin-top:6px;">
+                                    ${lastPayment ? `<div>Last payment: ${helpers.escape(lastPayment)}</div>` : ''}
+                                    <div>Avg days late: ${helpers.escape(avgDaysLate)}</div>
+                                    <div>Maintenance issues: ${helpers.escape(String(maintenanceCount || 0))}</div>
+                                    ${contact ? `<div>Contact: ${helpers.escape(contact)}</div>` : ''}
+                                </div>
                             </div>
-                            <div class="churn-right">
-                                <div class="churn-probability">${helpers.escape(prob)}</div>
-                                <div class="churn-risk ${String(risk).toLowerCase()}">${helpers.escape(risk)}</div>
+                            <div class="churn-right" style="text-align:right;min-width:120px;">
+                                <div class="churn-probability" style="font-weight:700;font-size:14px;">${helpers.escape(prob)}</div>
+                                <div class="churn-risk ${String(risk).toLowerCase()}" style="margin-top:6px;">${helpers.escape(risk)}</div>
+                                ${progressBar}
                             </div>
-                            ${reason ? `<div class="churn-reason">${helpers.escape(reason)}</div>` : ''}
+                            ${reason ? `<div class="churn-reason" style="margin-top:8px;color:#374151">${helpers.escape(reason)}</div>` : ''}
+                            ${suggestedAction ? `<div class="churn-suggest" style="margin-top:6px;color:#1f2937;font-weight:600">Suggested: ${helpers.escape(suggestedAction)}</div>` : ''}
                         </div>`;
                 },
                 renderRentItem: (r) => {
@@ -10448,18 +10908,20 @@ class CasaLink {
                     const suggestedNew = r.suggestedRent ? Number(r.suggestedRent) : (suggestedIncrease ? (currentRent + suggestedIncrease) : 0);
                     const suggestedLabel = suggestedIncrease ? `Increase by ₱${Number(suggestedIncrease).toLocaleString()}` : (r.suggestedRent ? `Suggest ₱${Number(r.suggestedRent).toLocaleString()}` : 'Market rate');
                     const reason = r.reason || r.explanation || '';
+                    const marketDelta = marketAvg ? Math.round(((currentRent - marketAvg) / (marketAvg || 1)) * 100) : 0;
                     return `
                         <div class="rent-item" data-apartment-id="${helpers.escape(aptId)}" data-unit="${helpers.escape(unit)}" data-current-rent="${helpers.escape(currentRent)}" data-market-avg="${helpers.escape(marketAvg)}" data-suggested-increase="${helpers.escape(suggestedIncrease)}" data-suggested-rent="${helpers.escape(suggestedNew)}">
                             <div class="rent-left">
                                 <div class="rent-unit">${helpers.escape(unit)}</div>
                                 <div class="rent-meta">${helpers.escape(aptLabel)}</div>
                                 <div class="rent-details">${currentRent ? `Current: ₱${currentRent.toLocaleString()}` : ''}${marketAvg ? ` • Market: ₱${marketAvg.toLocaleString()}` : ''}${suggestedNew ? ` • Suggested: ₱${suggestedNew.toLocaleString()}` : ''}</div>
+                                ${marketAvg ? `<div style="font-size:12px;color:#6b7280;margin-top:6px;">Market delta: ${marketDelta >= 0 ? '+' : ''}${marketDelta}%</div>` : ''}
                             </div>
                             <div class="rent-right">
                                 <div class="rent-probability">${helpers.escape(prob)}</div>
                                 <div class="rent-action">${helpers.escape(suggestedLabel)}</div>
                             </div>
-                            ${reason ? `<div class="rent-reason">${helpers.escape(reason)}</div>` : ''}
+                            ${reason ? `<div class="rent-reason" style="margin-top:8px;color:#374151">${helpers.escape(reason)}</div>` : ''}
                             <div class="rent-cta"><button class="btn btn-sm btn-outline view-property-btn" data-apartment-id="${helpers.escape(aptId)}">View Property</button></div>
                         </div>`;
                 }
@@ -10634,53 +11096,48 @@ class CasaLink {
     populateRecommendations(list = []) {
         const cont = document.getElementById('recommendationsSection');
         if (!cont) return;
-        cont.innerHTML = '<div class="section-title">Recommendations</div>\n<div class="recommendations-list" id="recommendationsList"></div>';
-        const listEl = cont.querySelector('#recommendationsList');
-        listEl.innerHTML = '';
+
+        // render recommendations list + pagination scaffold
+        cont.innerHTML = `
+            <div class="section-title">Recommendations</div>
+            <p class="section-description">Actionable suggestions derived from predictions and detected anomalies.</p>
+            <div class="recent-activity-header">
+                <div class="activities-pagination-info" id="recommendationsPaginationInfo">Showing 0–0 of 0 recommendations</div>
+            </div>
+            <div class="recommendations-list" id="recommendationsList"></div>
+            <div class="pagination-container" id="recommendationsPagination" style="display:none; margin-top:12px;">
+                <div class="pagination-controls">
+                    <button class="btn btn-sm btn-secondary" id="recommendationsPrevPage"><i class="fas fa-chevron-left"></i> Previous</button>
+                    <div class="pagination-numbers" id="recommendationsPageNumbers"></div>
+                    <button class="btn btn-sm btn-secondary" id="recommendationsNextPage">Next <i class="fas fa-chevron-right"></i></button>
+                </div>
+            </div>
+        `;
+
+        // prepare data and filter
+        list = (Array.isArray(list) ? list.slice() : []);
         list = list.filter(rec => {
             const text = (rec.text || '').toString().toLowerCase();
-            const explanation = (rec.explanation || '').toString().toLowerCase();
+            const explanation = (rec.explanation || rec.reason || '').toString().toLowerCase();
             return !(/sentiment|tenant feedback|tenant sentiment/.test(text + ' ' + explanation));
         });
-        list.forEach(rec => {
-            const item = document.createElement('div');
-            item.className = 'recommendation-item';
-            if (rec.priority) item.classList.add(rec.priority);
 
-            // build contents: icon + text + explain badge (explanation only on badge hover)
-            const icon = document.createElement('i');
-            icon.className = 'fas fa-lightbulb';
+        // store for pagination
+        this.recommendationsAllData = list;
+        this.recommendationsFilteredData = [...list];
 
-            const textSpan = document.createElement('span');
-            textSpan.className = 'rec-text';
-            textSpan.textContent = rec.text;
+        // restore page from session or keep current
+        const storedPage = parseInt(sessionStorage.getItem('casalink_recommendations_page'), 10);
+        const prevPage = Number.isInteger(storedPage) && storedPage > 0 ? storedPage : (this.recommendationsCurrentPage || 1);
+        this.recommendationsTotalPages = Math.max(1, Math.ceil(this.recommendationsFilteredData.length / this.recommendationsItemsPerPage));
+        this.recommendationsCurrentPage = Math.min(Math.max(1, prevPage), this.recommendationsTotalPages);
 
-            const explanation = rec.explanation || rec.reason || 'Explanation not available.';
-            const badge = document.createElement('span');
-            badge.className = 'explain-badge';
-            badge.title = 'How this was computed';
-            badge.setAttribute('aria-label', 'Explanation');
-            badge.textContent = '?';
-            // attach explanation to badge only
-            badge.dataset.description = explanation;
-
-            item.appendChild(icon);
-            item.appendChild(document.createTextNode(' '));
-            item.appendChild(textSpan);
-            item.appendChild(document.createTextNode(' '));
-            item.appendChild(badge);
-
-            // explanation is attached to the badge only (so hovering the message won't reveal it)
-
-            listEl.appendChild(item);
-        });
+        // render current page
+        this.updateRecommendationsList(this.getCurrentRecommendationsPage());
+        this.setupRecommendationsPagination();
 
         // Attach tooltips to recommendation items (reuse card tooltip behavior)
-        try {
-            this.attachCardTooltips('recommendationsList');
-        } catch (e) {
-            console.warn('Could not attach recommendation tooltips', e);
-        }
+        try { this.attachCardTooltips('recommendationsList'); } catch (e) { console.warn('Could not attach recommendation tooltips', e); }
     }
 
     populateBenchmarking(metrics = {}) {
@@ -10907,6 +11364,15 @@ class CasaLink {
                     this.loadRecentActivities();
                 }, 5000);
                 console.log('✅ Started tenant activity auto-refresh (5s interval)');
+                break;
+            case 'tenantBilling':
+                // Initialize tenant billing page interactions
+                // Ensure tenant payments pagination is set up
+                try {
+                    this.setupTenantPaymentsPagination();
+                } catch (err) {
+                    console.warn('Could not setup tenant payments pagination:', err);
+                }
                 break;
             case 'properties':
                 // special case: ensure the landlord properties controller
@@ -11411,6 +11877,25 @@ class CasaLink {
         const leaseEnd = formatDate(lease.leaseEnd);
         const createdAt = formatDate(lease.createdAt);
 
+        // Debug agreement flags — helps diagnose blank/hidden UI values
+        console.log('🔍 DEBUG lease.agreementViewed for leaseId', lease.id, ':', lease.agreementViewed);
+        console.log('🔍 DEBUG lease.agreementAccepted for leaseId', lease.id, ':', lease.agreementAccepted);
+
+        // Prepare human-readable labels and badge HTML with sensible fallbacks
+        const _agreementViewedRaw = lease.agreementViewed;
+        const _agreementAcceptedRaw = lease.agreementAccepted;
+
+        const agreementViewedLabel = (typeof _agreementViewedRaw === 'boolean')
+            ? (_agreementViewedRaw ? 'Yes' : 'No')
+            : ((typeof _agreementViewedRaw === 'string' && _agreementViewedRaw.trim()) ? _agreementViewedRaw.trim() : 'Unknown');
+
+        const agreementAcceptedLabel = (typeof _agreementAcceptedRaw === 'boolean')
+            ? (_agreementAcceptedRaw ? 'Yes' : 'No')
+            : ((typeof _agreementAcceptedRaw === 'string' && _agreementAcceptedRaw.trim()) ? _agreementAcceptedRaw.trim() : 'Unknown');
+
+        const agreementViewedBadge = `<span class="status-badge ${_agreementViewedRaw ? 'active' : 'warning'}">${agreementViewedLabel}</span>`;
+        const agreementAcceptedBadge = `<span class="status-badge ${_agreementAcceptedRaw ? 'active' : 'warning'}">${agreementAcceptedLabel}</span>`;
+
         // Get occupant information (ensure sensible defaults)
         const occupants = Array.isArray(lease.occupants) ? lease.occupants : (lease.occupants ? [lease.occupants] : (tenant.name ? [tenant.name] : []));
         const primaryTenant = occupants.length > 0 ? occupants[0] : (tenant.name || 'Primary Tenant');
@@ -11504,15 +11989,17 @@ class CasaLink {
                     <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
                         <div style="flex: 1;">
                             <strong>Agreement Viewed:</strong><br>
-                            <span class="status-badge ${lease.agreementViewed ? 'active' : 'warning'}">
-                                ${lease.agreementViewed ? 'Yes' : 'No'}
-                            </span>
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                ${agreementViewedBadge}
+                                <div style="font-size:0.95rem; color:var(--text-dark); font-weight:600;">${agreementViewedLabel}</div>
+                            </div>
                         </div>
                         <div style="flex: 1;">
                             <strong>Agreement Accepted:</strong><br>
-                            <span class="status-badge ${lease.agreementAccepted ? 'active' : 'warning'}">
-                                ${lease.agreementAccepted ? 'Yes' : 'No'}
-                            </span>
+                            <div style="display:flex; align-items:center; gap:10px;">
+                                ${agreementAcceptedBadge}
+                                <div style="font-size:0.95rem; color:var(--text-dark); font-weight:600;">${agreementAcceptedLabel}</div>
+                            </div>
                         </div>
                     </div>
                     
@@ -12085,81 +12572,18 @@ class CasaLink {
                 return;
             }
 
-            // Sort newest first
+            // Sort newest first and set up pagination using the shared maintenance table controls
             requests.sort((a,b) => (new Date(b.createdAt || 0)) - (new Date(a.createdAt || 0)));
 
-            // if tenant page table is present, render rows into a table
-            if (container2) {
-                let rows = '';
-                requests.forEach(r => {
-                    const created = r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'N/A';
-                    const priorityBadge = this.getPriorityBadge(r.priority || 'medium');
-                    const statusBadge = this.getStatusBadge(r.status || 'open');
-                    rows += `
-                        <tr class="maintenance-row" data-request-id="${r.id}" data-created-at="${r.createdAt || ''}" style="cursor:pointer;">
-                            <td><strong>${r.type || 'N/A'}</strong></td>
-                            <td>${r.title || r.description || 'No title'}</td>
-                            <td>${priorityBadge}</td>
-                            <td>${statusBadge}</td>
-                            <td>${created}</td>
-                            <td>
-                                <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.viewTenantMaintenanceRequest('${r.id}')">
-                                    <i class="fas fa-eye"></i> View
-                                </button>
-                            </td>
-                        </tr>
-                    `;
-                });
+            // Use the maintenance pagination UI for tenant view by populating the maintenance arrays
+            this.maintenanceAllData = requests;
+            this.maintenanceFilteredData = [...requests];
+            this.maintenanceCurrentPage = 1;
+            this.maintenanceTotalPages = Math.max(1, Math.ceil(requests.length / this.maintenanceItemsPerPage));
 
-                container2.innerHTML = `
-                    <div class="table-container">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Type</th>
-                                    <th>Title</th>
-                                    <th>Priority</th>
-                                    <th>Status</th>
-                                    <th>Created</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>${rows}</tbody>
-                        </table>
-                    </div>
-                `;
-            } else {
-                const html = requests.map(r => {
-                    const created = r.createdAt ? new Date(r.createdAt).toLocaleString() : '–';
-                    const priorityClass = r.priority === 'high' || r.priority === 'emergency' ? 'priority-high' : (r.priority === 'medium' ? 'priority-medium' : 'priority-low');
-                    const status = (r.status || 'open');
-                    return `
-                        <div class="maintenance-row lease-card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
-                            <div style="flex:1;">
-                                <div style="display:flex;gap:12px;align-items:center;">
-                                    <div>
-                                        <div style="font-weight:700;">${r.title || 'Untitled request'}</div>
-                                        <div class="text-muted" style="font-size:0.9rem;">${r.type || 'general'} • ${created}</div>
-                                    </div>
-                                </div>
-                                <div style="margin-top:10px;color:var(--dark-gray);">${(r.description || '').substring(0,300)}</div>
-                                ${r.images && r.images.length ? `<div style="margin-top:10px;"><img src="${r.images[0]}" style="max-width:120px;border-radius:8px;border:1px solid #eee;" /></div>` : ''}
-                            </div>
-                            <div style="min-width:160px;text-align:right;">
-                                <div style="margin-bottom:8px;"><span class="lease-status ${status}">${status}</span></div>
-                                <div style="margin-bottom:8px;"><span class="${priorityClass}">${r.priority || 'medium'}</span></div>
-                                <div>
-                                    <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); casaLink.viewTenantMaintenanceRequest('${r.id || r.documentId || r._id || r.requestId || ''}')">
-                                        <i class="fas fa-eye"></i> View
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-
-                container.innerHTML = `<div class="maintenance-list">${html}</div>`;
-            }
+            // render first page into the shared maintenance list container and enable pagination
+            this.updateMaintenanceTable(this.getCurrentMaintenancePage());
+            this.setupMaintenancePagination();
 
         } catch (error) {
             console.error('Failed loading tenant maintenance data:', error);
@@ -16728,6 +17152,7 @@ class CasaLink {
             }
 
             const payment = { id: paymentDoc.id, ...paymentDoc.data() };
+            console.log('🔍 DEBUG payment.status for paymentId', payment.id, ':', payment.status);
             
             // Generate payment details content
             const paymentDetailsContent = this.generatePaymentDetailsContent(payment);
@@ -16831,6 +17256,10 @@ class CasaLink {
         
         const paymentIcon = paymentMethodIcons[payment.paymentMethod] || 'fas fa-credit-card';
 
+        const statusBadge = this.getPaymentStatusBadge(payment.status) || `<span class="status-badge info">Unknown</span>`;
+        const rawStatus = (typeof payment.status === 'string' && payment.status.trim()) ? payment.status.trim() : 'unknown';
+        const humanStatus = rawStatus.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
         return `
             <div class="payment-details-modal" style="max-height: 70vh; overflow-y: auto;">
                 <!-- Payment Header -->
@@ -16851,8 +17280,9 @@ class CasaLink {
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
                     <div style="background: white; padding: 15px; border-radius: 8px; border-left: 4px solid var(--success);">
                         <div style="font-size: 0.9rem; color: var(--dark-gray); margin-bottom: 5px;">Status</div>
-                        <div style="font-size: 1.1rem; font-weight: 600; color: var(--success);">
-                            ${this.getPaymentStatusBadge(payment.status)}
+                        <div style="font-size: 1.1rem; font-weight: 600; display: flex; align-items: center; gap: 10px;">
+                            ${statusBadge}
+                            <div style="font-size: 0.95rem; color: var(--text-dark); font-weight: 600;">${humanStatus}</div>
                         </div>
                     </div>
                     
@@ -21180,8 +21610,12 @@ class CasaLink {
     // ADD THIS METHOD - Direct HTML without any async operations
     getDashboardHTML() {
         const isLandlord = this.currentRole === 'landlord';
-        const userName = this.currentUser?.name || 'User';
-        const userAvatar = this.currentUser?.avatar || 'U';
+        const userName = this.currentUser?.name || this.currentUser?.displayName || this.currentUser?.email || 'User';
+        let userAvatar = this.currentUser?.avatar || null;
+        if (!userAvatar) {
+            const srcName = this.currentUser?.name || this.currentUser?.displayName || this.currentUser?.email || '';
+            userAvatar = srcName ? srcName.trim().charAt(0).toUpperCase() : 'U';
+        }
         
         return `
         <!-- Screen reader announcer -->
@@ -22713,9 +23147,10 @@ class CasaLink {
      * @returns {string} - HTML badge
      */
     getPaymentStatusBadge(status) {
-        // Normalize status for comparison
-        const normalizedStatus = (status || 'completed').toLowerCase();
-        
+        // Normalize status for comparison and provide a visible fallback
+        const displayLabel = (typeof status === 'string' && status.trim().length) ? status.trim() : 'Unknown';
+        const normalizedStatus = displayLabel.toLowerCase();
+
         if (normalizedStatus === 'waiting_verification' || normalizedStatus === 'pending_verification') {
             return '<span class="status-badge payment-badge waiting">⏳ Waiting Verification</span>';
         } else if (normalizedStatus === 'verified') {
@@ -22725,7 +23160,8 @@ class CasaLink {
         } else if (normalizedStatus === 'rejected') {
             return '<span class="status-badge payment-badge danger">✗ Rejected</span>';
         } else {
-            return `<span class="status-badge payment-badge info">${status}</span>`;
+            // For any other/unknown statuses show a neutral info badge with the raw label
+            return `<span class="status-badge payment-badge info">${displayLabel}</span>`;
         }
     }
 
@@ -29013,6 +29449,12 @@ class CasaLink {
             // Calculate billing stats
             const stats = this.calculateTenantBillingStats(bills);
 
+            // Prepare tenant payments pagination data so render uses paged slice
+            this.tenantPaymentsAllData = payments.sort((a, b) => new Date(b.paymentDate || b.createdAt) - new Date(a.paymentDate || a.createdAt));
+            this.tenantPaymentsFilteredData = [...this.tenantPaymentsAllData];
+            this.tenantPaymentsCurrentPage = 1;
+            this.tenantPaymentsTotalPages = Math.max(1, Math.ceil(this.tenantPaymentsFilteredData.length / this.tenantPaymentsItemsPerPage));
+
             return `
                 <div class="page-content">
                     <div class="page-header">
@@ -29087,7 +29529,11 @@ class CasaLink {
                                 <h3 style="margin: 0; color: var(--text-dark); font-size: 1.2rem;">All Payments</h3>
                                 <p style="margin: 5px 0 0 0; color: var(--dark-gray); font-size: 0.9rem;">Your complete payment history</p>
                             </div>
-                            ${this.renderTenantPaymentsHistory(payments)}
+                                            <div id="tenantPaymentsCard">
+                                                <div id="tenantPaymentsWrapper">
+                                                    ${this.renderTenantPaymentsHistory(this.getTenantPaymentsCurrentPage())}
+                                                </div>
+                                            </div>
                         </div>
                     </div>
                 </div>
@@ -29184,6 +29630,41 @@ class CasaLink {
                             (paymentData.status === 'pending_verification' || paymentData.status === 'waiting_verification') ? 'Waiting Verification' :
                             'Payment Failed';
 
+            // Build evidence HTML if present
+            const evidenceURL = paymentData.photoEvidenceURL || paymentData.photoEvidence || paymentData.photoEvidenceBase64 || null;
+
+            // If this payment references a bill, attempt to fetch bill summary
+            let billSummaryHtml = '';
+            try {
+                if (paymentData.billId) {
+                    const billDoc = await firebaseDb.collection('bills').doc(paymentData.billId).get();
+                    if (billDoc.exists) {
+                        const bill = { id: billDoc.id, ...billDoc.data() };
+                        const due = bill.dueDate ? new Date(bill.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
+                        billSummaryHtml = `
+                            <div style="background: white; padding: 15px; border-radius: 8px; margin-top: 16px; border: 1px solid #eef2f6;">
+                                <h5 style="margin:0 0 8px 0; color:var(--text-dark);">Related Bill</h5>
+                                <div style="display:flex; justify-content:space-between; gap:12px; align-items:center;">
+                                    <div style="flex:1;">
+                                        <div style="font-weight:700;">${bill.type === 'rent' ? 'Monthly Rent' : (bill.description || 'Bill')}</div>
+                                        <div style="color:var(--dark-gray); font-size:0.9rem;">Due: ${due}</div>
+                                    </div>
+                                    <div style="text-align:right; min-width:160px;">
+                                        <div style="font-weight:700; font-size:1.05rem;">₱${(bill.totalAmount || 0).toLocaleString()}</div>
+                                        <div style="font-size:0.85rem; color:var(--dark-gray);">Bill ID: <span style="font-family:monospace;">${bill.id}</span></div>
+                                    </div>
+                                </div>
+                                <div style="margin-top:10px; text-align:right;">
+                                    <button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); casaLink.showTenantBillDetailsModal('${bill.id}')">View Bill</button>
+                                </div>
+                            </div>
+                        `;
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not fetch linked bill for payment:', e);
+            }
+
             const modalContent = `
                 <div style="max-width: 600px;">
                     <!-- Payment Summary -->
@@ -29235,6 +29716,17 @@ class CasaLink {
                         </div>
                     </div>
 
+                    ${billSummaryHtml}
+
+                    ${evidenceURL ? `
+                        <div style="background: white; padding: 15px; border-radius: 8px; margin-top: 20px; border: 1px solid #e9ecef; text-align: center;">
+                            <h5 style="margin: 0 0 10px 0; color: var(--text-dark); font-size: 0.95rem;">Payment Evidence</h5>
+                            <div style="display:inline-block; margin-top:10px;">
+                                <img src="${evidenceURL}" alt="Payment Evidence" class="payment-evidence-thumb" data-full="${evidenceURL}" style="max-width:220px; max-height:220px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.08); cursor:zoom-in;" />
+                            </div>
+                        </div>
+                    ` : ''}
+
                     ${paymentData.notes ? `
                         <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 20px; border-left: 3px solid var(--royal-blue);">
                             <h5 style="margin: 0 0 10px 0; color: var(--text-dark); font-size: 0.9rem;">Notes</h5>
@@ -29277,6 +29769,25 @@ class CasaLink {
                     window.ModalManager.closeModal(modal);
                 }
             });
+
+            // Make evidence thumbnails clickable to open full-size image in a larger modal
+            try {
+                const thumb = modal.querySelector('.payment-evidence-thumb');
+                if (thumb) {
+                    thumb.addEventListener('click', (e) => {
+                        const src = thumb.dataset.full || thumb.src;
+                        const imgHTML = `<div style="text-align:center;"><img src="${src}" alt="Payment Evidence Full" style="max-width:100%; max-height:90vh; border-radius:6px;"></div>`;
+                        window.ModalManager.openModal(imgHTML, {
+                            title: 'Payment Evidence',
+                            width: '90%',
+                            maxWidth: '900px',
+                            showFooter: false
+                        });
+                    });
+                }
+            } catch (err) {
+                console.warn('Could not attach evidence click handler:', err);
+            }
             
         } catch (error) {
             console.error('❌ Error loading payment details:', error);
@@ -29373,12 +29884,107 @@ class CasaLink {
                     </tbody>
                 </table>
             </div>
+            <!-- Tenant Payments Pagination -->
+            <div class="pagination-container" id="tenantPaymentsPagination" style="display: none; margin-top: 16px;">
+                <div class="pagination-controls">
+                    <button class="btn btn-sm btn-secondary" id="tenantPaymentsPrevPage"><i class="fas fa-chevron-left"></i> Previous</button>
+                    <div class="pagination-numbers" id="tenantPaymentsPageNumbers"></div>
+                    <button class="btn btn-sm btn-secondary" id="tenantPaymentsNextPage">Next <i class="fas fa-chevron-right"></i></button>
+                </div>
+                <div class="activities-pagination-info" id="tenantPaymentsPaginationInfo" style="margin-top:8px; font-size:0.9rem; color:var(--dark-gray);">Showing 0–0 of 0 payments</div>
+            </div>
         `;
     }
 
     getOverdueBills(bills) {
         const today = new Date();
         return bills.filter(b => new Date(b.dueDate) < today && b.status === 'pending');
+    }
+
+    /* Tenant payments pagination helpers */
+    getTenantPaymentsCurrentPage() {
+        const startIndex = (this.tenantPaymentsCurrentPage - 1) * this.tenantPaymentsItemsPerPage;
+        const endIndex = startIndex + this.tenantPaymentsItemsPerPage;
+        return this.tenantPaymentsFilteredData.slice(startIndex, endIndex);
+    }
+
+    updateTenantPaymentsPaginationInfo() {
+        const infoElement = document.getElementById('tenantPaymentsPaginationInfo');
+        if (!infoElement) return;
+        const startItem = (this.tenantPaymentsCurrentPage - 1) * this.tenantPaymentsItemsPerPage + 1;
+        const endItem = Math.min(this.tenantPaymentsCurrentPage * this.tenantPaymentsItemsPerPage, this.tenantPaymentsFilteredData.length);
+        infoElement.textContent = `${this.tenantPaymentsFilteredData.length === 0 ? 'Showing 0–0 of 0 payments' : `Showing ${startItem}–${endItem} of ${this.tenantPaymentsFilteredData.length} payments`}`;
+    }
+
+    updateTenantPaymentsPaginationControls() {
+        const pageNumbers = document.getElementById('tenantPaymentsPageNumbers');
+        if (!pageNumbers) return;
+        pageNumbers.innerHTML = '';
+        const startPage = Math.max(1, this.tenantPaymentsCurrentPage - 2);
+        const endPage = Math.min(this.tenantPaymentsTotalPages, startPage + 4);
+        for (let i = startPage; i <= endPage; i++) {
+            const pageButton = document.createElement('button');
+            pageButton.className = `btn btn-sm ${i === this.tenantPaymentsCurrentPage ? 'btn-primary' : 'btn-secondary'}`;
+            pageButton.textContent = i;
+            pageButton.onclick = () => {
+                this.tenantPaymentsCurrentPage = i;
+                this.refreshTenantPaymentsTable();
+                this.updateTenantPaymentsPaginationControls();
+            };
+            pageNumbers.appendChild(pageButton);
+        }
+        const prevButton = document.getElementById('tenantPaymentsPrevPage');
+        const nextButton = document.getElementById('tenantPaymentsNextPage');
+        if (prevButton) prevButton.disabled = this.tenantPaymentsCurrentPage === 1;
+        if (nextButton) nextButton.disabled = this.tenantPaymentsCurrentPage === this.tenantPaymentsTotalPages;
+    }
+
+    setupTenantPaymentsPagination() {
+        const paginationContainer = document.getElementById('tenantPaymentsPagination');
+        if (!paginationContainer) return;
+        if (this.tenantPaymentsTotalPages > 1) {
+            paginationContainer.style.display = 'flex';
+            this.updateTenantPaymentsPaginationControls();
+            this.updateTenantPaymentsPaginationInfo();
+        } else {
+            paginationContainer.style.display = 'none';
+        }
+
+        const prevButton = document.getElementById('tenantPaymentsPrevPage');
+        const nextButton = document.getElementById('tenantPaymentsNextPage');
+        if (prevButton) {
+            prevButton.onclick = () => {
+                if (this.tenantPaymentsCurrentPage > 1) {
+                    this.tenantPaymentsCurrentPage--;
+                    this.refreshTenantPaymentsTable();
+                    this.updateTenantPaymentsPaginationControls();
+                    this.updateTenantPaymentsPaginationInfo();
+                }
+            };
+        }
+        if (nextButton) {
+            nextButton.onclick = () => {
+                if (this.tenantPaymentsCurrentPage < this.tenantPaymentsTotalPages) {
+                    this.tenantPaymentsCurrentPage++;
+                    this.refreshTenantPaymentsTable();
+                    this.updateTenantPaymentsPaginationControls();
+                    this.updateTenantPaymentsPaginationInfo();
+                }
+            };
+        }
+    }
+
+    refreshTenantPaymentsTable() {
+        // Re-render the payments table HTML inside the tenant billing page
+        const tableContainer = document.querySelector('#contentArea .card .table-container');
+        // Fallback: search for the payments table specifically by header
+        const wrapper = document.getElementById('tenantPaymentsWrapper');
+        if (!wrapper) return;
+        const pageData = this.getTenantPaymentsCurrentPage();
+        const newHTML = this.renderTenantPaymentsHistory(pageData);
+        wrapper.innerHTML = newHTML;
+        // Re-setup pagination controls
+        this.setupTenantPaymentsPagination();
     }
 
     renderTenantBillsTable(bills, filterType) {

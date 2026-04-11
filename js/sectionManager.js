@@ -168,7 +168,124 @@ class SectionManager {
     }
 
     showPayModal() {
-        alert('Payment modal would open here. This is a demo feature.');
+        // Open a polished payment modal using the centralized ModalManager and PaymentFormManager
+        try {
+            const tenantName = (window.casaLink && window.casaLink.currentUser && window.casaLink.currentUser.name) || 'Tenant';
+            const amountDue = '0.00';
+            const dueDate = new Date().toISOString().split('T')[0];
+
+            const content = `
+                <div class="payment-form-container">
+                    <div class="payment-header-row">
+                        <div>
+                            <div style="font-size:14px; color:var(--dark-gray);">Paying as</div>
+                            <div style="font-weight:700; color:var(--text-dark);">${this.escapeHtml ? this.escapeHtml(tenantName) : tenantName}</div>
+                        </div>
+                        <div style="text-align:right">
+                            <div style="font-size:12px; color:var(--dark-gray);">Amount Due</div>
+                            <div style="font-weight:800; color:var(--royal-blue); font-size:18px;">₱${amountDue}</div>
+                            <div style="font-size:12px; color:var(--dark-gray);">Due ${dueDate}</div>
+                        </div>
+                    </div>
+
+                    <div class="payment-method-section">
+                        <h4>Choose Payment Method</h4>
+                        ${typeof PaymentFormManager !== 'undefined' ? PaymentFormManager.generatePaymentMethodSelector() : '<p style="color:#888;">Payment methods unavailable</p>'}
+                    </div>
+
+                    <div id="dynamicPaymentFields" style="display:none;"></div>
+                    <div id="paymentError" style="display:none; margin-top:12px; color:var(--danger);"></div>
+                </div>
+            `;
+
+            const modal = window.ModalManager.openModal(content, {
+                title: 'Make a Payment',
+                submitText: 'Submit Payment',
+                cancelText: 'Cancel',
+                width: '600px',
+                maxWidth: '100%'
+            });
+
+            // Attach behavior: method selection -> render dynamic fields
+            setTimeout(() => {
+                const methodCards = modal.querySelectorAll('.payment-method-card');
+                let selected = null;
+                methodCards.forEach(card => {
+                    card.addEventListener('click', () => {
+                        methodCards.forEach(c => c.classList.remove('selected'));
+                        card.classList.add('selected');
+                        selected = card.getAttribute('data-method-id');
+                        const container = modal.querySelector('#dynamicPaymentFields');
+                        if (typeof PaymentFormManager !== 'undefined') {
+                            container.innerHTML = PaymentFormManager.generatePaymentFormFields(selected, { totalAmount: amountDue }, {});
+                            container.style.display = 'block';
+                            // Setup file upload handlers if available
+                            setTimeout(() => {
+                                if (PaymentFormManager.setupFileUploadHandlers) PaymentFormManager.setupFileUploadHandlers();
+                            }, 0);
+                        }
+                    });
+                });
+
+                // Submit handler (wired through ModalManager's submit button)
+                const submitHandler = async (e, modalEl) => {
+                    const selectedCard = modalEl.querySelector('.payment-method-card.selected');
+                    if (!selectedCard) {
+                        const err = modalEl.querySelector('#paymentError');
+                        if (err) { err.textContent = 'Please select a payment method'; err.style.display = 'block'; }
+                        return;
+                    }
+                    const method = selectedCard.getAttribute('data-method-id');
+                    // Validate via PaymentFormManager if available
+                    if (typeof PaymentFormManager !== 'undefined') {
+                        const validation = PaymentFormManager.validatePaymentForm(method);
+                        if (!validation.isValid) {
+                            const err = modalEl.querySelector('#paymentError');
+                            if (err) { err.textContent = validation.errors[0] || 'Validation failed'; err.style.display = 'block'; }
+                            return;
+                        }
+
+                        // Get formData and save using DataManager if available
+                        const formData = PaymentFormManager.getFormData(method, { totalAmount: amountDue });
+                        try {
+                            const submitBtn = modalEl.querySelector('.modal-footer .btn-primary');
+                            submitBtn.disabled = true;
+                            const original = submitBtn.innerHTML;
+                            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Submitting...';
+
+                            let paymentId = null;
+                            const dm = window.DataManager || (typeof DataManager !== 'undefined' && DataManager);
+                            if (dm && dm.recordPayment) {
+                                paymentId = await dm.recordPayment(formData);
+                            }
+
+                            // Use notification + close
+                            if (window.showNotification) window.showNotification('Payment submitted. Awaiting verification.', 'success');
+                            window.ModalManager.closeModal(modalEl);
+                        } catch (err) {
+                            const errEl = modalEl.querySelector('#paymentError');
+                            if (errEl) { errEl.textContent = err.message || 'Failed to submit payment'; errEl.style.display = 'block'; }
+                        }
+                    } else {
+                        // Fallback: just close and show message
+                        window.ModalManager.closeModal(modalEl);
+                        if (window.showNotification) window.showNotification('Payment submitted (demo).', 'info');
+                    }
+                };
+
+                // replace existing submit handler to wire validation
+                const submitBtn = modal.querySelector('#modalSubmit') || modal.querySelector('.modal-footer .btn-primary');
+                if (submitBtn) {
+                    submitBtn.replaceWith(submitBtn.cloneNode(true));
+                    const newSubmit = modal.querySelector('#modalSubmit') || modal.querySelector('.modal-footer .btn-primary');
+                    if (newSubmit) newSubmit.addEventListener('click', (e) => submitHandler(e, modal));
+                }
+            }, 50);
+
+        } catch (e) {
+            console.error('Error opening payment modal:', e);
+            alert('Unable to open payment modal');
+        }
     }
 
     showMaintenanceModal() {
